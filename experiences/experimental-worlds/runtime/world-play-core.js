@@ -10,15 +10,15 @@ function rollSecureDie(sides) {
 }
 
 function openWorldCheckModal() {
-    if (worldTurnInProgress) return showToast('The DM is still responding — please wait.', 'info');
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    if (worldTurnInProgress) return ExperimentalWorldsHost.notify('The DM is still responding — please wait.', 'info');
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
     if (!world || !sess) return;
     if (!normalizeWorldGameRules(world).modules.checks) {
-        return showToast('Dice checks are disabled. Enable Dice checks in World Studio → HUD & Stats.', 'info');
+        return ExperimentalWorldsHost.notify('Dice checks are disabled. Enable Dice checks in World Studio → HUD & Stats.', 'info');
     }
     if (normalizePlayerRulesState(world, sess)?.status === 'dead') {
-        return showToast('Game Over — this timeline cannot roll another action.', 'error');
+        return ExperimentalWorldsHost.notify('Game Over — this timeline cannot roll another action.', 'error');
     }
     const dice = normalizeWorldDiceConfig(world);
     const pending = (Array.isArray(sess.pendingChecks) ? sess.pendingChecks[0] : null) || sess.pendingCheck;
@@ -79,7 +79,7 @@ function worldCheckModifier(world, sess, statId) {
 }
 
 function renderWorldCheckPreview() {
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
     const preview = document.getElementById('world-check-preview');
     if (!world || !sess || !preview) return;
@@ -94,12 +94,12 @@ function renderWorldCheckPreview() {
 
 async function resolveWorldCheckFromModal() {
     if (worldTurnInProgress) return;
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
     if (!world || !sess) return;
     const pending = (Array.isArray(sess.pendingChecks) ? sess.pendingChecks[0] : null) || sess.pendingCheck;
     const label = String(pending?.label || document.getElementById('world-check-label')?.value || 'Unspecified check').trim().slice(0, 120);
-    if (!label) return showToast('Describe what is being attempted first.', 'info');
+    if (!label) return ExperimentalWorldsHost.notify('Describe what is being attempted first.', 'info');
     const dice = normalizeWorldDiceConfig(world);
     const roll = rollSecureDie(dice.sides);
     const check = {
@@ -114,7 +114,7 @@ async function resolveWorldCheckFromModal() {
         force_resolve: true
     };
     const result = performAuthoritativeChecks(world, sess, [check])[0];
-    if (!result || result.pending) return showToast('The check could not be resolved.', 'error');
+    if (!result || result.pending) return ExperimentalWorldsHost.notify('The check could not be resolved.', 'error');
     const outcome = sanitizeCheckOutcomeActions(result.success ? pending?.on_success : pending?.on_failure);
     const outcomeResult = outcome ? processStructuredActions(outcome, world, sess) : null;
     commitEngineWorldNoOp(world, sess, 'engine_check_outcome',
@@ -127,7 +127,7 @@ async function resolveWorldCheckFromModal() {
     const modifierText = combinedModifier
         ? ` + modifiers ${combinedModifier >= 0 ? '+' : ''}${combinedModifier}` : '';
     addWorldMessage('system', `[WORLD KERNEL — AUTHORITATIVE CHECK RESULT]\n${result.label}: d${result.sides} rolled ${result.roll}${modifierText} = ${result.total} against difficulty ${result.difficulty}. Result: ${result.success ? 'SUCCESS' : 'FAILURE'}${result.critical ? ` (${result.critical.toUpperCase()} CRITICAL)` : ''}. The selected ${result.success ? 'success' : 'failure'} consequence has already been committed${outcomeResult?.ledgerEntry ? `: ${outcomeResult.ledgerEntry}` : ''}. Narrate this exact outcome now; do not request or invent another roll for this action.`, { location: sess.playerLocation, deferPersist: true });
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     renderWorldPlayState();
     executeWorldTurn('continue');
 }
@@ -138,7 +138,7 @@ let multiplayerHubTransport = 'lan';
 function multiplayerSources(type = multiplayerHubType) {
     if (type === 'world') {
         return [
-            ...state.worlds.map(world => ({
+            ...ExperimentalWorldsState.worlds.map(world => ({
             type: 'world', id: world.id,
             domain: 'experimental-worlds-pass0', domainLabel: 'Experimental Worlds',
             sourceKey: `experimental-worlds-pass0:${world.id}`,
@@ -148,11 +148,11 @@ function multiplayerSources(type = multiplayerHubType) {
         ];
     }
     return [
-        ...state.characters.map(character => ({
+        ...ExperimentalWorldsState.characters.map(character => ({
             type: 'chat', kind: 'character', id: character.id, name: character.name || 'Untitled Character',
             description: character.desc || 'Character chat', image: character.avatar || ''
         })),
-        ...state.rooms.map(room => ({
+        ...ExperimentalWorldsState.rooms.map(room => ({
             type: 'chat', kind: 'room', id: room.id, name: room.name || 'Untitled Room',
             description: `${(room.characterIds || []).length} member group room`, image: room.avatar || room.bg || ''
         }))
@@ -229,10 +229,10 @@ function setupMultiplayerHub() {
         try {
             await navigator.clipboard.writeText(commands);
             button.textContent = 'Copied';
-            showToast('Cloudflare setup commands copied.', 'success');
+            ExperimentalWorldsHost.notify('Cloudflare setup commands copied.', 'success');
             setTimeout(() => { button.textContent = 'Copy commands'; }, 1600);
         } catch (_) {
-            showToast('Could not copy automatically. Select the commands and copy them manually.', 'error');
+            ExperimentalWorldsHost.notify('Could not copy automatically. Select the commands and copy them manually.', 'error');
         }
     });
     document.getElementById('world-party-online-help')?.addEventListener('click', () => {
@@ -242,7 +242,7 @@ function setupMultiplayerHub() {
         multiplayerHubTransport = 'online';
         document.querySelectorAll('[data-multiplayer-transport]').forEach(item => item.classList.toggle('active', item.dataset.multiplayerTransport === 'online'));
         document.getElementById('multiplayer-online-config')?.classList.remove('hidden');
-        switchView('multiplayer');
+        ExperimentalWorldsHost.navigate('multiplayer');
         requestAnimationFrame(() => document.querySelector('.multiplayer-online-setup')?.setAttribute('open', ''));
     });
     document.querySelectorAll('[data-multiplayer-tab]').forEach(button => {
@@ -265,7 +265,7 @@ function setupMultiplayerHub() {
 function currentMultiplayerPersona() {
     const inWorld = !document.getElementById('world-play-view')?.classList.contains('hidden');
     const sessionPersonaId = inWorld ? getCurrentWorldSession()?.personaId : '';
-    const persona = state.personas.find(item => item.id === (sessionPersonaId || state.activePersonaId)) || null;
+    const persona = ExperimentalWorldsState.personas.find(item => item.id === (sessionPersonaId || ExperimentalWorldsState.activePersonaId)) || null;
     if (!persona) return {};
     const normalized = normalizePersona(persona);
     return {
@@ -276,16 +276,16 @@ function currentMultiplayerPersona() {
 }
 
 function currentMultiplayerContext(preferredType = '') {
-    if (preferredType === 'chat' || (!preferredType && (state.activeCharId || state.activeRoomId))) {
-        if (state.activeRoomId) {
-            const room = state.rooms.find(item => item.id === state.activeRoomId);
+    if (preferredType === 'chat' || (!preferredType && (ExperimentalWorldsState.activeCharId || ExperimentalWorldsState.activeRoomId))) {
+        if (ExperimentalWorldsState.activeRoomId) {
+            const room = ExperimentalWorldsState.rooms.find(item => item.id === ExperimentalWorldsState.activeRoomId);
             if (room) return { type: 'chat', kind: 'room', id: room.id, name: room.name || 'Shared Room' };
         }
-        const character = state.characters.find(item => item.id === state.activeCharId);
+        const character = ExperimentalWorldsState.characters.find(item => item.id === ExperimentalWorldsState.activeCharId);
         if (character) return { type: 'chat', kind: 'character', id: character.id, name: character.name || 'Shared Chat' };
     }
     if (preferredType === 'world' || !preferredType) {
-        const world = state.worlds.find(item => item.id === state.activeWorldId);
+        const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
         if (world) return { type: 'world', id: world.id, name: world.name || 'Shared World' };
     }
     return null;
@@ -294,10 +294,10 @@ function currentMultiplayerContext(preferredType = '') {
 function multiplayerCurrentSession(context) {
     if (!context?.id) return null;
     if (context.type === 'chat') {
-        const sessions = Array.isArray(state.chats?.[context.id]) ? state.chats[context.id] : [];
-        return sessions.find(item => item.id === state.activeSessionId?.[context.id]) || sessions[0] || { id: '', name: 'New multiplayer campaign', messages: [] };
+        const sessions = Array.isArray(ExperimentalWorldsState.chats?.[context.id]) ? ExperimentalWorldsState.chats[context.id] : [];
+        return sessions.find(item => item.id === ExperimentalWorldsState.activeSessionId?.[context.id]) || sessions[0] || { id: '', name: 'New multiplayer campaign', messages: [] };
     }
-    const instance = state.worldInstances?.[context.id];
+    const instance = ExperimentalWorldsState.worldInstances?.[context.id];
     const sessions = Array.isArray(instance?.sessions) ? instance.sessions : [];
     return sessions.find(item => item.id === instance?.activeSessionId) || sessions[0] || null;
 }
@@ -322,23 +322,23 @@ function buildMultiplayerSnapshot(context) {
 
 function buildMultiplayerCampaignTemplate(context) {
     if (!context?.id) return null;
-    const provider = normalizedProviderId();
+    const provider = ExperimentalWorldsHost.normalizedProviderId();
     if (context.type === 'chat') {
-        const room = context.kind === 'room' ? state.rooms.find(item => item.id === context.id) : null;
+        const room = context.kind === 'room' ? ExperimentalWorldsState.rooms.find(item => item.id === context.id) : null;
         const characters = room
-            ? (room.characterIds || []).map(id => state.characters.find(item => item.id === id)).filter(Boolean)
-            : [state.characters.find(item => item.id === context.id)].filter(Boolean);
+            ? (room.characterIds || []).map(id => ExperimentalWorldsState.characters.find(item => item.id === id)).filter(Boolean)
+            : [ExperimentalWorldsState.characters.find(item => item.id === context.id)].filter(Boolean);
         if (!characters.length) return null;
         const cast = characters.map(character => `${character.name}: ${character.persona || character.description || 'No authored description.'}`).join('\n\n');
         return {
             source: { type: 'chat', kind: context.kind || 'character', id: context.id, name: context.name },
-            model: characters[0].model || state.globalSettings.defaultModel,
-            provider: normalizedProviderId(characters[0].textProvider || provider),
+            model: characters[0].model || ExperimentalWorldsState.globalSettings.defaultModel,
+            provider: ExperimentalWorldsHost.normalizedProviderId(characters[0].textProvider || provider),
             systemPrompt: `You are the facilitator for a multiplayer character-driven tabletop session. Every player is a separate person; never merge their identities or choose actions for them. Portray only the authored cast and neutral scene consequences.\n\nCAST\n${cast}\n\nROOM GUIDANCE\n${room?.systemPrompt || room?.description || 'Keep the scene responsive, coherent and open-ended.'}`,
             opening: characters[0].intro || '', snapshot: buildChatMultiplayerSnapshot(context)
         };
     }
-    const world = state.worlds.find(item => item.id === context.id);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === context.id);
     if (!world) return null;
     const lore = Array.isArray(world.lore) ? world.lore.map(entry => `${entry.title || entry.name || 'Lore'}: ${entry.content || entry.text || ''}`).join('\n') : String(world.globalLore || '');
     return {
@@ -347,8 +347,8 @@ function buildMultiplayerCampaignTemplate(context) {
             domain: 'experimental-worlds-pass0', domainLabel: 'Experimental Worlds',
             sourceKey: `experimental-worlds-pass0:${world.id}`
         },
-        model: world.model || state.globalSettings.defaultModel,
-        provider: normalizedProviderId(world.textProvider || provider),
+        model: world.model || ExperimentalWorldsState.globalSettings.defaultModel,
+        provider: ExperimentalWorldsHost.normalizedProviderId(world.textProvider || provider),
         systemPrompt: `You are the impartial game facilitator for a system-agnostic online tabletop campaign. Treat every submitted player as a separate character with independent knowledge, capabilities, inventory and consequences. Do not assume D&D, modern technology, a single protagonist, or a single rules system. Apply only the campaign rules supplied by the host. Preserve continuity and resolve simultaneous actions fairly.\n\nWORLD\n${world.dmPersona || world.systemPrompt || world.description || ''}\n\nLORE\n${lore}\n\nAUTHOR GUIDANCE\n${world.authorsNote || ''}`,
         opening: world.intro || '', snapshot: buildWorldMultiplayerSnapshot(context)
     };
@@ -389,8 +389,8 @@ function parseMultiplayerReceipt(rawText) {
 
 async function executeIsolatedMultiplayerTurn(campaign, prompt) {
     if (!campaign) throw new Error('The multiplayer campaign is not initialized.');
-    const provider = normalizedProviderId(campaign.provider);
-    if (!providerHasCredentials(provider)) throw new Error(`Add a ${providerDisplayName(provider)} connection in Settings before hosting.`);
+    const provider = ExperimentalWorldsHost.normalizedProviderId(campaign.provider);
+    if (!ExperimentalWorldsHost.providerHasCredentials(provider)) throw new Error(`Add a ${ExperimentalWorldsHost.providerDisplayName(provider)} connection in Settings before hosting.`);
     const history = Array.isArray(campaign.snapshot?.history) ? campaign.snapshot.history.slice(-80) : [];
     const rules = campaign.system || {};
     const gameState = campaign.gameState || campaign.snapshot?.gameState || null;
@@ -401,10 +401,10 @@ async function executeIsolatedMultiplayerTurn(campaign, prompt) {
         role: item.role === 'dm' ? 'assistant' : item.role === 'user' ? 'user' : 'system',
         content: String(item.text || '').slice(0, 16000)
     })), { role: 'user', content: String(prompt || '').slice(0, 24000) }];
-    const endpoint = providerApiBase(provider) + '/chat/completions';
-    const headers = { 'Content-Type': 'application/json', ...providerAuthHeaders(provider), ...providerAttributionHeaders(provider) };
-    const requestBody = { model: campaign.model || state.globalSettings.defaultModel,
-        messages: sanitizeMessagesForProvider(messages, provider), max_tokens: 1800, temperature: 0.72,
+    const endpoint = ExperimentalWorldsHost.providerApiBase(provider) + '/chat/completions';
+    const headers = { 'Content-Type': 'application/json', ...ExperimentalWorldsHost.providerAuthHeaders(provider), ...ExperimentalWorldsHost.providerAttributionHeaders(provider) };
+    const requestBody = { model: campaign.model || ExperimentalWorldsState.globalSettings.defaultModel,
+        messages: ExperimentalWorldsHost.sanitizeMessagesForProvider(messages, provider), max_tokens: 1800, temperature: 0.72,
         response_format: { type: 'json_object' } };
     let response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(requestBody) });
     if (!response.ok && [400, 404, 422].includes(response.status)) {
@@ -413,7 +413,7 @@ async function executeIsolatedMultiplayerTurn(campaign, prompt) {
         delete requestBody.response_format;
         response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(requestBody) });
     }
-    if (!response.ok) throw new Error(humanizeApiError(new Error(await response.text().catch(() => `Request failed (${response.status})`)), provider));
+    if (!response.ok) throw new Error(ExperimentalWorldsHost.humanizeApiError(new Error(await response.text().catch(() => `Request failed (${response.status})`)), provider));
     const payload = await response.json();
     const raw = multiplayerMessageText(payload?.choices?.[0]?.message?.content);
     if (!raw) throw new Error('The host model returned an empty multiplayer turn.');
@@ -426,7 +426,7 @@ async function executeIsolatedMultiplayerTurn(campaign, prompt) {
 }
 
 function buildWorldMultiplayerSnapshot(context) {
-    const world = state.worlds.find(item => item.id === context?.id);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === context?.id);
     const sess = multiplayerCurrentSession(context);
     if (!world) return {};
     if (!sess) return {
@@ -463,7 +463,7 @@ function buildWorldMultiplayerSnapshot(context) {
                 max: Number(stat.max ?? 0), color: String(stat.color || '#E63946').slice(0, 24)
             })) : [],
             outfit: String(sess.outfit || 'Standard attire.').slice(0, 1200),
-            inventory: modules.inventory ? (sess.inventory || []).map(item => (globalThis.HordeRpgMechanics?.itemName(item) || String(item || '')).slice(0, 160)).filter(Boolean).slice(0, 80) : [],
+            inventory: modules.inventory ? (sess.inventory || []).map(item => (globalThis.ExperimentalWorldsRpgMechanics?.itemName(item) || String(item || '')).slice(0, 160)).filter(Boolean).slice(0, 80) : [],
             ledger: world.hudConfig?.showLedger === false ? '' : String(sess.ledger || '').slice(0, 6000),
             quests: modules.quests ? (sess.quests || []).filter(quest => quest.status === 'active').slice(0, 20).map(quest => ({
                 title: String(quest.title || 'Quest').slice(0, 160), status: String(quest.status || 'active').slice(0, 40)
@@ -497,7 +497,7 @@ function renderRemoteMultiplayerHistory(containerId, history, type) {
 function applyMultiplayerSnapshot(context, snapshot, type) {
     if (type === 'chat') {
         const view = document.getElementById('chat-view');
-        if (view?.classList.contains('hidden')) switchView('chat');
+        if (view?.classList.contains('hidden')) ExperimentalWorldsHost.navigate('chat');
         view?.classList.add('multiplayer-guest-view');
         document.getElementById('chat-char-name').textContent = snapshot.experienceName || context?.name || 'Shared Chat';
         document.getElementById('chat-char-model').textContent = 'Host-authoritative shared chat';
@@ -508,7 +508,7 @@ function applyMultiplayerSnapshot(context, snapshot, type) {
     }
 
     const view = document.getElementById('world-play-view');
-    if (view?.classList.contains('hidden')) switchView('worldPlay');
+    if (view?.classList.contains('hidden')) ExperimentalWorldsHost.navigate('worldPlay');
     view?.classList.add('multiplayer-guest-view');
     const hud = snapshot.hud || {};
     document.getElementById('world-dm-name').textContent = snapshot.worldName || snapshot.experienceName || context?.name || 'Shared World';
@@ -533,7 +533,7 @@ function applyMultiplayerSnapshot(context, snapshot, type) {
     document.getElementById('world-ledger-content').textContent = hud.ledger || 'No public milestones recorded yet.';
     document.getElementById('world-ledger-status').textContent = 'Synchronized from the host.';
     const inventory = document.getElementById('world-inventory-list');
-    inventory.innerHTML = (hud.inventory || []).map(item => `<span class="inv-chip"><span class="inv-chip-name">${escapeHTML(globalThis.HordeRpgMechanics?.itemName(item) || item)}</span></span>`).join('') || '<span style="color:var(--text-3);font-size:.8rem">Empty</span>';
+    inventory.innerHTML = (hud.inventory || []).map(item => `<span class="inv-chip"><span class="inv-chip-name">${escapeHTML(globalThis.ExperimentalWorldsRpgMechanics?.itemName(item) || item)}</span></span>`).join('') || '<span style="color:var(--text-3);font-size:.8rem">Empty</span>';
     const present = document.getElementById('world-present-list');
     present.innerHTML = (hud.present || []).map(name => `<div class="world-present-npc" style="padding:8px;background:var(--surface2);border-radius:6px">${escapeHTML(name)}</div>`).join('') || '<div style="color:var(--text-3);font-size:.8rem">No one here</div>';
     document.getElementById('world-exits-list').innerHTML = '<div style="color:var(--text-3);font-size:.75rem">Travel is resolved through the shared party turn.</div>';
@@ -554,13 +554,13 @@ function leaveMultiplayerExperience() {
 
 async function hardResetActiveWorldTimeline() {
     const sess = getCurrentWorldSession();
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     if (!sess || !world) return false;
     resetWorldTimeline(world, sess);
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     renderWorldPlayState();
     openSessionZero(() => executeWorldTurn('init'));
-    showToast('Timeline reset. Choose a new starting life.', 'info');
+    ExperimentalWorldsHost.notify('Timeline reset. Choose a new starting life.', 'info');
     return true;
 }
 
@@ -784,7 +784,7 @@ function setupWorldPlayLogic() {
     initWorldStatusResizeHandle();
     initWorldStatusPanel();
     initWorldScrollToBottom();
-    document.getElementById('world-exit-btn').onclick = () => switchView('worlds');
+    document.getElementById('world-exit-btn').onclick = () => ExperimentalWorldsHost.navigate('worlds');
     document.getElementById('world-map-btn').onclick = renderWorldMap;
     document.getElementById('world-more-btn').onclick = () => {
         const actions = document.getElementById('world-more-actions');
@@ -794,20 +794,20 @@ function setupWorldPlayLogic() {
         button.setAttribute('aria-expanded', String(open));
     };
     document.getElementById('world-presentation-btn').onclick = async () => {
-        const world = state.worlds.find(item => item.id === state.activeWorldId);
+        const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
         const sess = getCurrentWorldSession();
         if (!world || !sess) return;
         const presentation = normalizeWorldPresentation(world);
         if (!presentation.playerCanOverride) {
-            return showToast('This world author locked the recommended presentation mode.', 'info');
+            return ExperimentalWorldsHost.notify('This world author locked the recommended presentation mode.', 'info');
         }
         const modes = ['classic', 'cinematic'];
         const current = modes.includes(sess.presentationMode)
             ? sess.presentationMode : (presentation.enabled ? presentation.mode : 'classic');
         sess.presentationMode = modes[(modes.indexOf(current) + 1) % modes.length];
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
-        showToast(`World view: ${sess.presentationMode[0].toUpperCase() + sess.presentationMode.slice(1)}.`, 'success');
+        ExperimentalWorldsHost.notify(`World view: ${sess.presentationMode[0].toUpperCase() + sess.presentationMode.slice(1)}.`, 'success');
     };
     document.getElementById('world-hud-toggle').onclick = () => {
         const hud = document.querySelector('#world-play-view .world-status-col');
@@ -818,7 +818,7 @@ function setupWorldPlayLogic() {
     
     document.getElementById('w-hud-adjust-time-btn').onclick = () => {
         const sess = getCurrentWorldSession();
-        const world = state.worlds.find(w => w.id === state.activeWorldId);
+        const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
         if (!sess || !world) return;
         
         const adjustedTotalMinutes = getWorldTimeData(world, sess).currentTotalMinutes;
@@ -855,18 +855,18 @@ function setupWorldPlayLogic() {
         const mins = parseInt(input);
         if (!isNaN(mins)) {
             sess.bonusTimeMinutes = (sess.bonusTimeMinutes || 0) + mins;
-            saveState().catch(() => {});
+            ExperimentalWorldsHost.persist().catch(() => {});
             renderWorldPlayState();
             document.getElementById('world-clock-modal-overlay').classList.add('hidden');
-            showToast(`Clock adjusted by ${mins} minutes.`, 'success');
+            ExperimentalWorldsHost.notify(`Clock adjusted by ${mins} minutes.`, 'success');
         } else {
-            showToast('Please enter a valid number of minutes.', 'error');
+            ExperimentalWorldsHost.notify('Please enter a valid number of minutes.', 'error');
         }
     };
 
     document.getElementById('save-world-clock-btn').onclick = () => {
         const sess = getCurrentWorldSession();
-        const world = state.worlds.find(w => w.id === state.activeWorldId);
+        const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
         if (!sess || !world) return;
 
         const targetDay = parseInt(document.getElementById('m-clock-day').value);
@@ -875,15 +875,15 @@ function setupWorldPlayLogic() {
         const targetAmPm = document.getElementById('m-clock-ampm').value;
         
         if (isNaN(targetDay) || targetDay < 1) {
-            showToast('Please enter a valid Day (minimum 1).', 'error');
+            ExperimentalWorldsHost.notify('Please enter a valid Day (minimum 1).', 'error');
             return;
         }
         if (isNaN(targetHour) || targetHour < 1 || targetHour > 12) {
-            showToast('Please enter a valid Hour (1-12).', 'error');
+            ExperimentalWorldsHost.notify('Please enter a valid Hour (1-12).', 'error');
             return;
         }
         if (isNaN(targetMins) || targetMins < 0 || targetMins > 59) {
-            showToast('Please enter a valid Minute (0-59).', 'error');
+            ExperimentalWorldsHost.notify('Please enter a valid Minute (0-59).', 'error');
             return;
         }
         
@@ -894,17 +894,17 @@ function setupWorldPlayLogic() {
         const targetTotalMinutes = (targetDay - 1) * 24 * 60 + h24 * 60 + targetMins;
         const startMinutes = (world.hudConfig?.startTimeHours !== undefined ? world.hudConfig.startTimeHours : 8) * 60
             + Math.max(0, Math.min(59, parseInt(world.hudConfig?.startTimeMinutes) || 0));
-        const sidecarTimeline = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+        const sidecarTimeline = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
         const legacyTickMinutes = sidecarTimeline
             ? 0
             : (sess.turnCount - 1) * (world.hudConfig?.timeStep !== undefined ? world.hudConfig.timeStep : 5);
         const newBonusTimeMinutes = targetTotalMinutes - startMinutes - legacyTickMinutes;
         sess.bonusTimeMinutes = newBonusTimeMinutes;
         
-        saveState().catch(() => {});
+        ExperimentalWorldsHost.persist().catch(() => {});
         renderWorldPlayState();
         document.getElementById('world-clock-modal-overlay').classList.add('hidden');
-        showToast('Clock updated to new date & time.', 'success');
+        ExperimentalWorldsHost.notify('Clock updated to new date & time.', 'success');
     };
 
     
@@ -922,11 +922,11 @@ function setupWorldPlayLogic() {
             if (worldGenController) worldGenController.abort();
             return;
         }
-        const world = state.worlds.find(item => item.id === state.activeWorldId);
+        const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
         const sess = getCurrentWorldSession();
         const sidecarSelected = world && sess
-            && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true
-            && window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess)?.inputMode === 'sidecar';
+            && window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true
+            && window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess)?.inputMode === 'sidecar';
         if (!sidecarSelected) return executeWorldTurn();
         const text = input.value.trim();
         if (!text) return;
@@ -940,10 +940,10 @@ function setupWorldPlayLogic() {
         if (typingLabel) typingLabel.textContent = 'Sidecar is reviewing continuity…';
         try {
             await runSidecarConversation(world, sess, text);
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             renderWorldPlayState();
         } catch (error) {
-            showToast(`Sidecar conversation failed: ${humanizeApiError(error) || error.message || error}`, 'error');
+            ExperimentalWorldsHost.notify(`Sidecar conversation failed: ${ExperimentalWorldsHost.humanizeApiError(error) || error.message || error}`, 'error');
         } finally {
             if (typing) typing.style.display = 'none';
             worldTurnInProgress = false;
@@ -976,12 +976,12 @@ function setupWorldPlayLogic() {
         if (!session) return;
         const changed = replaceWorldLedger(session, document.getElementById('m-ledger-content').value);
         try {
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             renderWorldPlayState();
             ledgerModal.classList.add('hidden');
-            showToast(changed ? 'Ledger Updated' : 'Ledger already up to date', 'success');
+            ExperimentalWorldsHost.notify(changed ? 'Ledger Updated' : 'Ledger already up to date', 'success');
         } catch (error) {
-            showToast('Ledger could not be saved. Keep this window open and export a backup.', 'error');
+            ExperimentalWorldsHost.notify('Ledger could not be saved. Keep this window open and export a backup.', 'error');
         }
     };
 
@@ -989,10 +989,10 @@ function setupWorldPlayLogic() {
     const statsModal = document.getElementById('world-stats-modal-overlay');
     document.getElementById('edit-player-stats-btn').onclick = () => {
         const sess = getCurrentWorldSession();
-        const world = state.worlds.find(w => w.id === state.activeWorldId);
+        const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
         if (!sess || !world) return;
         if (!normalizeWorldGameRules(world).modules.stats) {
-            showToast('Player stats are disabled for this world profile.', 'info');
+            ExperimentalWorldsHost.notify('Player stats are disabled for this world profile.', 'info');
             return;
         }
         
@@ -1017,7 +1017,7 @@ function setupWorldPlayLogic() {
     document.getElementById('cancel-world-stats-btn').onclick = () => statsModal.classList.add('hidden');
     document.getElementById('save-world-stats-btn').onclick = async () => {
         const sess = getCurrentWorldSession();
-        const world = state.worlds.find(w => w.id === state.activeWorldId);
+        const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
         if (!sess || !world) return;
         if (!normalizeWorldGameRules(world).modules.stats) {
             statsModal.classList.add('hidden');
@@ -1033,14 +1033,14 @@ function setupWorldPlayLogic() {
             cause: 'Manual stat correction.'
         });
         if (!statResult.success && statResult.rejected.length) {
-            showToast(`Stats not saved: ${statResult.rejected[0].reason}`, 'error');
+            ExperimentalWorldsHost.notify(`Stats not saved: ${statResult.rejected[0].reason}`, 'error');
             return;
         }
         evaluateQuestProgress(world, sess);
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
         statsModal.classList.add('hidden');
-        showToast('Character Stats Updated', 'success');
+        ExperimentalWorldsHost.notify('Character Stats Updated', 'success');
     };
 
     // Quest Ledger Modal Logic
@@ -1051,15 +1051,15 @@ function setupWorldPlayLogic() {
     document.getElementById('cancel-world-quest-btn').onclick = closeQuestModal;
     document.getElementById('save-world-quest-btn').onclick = () => {
         const sess = getCurrentWorldSession();
-        const world = state.worlds.find(w => w.id === state.activeWorldId);
+        const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
         const id = document.getElementById('m-quest-id').value;
         const title = document.getElementById('m-quest-title').value.trim();
         if (!sess || !world || !normalizeWorldGameRules(world).modules.quests) {
-            showToast('The quest engine is disabled for this world profile.', 'info');
+            ExperimentalWorldsHost.notify('The quest engine is disabled for this world profile.', 'info');
             return;
         }
         if (!title) {
-            showToast('A quest needs a title.', 'info');
+            ExperimentalWorldsHost.notify('A quest needs a title.', 'info');
             return;
         }
         const objectiveText = document.getElementById('m-quest-objective').value.trim();
@@ -1096,23 +1096,23 @@ function setupWorldPlayLogic() {
         };
         if (objectiveText) update.objectives.push({ text: objectiveText, type: 'manual' });
         applyQuestUpdates(world, sess, [update]);
-        saveState().catch(() => {});
+        ExperimentalWorldsHost.persist().catch(() => {});
         renderWorldPlayState();
         closeQuestModal();
-        showToast(id ? 'Quest updated.' : 'Quest added.', 'success');
+        ExperimentalWorldsHost.notify(id ? 'Quest updated.' : 'Quest added.', 'success');
     };
     document.getElementById('delete-world-quest-btn').onclick = () => {
         const id = document.getElementById('m-quest-id').value;
         const sess = getCurrentWorldSession();
         const quest = sess ? findSessionQuest(sess, id) : null;
         if (!quest) return;
-        showConfirmModal('Delete Quest', `Delete "${quest.title}" from this timeline?`, async () => {
+        ExperimentalWorldsHost.confirmModal('Delete Quest', `Delete "${quest.title}" from this timeline?`, async () => {
             const index = sess.quests.findIndex(item => item.id === quest.id);
             if (index !== -1) sess.quests.splice(index, 1);
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             closeQuestModal();
             renderWorldPlayState();
-            showToast('Quest deleted.', 'info');
+            ExperimentalWorldsHost.notify('Quest deleted.', 'info');
         });
     };
 
@@ -1129,10 +1129,10 @@ function setupWorldPlayLogic() {
     document.getElementById('save-world-outfit-btn').onclick = () => {
         const sess = getCurrentWorldSession();
         sess.outfit = document.getElementById('m-outfit-content').value;
-        saveState().catch(() => {});
+        ExperimentalWorldsHost.persist().catch(() => {});
         renderWorldPlayState();
         outfitModal.classList.add('hidden');
-        showToast('Outfit Updated', 'success');
+        ExperimentalWorldsHost.notify('Outfit Updated', 'success');
     };
 
     // Parity Features
@@ -1150,16 +1150,16 @@ function setupWorldPlayLogic() {
         const newName = prompt('Enter new session name:', sess.name || 'Session');
         if (newName && newName.trim()) {
             sess.name = newName.trim();
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             renderWorldPlayState();
-            showToast('Session renamed', 'success');
+            ExperimentalWorldsHost.notify('Session renamed', 'success');
         }
     };
     
     document.getElementById('world-del-session-btn').onclick = () => {
         const sess = getCurrentWorldSession();
         if (!sess) return;
-        showConfirmModal('Delete current timeline',
+        ExperimentalWorldsHost.confirmModal('Delete current timeline',
             `Delete “${sess.name || 'this timeline'}”? Its history and branch-local state will be permanently removed. Any child forks remain available as independent timelines.`,
             async () => {
                 const result = await deleteWorldTimeline(sess.id);
@@ -1168,16 +1168,15 @@ function setupWorldPlayLogic() {
                     renderWorldPlayState();
                     renderWorldTimelineBrowser();
                 }
-                showToast(result.replacementCreated
+                ExperimentalWorldsHost.notify(result.replacementCreated
                     ? 'Timeline deleted. A fresh Sidecar timeline is ready for setup.'
                     : 'Timeline deleted. A remaining timeline is now active.', 'success');
             }, 'Delete timeline');
     };
 
     document.getElementById('world-session-select').onchange = (e) => {
-        state.worldInstances[state.activeWorldId].activeSessionId = e.target.value;
-        saveState().catch(() => {});
-        persistWorkspaceSoon();
+        ExperimentalWorldsState.worldInstances[ExperimentalWorldsState.activeWorldId].activeSessionId = e.target.value;
+        ExperimentalWorldsHost.persist().catch(() => {});
         renderWorldPlayState();
     };
 
@@ -1187,7 +1186,7 @@ function setupWorldPlayLogic() {
         if (!overlay) return;
         renderPersonasList();
         overlay.classList.remove('hidden');
-        showToast('Create or select a Persona, then choose “Set as Active” to bind it to this timeline.', 'info');
+        ExperimentalWorldsHost.notify('Create or select a Persona, then choose “Set as Active” to bind it to this timeline.', 'info');
     };
 
     document.getElementById('world-plan-sequence-btn').onclick = () => openWorldSidecarLine({
@@ -1196,16 +1195,16 @@ function setupWorldPlayLogic() {
         placeholder: 'Describe the next sequence you want to author…'
     });
     document.getElementById('world-close-sequence-btn').onclick = async () => {
-        const world = state.worlds.find(item => item.id === state.activeWorldId);
+        const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
         const sess = getCurrentWorldSession();
-        if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
-            showToast('Sequence controls are available in Sidecar worlds.', 'info');
+        if (!world || !sess || !window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
+            ExperimentalWorldsHost.notify('Sequence controls are available in Sidecar worlds.', 'info');
             return;
         }
-        const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+        const protocol = window.ExperimentalWorldsSidecarHooks.normalizeWorldTimeline(world, sess);
         let reconciliation;
         try { reconciliation = await requestSequenceClosureReconciliation(world, sess); }
-        catch (error) { showToast(`Sequence closure review failed: ${error.message || error}`, 'error'); return; }
+        catch (error) { ExperimentalWorldsHost.notify(`Sequence closure review failed: ${error.message || error}`, 'error'); return; }
         if (reconciliation.status !== 'ready') {
             openWorldSidecarLine({
                 kind: 'sequence_closure', title: 'Sequence closure questions',
@@ -1215,23 +1214,23 @@ function setupWorldPlayLogic() {
             renderWorldPlayState();
             return;
         }
-        const closed = window.HordeSidecarTimeline?.closeActiveSequence(protocol, sess, 'author_closed');
-        if (!closed) return showToast('There is no active sequence to close.', 'info');
+        const closed = window.ExperimentalWorldsSidecarTimeline?.closeActiveSequence(protocol, sess, 'author_closed');
+        if (!closed) return ExperimentalWorldsHost.notify('There is no active sequence to close.', 'info');
         // A deliberate sequence closure flushes the short final chunk instead
         // of waiting for cadence.  The raw sources remain pinned; Scene and
         // Sequence jobs are fanned out only after that Episode succeeds.
         const memory = effectiveSidecarMemoryConfig(world);
-        window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'sequence_closure', priority: 'closure' });
+        window.ExperimentalWorldsSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'sequence_closure', priority: 'closure' });
         protocol.packet = buildSidecarScenePacket(world, sess);
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         runSidecarBackgroundMemoryJobs(world, sess).catch(error => console.warn('Sequence memory closure dispatch skipped —', error.message));
         renderWorldPlayState();
-        showToast('Sequence closed. Plan and approve the next sequence before resuming narration.', 'success');
+        ExperimentalWorldsHost.notify('Sequence closed. Plan and approve the next sequence before resuming narration.', 'success');
     };
     document.getElementById('world-v3-end-scene-btn')?.addEventListener('click', async () => {
-        const world = state.worlds.find(item => item.id === state.activeWorldId); const sess = getCurrentWorldSession();
+        const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId); const sess = getCurrentWorldSession();
         if (!world || !sess) return;
-        if (!window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return openWorldSidecarInspector('migration');
+        if (!window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) return openWorldSidecarInspector('migration');
         openWorldSidecarLine({
             kind: 'scene_boundary', title: 'Scene boundary review',
             guidance: 'Discuss whether a material scene boundary has actually occurred, what the next scene should inherit, and any unresolved continuity. Do not close the scene until the author explicitly approves it.',
@@ -1240,19 +1239,19 @@ function setupWorldPlayLogic() {
         return;
         try {
             const review = await requestSceneBoundaryReview(world, sess, { reason: 'author_requested' });
-            if (!review.shouldClose) return showToast('Sidecar found no material scene boundary yet.', 'info');
-            showConfirmModal('Approve scene boundary', `${review.title}\n\n${review.evidence || 'A material circumstance change was detected.'}`, async () => {
-                const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess); const hierarchy = window.HordeSidecarTimeline.ensureHierarchy(protocol, sess);
-                const scene = hierarchy?.scene; if (scene) { scene.status = 'closed'; scene.closedAt = new Date().toISOString(); scene.provisionalReview = { ...review, status: 'approved', reviewedAt: new Date().toISOString() }; window.HordeSidecarTimeline.ensureHierarchy(protocol, sess, { createWhenMissing: true }); protocol.packet = buildSidecarScenePacket(world, sess); await saveState(); renderWorldPlayState(); showToast('Scene boundary approved.', 'success'); }
+            if (!review.shouldClose) return ExperimentalWorldsHost.notify('Sidecar found no material scene boundary yet.', 'info');
+            ExperimentalWorldsHost.confirmModal('Approve scene boundary', `${review.title}\n\n${review.evidence || 'A material circumstance change was detected.'}`, async () => {
+                const protocol = window.ExperimentalWorldsSidecarHooks.normalizeWorldTimeline(world, sess); const hierarchy = window.ExperimentalWorldsSidecarTimeline.ensureHierarchy(protocol, sess);
+                const scene = hierarchy?.scene; if (scene) { scene.status = 'closed'; scene.closedAt = new Date().toISOString(); scene.provisionalReview = { ...review, status: 'approved', reviewedAt: new Date().toISOString() }; window.ExperimentalWorldsSidecarTimeline.ensureHierarchy(protocol, sess, { createWhenMissing: true }); protocol.packet = buildSidecarScenePacket(world, sess); await ExperimentalWorldsHost.persist(); renderWorldPlayState(); ExperimentalWorldsHost.notify('Scene boundary approved.', 'success'); }
             });
-        } catch (error) { showToast(`Scene review failed: ${error.message || error}`, 'error'); }
+        } catch (error) { ExperimentalWorldsHost.notify(`Scene review failed: ${error.message || error}`, 'error'); }
     });
     document.getElementById('world-v3-gm-btn')?.addEventListener('click', () => openWorldSidecarLine());
 
     document.getElementById('world-continue-btn').onclick = () => {
-        if (worldTurnInProgress) return showToast('The DM is still responding — please wait.', 'info');
+        if (worldTurnInProgress) return ExperimentalWorldsHost.notify('The DM is still responding — please wait.', 'info');
         const sess = getCurrentWorldSession();
-        if (!sess || !sess.history.length) return showToast('Nothing to continue yet.', 'info');
+        if (!sess || !sess.history.length) return ExperimentalWorldsHost.notify('Nothing to continue yet.', 'info');
         executeWorldTurn('continue');
     };
 
@@ -1261,7 +1260,7 @@ function setupWorldPlayLogic() {
         if (msgCont) {
             const on = msgCont.classList.toggle('show-headers');
             e.currentTarget.style.color = on ? 'var(--accent)' : '';
-            showToast(on ? 'Message metadata shown' : 'Message metadata hidden', 'info');
+            ExperimentalWorldsHost.notify(on ? 'Message metadata shown' : 'Message metadata hidden', 'info');
         }
     };
 
@@ -1307,7 +1306,7 @@ function setupWorldPlayLogic() {
     
     document.getElementById('world-download-btn').onclick = () => {
         const sess = getCurrentWorldSession();
-        const world = state.worlds.find(w => w.id === state.activeWorldId);
+        const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
         if (!sess || !world) return;
         
         let transcript = `World Transcript: ${world.name}\nSession: ${sess.name}\nLocation: ${sess.playerLocation}\n\n`;
@@ -1330,13 +1329,13 @@ function setupWorldPlayLogic() {
     };
 
     document.getElementById('world-clear-btn').onclick = () => {
-        showConfirmModal('Clear World History', 'Perform a HARD RESET on this timeline? This wipes history, ledger, inventory, quests, discoveries, character memories, stats, and your current outfit.', async () => {
+        ExperimentalWorldsHost.confirmModal('Clear World History', 'Perform a HARD RESET on this timeline? This wipes history, ledger, inventory, quests, discoveries, character memories, stats, and your current outfit.', async () => {
             await hardResetActiveWorldTimeline();
         });
     };
 
     document.getElementById('world-studio-btn').onclick = () => {
-        if (state.activeWorldId) openWorldStudio(state.activeWorldId);
+        if (ExperimentalWorldsState.activeWorldId) openWorldStudio(ExperimentalWorldsState.activeWorldId);
     };
 }
 
@@ -1431,7 +1430,7 @@ function resetWorldTimeline(world, sess) {
     (world.hudConfig?.stats || []).forEach(stat => { sess.playerStats[stat.id] = stat.value; });
     normalizePlayerRulesState(world, sess);
     normalizeWorldSocietyState(world, sess);
-    window.HordeSidecarHooks?.normalizeWorldTimeline(world, sess, {
+    window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline(world, sess, {
         newWorld: world?.sidecarConfig?.mode === 'sidecar' && !sess.history?.length && sess.setupComplete !== true
     });
     window.HordeDossierClaims?.normalizeWorldConfig(world, { newWorld: world?.sidecarConfig?.mode === 'sidecar' });
@@ -1440,7 +1439,7 @@ function resetWorldTimeline(world, sess) {
 }
 
 function getCurrentWorldSession(options = {}) {
-    const inst = state.worldInstances[state.activeWorldId];
+    const inst = ExperimentalWorldsState.worldInstances[ExperimentalWorldsState.activeWorldId];
     if (!inst) return null;
     
     // Migration: Ensure session structure exists
@@ -1481,7 +1480,7 @@ function getCurrentWorldSession(options = {}) {
     if (!session) session = inst.sessions[0];
 
     // --- HEALING PASS: Normalize State to IDs ---
-    const world = state.worlds.find(w => w.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
     if (world && session) {
         // Resolve Player Location Name -> ID
         const currentLoc = world.locations.find(l => l.id === session.playerLocation || (session.playerLocation && l.name.toLowerCase() === session.playerLocation.toString().toLowerCase()));
@@ -1504,7 +1503,7 @@ function getCurrentWorldSession(options = {}) {
                 ent.type = 'item';
             } else if (t === 'vehicle') {
                 ent.type = 'vehicle';
-                window.HordeSidecarTraversal?.normalizeVehicle(ent);
+                window.ExperimentalWorldsSidecarTraversal?.normalizeVehicle(ent);
             } else if (ent.type !== 'npc') {
                 console.log(`Horde Engine: normalized entity "${ent.name}" type "${ent.type}" → npc`);
                 ent.type = 'npc';
@@ -1556,7 +1555,7 @@ function getCurrentWorldSession(options = {}) {
         normalizeLivingWorldState(world, session);
         normalizePlayerRulesState(world, session);
         normalizeQuestState(world, session);
-        window.HordeSidecarHooks?.normalizeWorldTimeline(world, session, {
+        window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline(world, session, {
             // Only an instance created now may receive the new Sidecar
             // default. Existing saved instances still migrate as legacy until
             // the author explicitly chooses migration in Studio.
@@ -1887,7 +1886,7 @@ function normalizeWorldGameRules(world) {
     const inferredCurrency = stats.find(looksLikeCurrency)?.id || '';
     const currencyStatId = exactStatId(raw.currencyStatId) || inferredCurrency;
     const currencyDefinition = stats.find(stat => stat.id === currencyStatId);
-    const rpgMechanics = globalThis.HordeRpgMechanics;
+    const rpgMechanics = globalThis.ExperimentalWorldsRpgMechanics;
     world.gameRules = {
         profileId,
         modules,
@@ -1928,11 +1927,11 @@ function normalizePlayerRulesState(world, sess) {
         .map(condition => String(condition || '').trim().slice(0, 120))
         .filter(Boolean))].slice(0, 50);
     sess.checkHistory = (Array.isArray(sess.checkHistory) ? sess.checkHistory : []).slice(-100);
-    if (globalThis.HordeRpgMechanics) {
+    if (globalThis.ExperimentalWorldsRpgMechanics) {
         const catalog = rules.itemCatalog || [];
-        sess.inventory = globalThis.HordeRpgMechanics.normalizeInventory((sess.inventory || []).map(value => {
+        sess.inventory = globalThis.ExperimentalWorldsRpgMechanics.normalizeInventory((sess.inventory || []).map(value => {
             if (typeof value !== 'string') return value;
-            return globalThis.HordeRpgMechanics.findItem(catalog, value) || value;
+            return globalThis.ExperimentalWorldsRpgMechanics.findItem(catalog, value) || value;
         }));
     }
     sess.equipment = isPlainObject(sess.equipment) ? sess.equipment : {};
@@ -1958,10 +1957,10 @@ function normalizePlayerRulesState(world, sess) {
 
 function worldEquipmentModifiers(world, sess) {
     const rules = normalizeWorldGameRules(world);
-    if (!rules.modules.equipment || !globalThis.HordeRpgMechanics) return globalThis.HordeRpgMechanics?.modifiers({}) || { stats: {}, skills: {}, checks: 0 };
+    if (!rules.modules.equipment || !globalThis.ExperimentalWorldsRpgMechanics) return globalThis.ExperimentalWorldsRpgMechanics?.modifiers({}) || { stats: {}, skills: {}, checks: 0 };
     normalizePlayerRulesState(world, sess);
     const equippedIds = new Set(Object.values(sess.equipment || {}).filter(Boolean));
-    return globalThis.HordeRpgMechanics.combinedModifiers((sess.inventory || []).filter(item => item?.equipped || equippedIds.has(item?.id)));
+    return globalThis.ExperimentalWorldsRpgMechanics.combinedModifiers((sess.inventory || []).filter(item => item?.equipped || equippedIds.has(item?.id)));
 }
 
 function worldOptionalRpgEnabled(world) {
@@ -1970,23 +1969,23 @@ function worldOptionalRpgEnabled(world) {
 }
 
 async function toggleWorldOptionalRpg() {
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     if (!world) return;
     const rules = normalizeWorldGameRules(world);
     const enabled = worldOptionalRpgEnabled(world);
     if (enabled) {
         rules.pausedMechanicalModules = Object.fromEntries(WORLD_OPTIONAL_RPG_MODULE_KEYS.map(key => [key, !!rules.modules[key]]));
         WORLD_OPTIONAL_RPG_MODULE_KEYS.forEach(key => { rules.modules[key] = false; });
-        showToast('RPG mechanics paused. Stats, builds and items remain saved.', 'info');
+        ExperimentalWorldsHost.notify('RPG mechanics paused. Stats, builds and items remain saved.', 'info');
     } else {
         const restore = isPlainObject(rules.pausedMechanicalModules)
             ? rules.pausedMechanicalModules : WORLD_RULE_PROFILES.adventure.modules;
         WORLD_OPTIONAL_RPG_MODULE_KEYS.forEach(key => { rules.modules[key] = !!restore[key]; });
-        showToast('RPG mechanics restored for this world.', 'success');
+        ExperimentalWorldsHost.notify('RPG mechanics restored for this world.', 'success');
     }
     rules.profileId = 'custom';
     world.gameRules = rules;
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     renderWorldPlayState();
 }
 
@@ -2055,7 +2054,7 @@ function applyPlayerStatChanges(world, sess, changes, options = {}) {
         });
         if (options.showToast !== false && change.next !== change.current) {
             const delta = change.next - change.current;
-            showToast(`${change.definition.name} ${delta > 0 ? '+' : ''}${delta}`, delta > 0 ? 'success' : 'info');
+            ExperimentalWorldsHost.notify(`${change.definition.name} ${delta > 0 ? '+' : ''}${delta}`, delta > 0 ? 'success' : 'info');
         }
     });
 
@@ -2081,17 +2080,17 @@ function applyPlayerStatChanges(world, sess, changes, options = {}) {
             appendWorldLedgerEntry(sess, lethal
                 ? `The player died: ${playerState.lastDefeatCause}`
                 : `The player was incapacitated after ${vitalDef.name} reached zero.`);
-            showToast(lethal ? '☠️ Game Over — this timeline has ended' : '⚠️ Incapacitated — the story will fail forward', lethal ? 'error' : 'info');
+            ExperimentalWorldsHost.notify(lethal ? '☠️ Game Over — this timeline has ended' : '⚠️ Incapacitated — the story will fail forward', lethal ? 'error' : 'info');
         } else if (vitalChange.next > vitalDef.min && playerState.status === 'incapacitated') {
             playerState.status = 'active';
             playerState.conditions = playerState.conditions.filter(condition => condition !== 'Incapacitated');
             result.recovered = true;
-            showToast('Recovered from incapacitation', 'success');
+            ExperimentalWorldsHost.notify('Recovered from incapacitation', 'success');
         } else if (vitalChange.next > vitalDef.min && playerState.status === 'dead' && options.allowDeadRecovery) {
             playerState.status = 'active';
             playerState.conditions = playerState.conditions.filter(condition => condition !== 'Incapacitated');
             result.recovered = true;
-            showToast('Timeline restored by manual correction', 'success');
+            ExperimentalWorldsHost.notify('Timeline restored by manual correction', 'success');
         }
     }
     result.success = result.applied.length > 0 && result.rejected.length === 0;
@@ -2099,7 +2098,7 @@ function applyPlayerStatChanges(world, sess, changes, options = {}) {
 }
 
 function findInventoryMatchIndices(inventory, item, quantity = 1) {
-    const itemName = value => globalThis.HordeRpgMechanics?.itemName(value) || String(value || '');
+    const itemName = value => globalThis.ExperimentalWorldsRpgMechanics?.itemName(value) || String(value || '');
     const query = questTextKey(itemName(item));
     if (!query || !Array.isArray(inventory)) return [];
     const exact = [];
@@ -2158,7 +2157,7 @@ function executeCommerceTransactions(world, sess, transactions) {
                     { showToast: false, cause: `Purchased ${itemName}.` });
                 if (!statResult.success && total > 0) return results.push({ ...base, item: itemName, reason: 'currency_update_failed' });
                 if (rules.modules.inventory) for (let count = 0; count < quantity; count++) sess.inventory.push(itemName);
-                showToast(`Bought ${quantity} × ${itemName} for ${total} ${rules.currencyName}`, 'success');
+                ExperimentalWorldsHost.notify(`Bought ${quantity} × ${itemName} for ${total} ${rules.currencyName}`, 'success');
                 return results.push({ ...base, item: itemName, success: true, unitPrice: statedPrice, total, openMarket: true, balance: Number(sess.playerStats[currencyDef.id]) || 0 });
             }
             const indices = findInventoryMatchIndices(sess.inventory, itemName, quantity);
@@ -2174,7 +2173,7 @@ function executeCommerceTransactions(world, sess, transactions) {
                 for (let count = 0; count < quantity; count++) sess.inventory.push(itemName);
                 return results.push({ ...base, item: itemName, reason: 'currency_update_failed' });
             }
-            showToast(`Sold ${quantity} × ${itemName} for ${total} ${rules.currencyName}`, 'success');
+            ExperimentalWorldsHost.notify(`Sold ${quantity} × ${itemName} for ${total} ${rules.currencyName}`, 'success');
             return results.push({ ...base, item: itemName, success: true, unitPrice: statedPrice, total, openMarket: true, balance: Number(sess.playerStats[currencyDef.id]) || 0 });
         }
         const candidates = Object.entries(market).filter(([key, stock]) => {
@@ -2197,7 +2196,7 @@ function executeCommerceTransactions(world, sess, transactions) {
             stock.quantity -= quantity;
             for (let count = 0; count < quantity; count++) sess.inventory.push(stock.item);
             results.push({ ...base, item: stock.item, success: true, unitPrice, total, balance: Number(sess.playerStats[currencyDef.id]) || 0, stock: stock.quantity });
-            showToast(`Bought ${quantity} × ${stock.item} for ${total} ${rules.currencyName}`, 'success');
+            ExperimentalWorldsHost.notify(`Bought ${quantity} × ${stock.item} for ${total} ${rules.currencyName}`, 'success');
         } else {
             const indices = findInventoryMatchIndices(sess.inventory, stock.item, quantity);
             if (indices.length < quantity) return results.push({ ...base, item: stock.item, reason: 'item_not_owned', owned: indices.length });
@@ -2217,7 +2216,7 @@ function executeCommerceTransactions(world, sess, transactions) {
                 return results.push({ ...base, item: stock.item, reason: 'currency_update_failed' });
             }
             results.push({ ...base, item: stock.item, success: true, unitPrice, total, balance: Number(sess.playerStats[currencyDef.id]) || 0, stock: stock.quantity });
-            showToast(`Sold ${quantity} × ${stock.item} for ${total} ${rules.currencyName}`, 'success');
+            ExperimentalWorldsHost.notify(`Sold ${quantity} × ${stock.item} for ${total} ${rules.currencyName}`, 'success');
         }
         market[stockKey] = stock;
     });
@@ -2258,7 +2257,7 @@ function performAuthoritativeChecks(world, sess, checks) {
         if (existing) {
             const replay = { ...existing, replayed: true };
             results.push(replay);
-            if (dice.visibility !== 'hidden') showToast(`↻ ${existing.label}: keeping ${existing.roll} → ${existing.total}`, 'info');
+            if (dice.visibility !== 'hidden') ExperimentalWorldsHost.notify(`↻ ${existing.label}: keeping ${existing.roll} → ${existing.total}`, 'info');
             return;
         }
         const statId = String(raw?.stat_id || '').trim();
@@ -2268,10 +2267,10 @@ function performAuthoritativeChecks(world, sess, checks) {
         const capabilityModifier = capability?.appliedModifier || 0;
         const situationalModifier = Math.max(-5, Math.min(5, Math.trunc(Number(raw?.modifier) || 0)));
         let equipmentModifier = 0;
-        if (rules.modules.equipment && globalThis.HordeRpgMechanics) {
+        if (rules.modules.equipment && globalThis.ExperimentalWorldsRpgMechanics) {
             const equippedIds = new Set(Object.values(sess.equipment || {}).filter(Boolean));
             const equipped = (sess.inventory || []).filter(item => item?.equipped || equippedIds.has(item?.id));
-            const bonuses = globalThis.HordeRpgMechanics.combinedModifiers(equipped);
+            const bonuses = globalThis.ExperimentalWorldsRpgMechanics.combinedModifiers(equipped);
             equipmentModifier = Number(bonuses.checks || 0)
                 + Number(bonuses.stats?.[definition?.id] || bonuses.stats?.[definition?.name] || 0)
                 + Number(bonuses.skills?.[capability?.id] || bonuses.skills?.[capability?.name] || 0);
@@ -2293,7 +2292,7 @@ function performAuthoritativeChecks(world, sess, checks) {
             sess.pendingChecks = sess.pendingChecks.slice(0, 10);
             sess.pendingCheck = sess.pendingChecks[0] || pendingRequest;
             results.push({ id: checkId, label, statId: definition?.id || '', capabilityId: capability?.id || '', difficulty, pending: true, success: null });
-            showToast(`🎲 Check requested: ${label} · roll d${dice.sides} vs ${difficulty}`, 'info');
+            ExperimentalWorldsHost.notify(`🎲 Check requested: ${label} · roll d${dice.sides} vs ${difficulty}`, 'info');
             return;
         }
 
@@ -2373,7 +2372,7 @@ function performAuthoritativeChecks(world, sess, checks) {
         sess.pendingCheck = sess.pendingChecks?.[0] || null;
         results.push(result);
         if (dice.visibility !== 'hidden') {
-            showToast(`${success ? '✓' : '×'} ${label}: ${roll}${statModifier || situationalModifier ? ` → ${total}` : ''} vs ${difficulty}`, success ? 'success' : 'info');
+            ExperimentalWorldsHost.notify(`${success ? '✓' : '×'} ${label}: ${roll}${statModifier || situationalModifier ? ` → ${total}` : ''} vs ${difficulty}`, success ? 'success' : 'info');
         }
     });
     if (sess.checkHistory.length > 100) sess.checkHistory.splice(0, sess.checkHistory.length - 100);
@@ -2632,7 +2631,7 @@ function grantQuestRewards(world, sess, quest) {
     quest.rewardsGranted = true;
     quest.rewardGrantedTurn = sess.turnCount || 1;
     quest.rewardReceipt = receipt.join(' · ') || 'No material reward';
-    if (receipt.length) showToast(`Quest rewards: ${receipt.join(', ')}`, 'success');
+    if (receipt.length) ExperimentalWorldsHost.notify(`Quest rewards: ${receipt.join(', ')}`, 'success');
     return true;
 }
 
@@ -2694,10 +2693,10 @@ function evaluateQuestProgress(world, sess, options = {}) {
             result.changed = true;
             if (quest.status === 'completed') {
                 result.completed.push(quest.id);
-                showToast(`Quest completed: ${quest.title}`, 'success');
+                ExperimentalWorldsHost.notify(`Quest completed: ${quest.title}`, 'success');
             } else if (quest.status === 'failed') {
                 result.failed.push(quest.id);
-                showToast(`Quest failed: ${quest.title}`, 'info');
+                ExperimentalWorldsHost.notify(`Quest failed: ${quest.title}`, 'info');
             }
         }
         if (JSON.stringify(quest.objectives) !== beforeObjectives) result.changed = true;
@@ -2738,7 +2737,7 @@ function applyQuestUpdates(world, sess, updates) {
                 completionNote: ''
             };
             sess.quests.push(quest);
-            showToast(`New quest: ${quest.title}`, 'success');
+            ExperimentalWorldsHost.notify(`New quest: ${quest.title}`, 'success');
         }
         if (rawUpdate.title !== undefined) quest.title = String(rawUpdate.title || quest.title).trim().slice(0, 200);
         if (rawUpdate.description !== undefined) quest.description = String(rawUpdate.description || '').trim().slice(0, 1000);
@@ -2838,7 +2837,7 @@ function extractQuestUpdateDirective(text) {
 }
 
 function openWorldQuestManager(questId = '') {
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
     const modal = document.getElementById('world-quest-modal-overlay');
     if (!world || !sess || !modal) return;
@@ -2901,8 +2900,8 @@ function openWorldQuestManager(questId = '') {
 }
 
 async function createNewWorldSession() {
-    const world = state.worlds.find(w => w.id === state.activeWorldId);
-    const inst = state.worldInstances[state.activeWorldId];
+    const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
+    const inst = ExperimentalWorldsState.worldInstances[ExperimentalWorldsState.activeWorldId];
     if (!world || !inst) return;
 
     // Validation: Ensure startLocationId exists
@@ -2985,16 +2984,16 @@ async function createNewWorldSession() {
     normalizeWorldSocietyState(world, newSess);
     // A timeline created now inherits the world pipeline. Existing timelines
     // are deliberately left untouched by migration code elsewhere.
-    window.HordeSidecarHooks?.normalizeWorldTimeline(world, newSess, {
+    window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline(world, newSess, {
         newWorld: true
     });
 
     inst.sessions.push(newSess);
     inst.activeSessionId = newSess.id;
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     renderWorldPlayState();
     openSessionZero(() => executeWorldTurn("init"));
-    showToast('New Timeline Created');
+    ExperimentalWorldsHost.notify('New Timeline Created');
 }
 
 function timelineForkLineage(session) {
@@ -3031,7 +3030,7 @@ function reparentTimelineDescendants(sessions, removedTimeline) {
 }
 
 async function deleteWorldTimeline(timelineId) {
-    const inst = state.worldInstances?.[state.activeWorldId];
+    const inst = ExperimentalWorldsState.worldInstances?.[ExperimentalWorldsState.activeWorldId];
     const targetIndex = inst?.sessions?.findIndex(session => session.id === timelineId) ?? -1;
     if (!inst || targetIndex < 0) return null;
     const target = inst.sessions[targetIndex];
@@ -3043,13 +3042,13 @@ async function deleteWorldTimeline(timelineId) {
         if (wasActive || !inst.sessions.some(session => session.id === inst.activeSessionId)) {
             inst.activeSessionId = inst.sessions[Math.min(targetIndex, inst.sessions.length - 1)].id;
         }
-        await saveState();
+        await ExperimentalWorldsHost.persist();
     } else {
         // The final timeline can be deleted too. Replace it immediately with a
         // genuinely new timeline rather than silently resurrecting deleted
         // state through the legacy session-healing path.
         inst.activeSessionId = null;
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         replacementCreated = true;
         await createNewWorldSession();
     }
@@ -3057,8 +3056,8 @@ async function deleteWorldTimeline(timelineId) {
 }
 
 async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount = null, options = {}) {
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
-    const inst = state.worldInstances?.[state.activeWorldId];
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
+    const inst = ExperimentalWorldsState.worldInstances?.[ExperimentalWorldsState.activeWorldId];
     const source = sourceSessionId ? (inst?.sessions || []).find(session => session.id === sourceSessionId) : getCurrentWorldSession();
     if (!world || !inst || !source) return;
     const maxTurn = Number(source.turnCount || 0);
@@ -3105,7 +3104,7 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
             }
         }
     }
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, fork);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, fork);
     if (protocol) {
         protocol.migration = {
             ...(protocol.migration || {}),
@@ -3116,18 +3115,18 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
     }
     inst.sessions.push(fork);
     inst.activeSessionId = fork.id;
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     renderWorldPlayState();
-    showToast('Timeline forked from committed continuity.', 'success');
+    ExperimentalWorldsHost.notify('Timeline forked from committed continuity.', 'success');
     return fork;
 }
 
 function renderWorldTimelineBrowser() {
     const host = document.getElementById('world-timeline-browser-list');
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
-    const sessions = state.worldInstances?.[state.activeWorldId]?.sessions || [];
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
+    const sessions = ExperimentalWorldsState.worldInstances?.[ExperimentalWorldsState.activeWorldId]?.sessions || [];
     if (!host || !world) return;
-    const activeId = state.worldInstances?.[state.activeWorldId]?.activeSessionId;
+    const activeId = ExperimentalWorldsState.worldInstances?.[ExperimentalWorldsState.activeWorldId]?.activeSessionId;
     host.innerHTML = sessions.length ? sessions.map(session => {
         const fork = session.forkedFrom || session.sidecar?.migration?.forkedFrom;
         const selected = session.id === activeId;
@@ -3140,10 +3139,10 @@ function renderWorldTimelineBrowser() {
         </div>`;
     }).join('') : '<div class="form-hint">No timelines exist yet. Create a new timeline from Session Setup.</div>';
     host.querySelectorAll('.timeline-select-btn').forEach(button => button.onclick = async () => {
-        const inst = state.worldInstances?.[state.activeWorldId];
+        const inst = ExperimentalWorldsState.worldInstances?.[ExperimentalWorldsState.activeWorldId];
         if (!inst || !inst.sessions.some(session => session.id === button.dataset.sessionId)) return;
         inst.activeSessionId = button.dataset.sessionId;
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
         renderWorldTimelineBrowser();
     });
@@ -3162,10 +3161,10 @@ function renderWorldTimelineBrowser() {
     });
     host.querySelectorAll('.timeline-delete-yes').forEach(button => button.onclick = async () => {
         const result = await deleteWorldTimeline(button.dataset.sessionId);
-        if (!result) return showToast('That timeline no longer exists.', 'info');
+        if (!result) return ExperimentalWorldsHost.notify('That timeline no longer exists.', 'info');
         renderWorldTimelineBrowser();
         if (!result.replacementCreated) renderWorldPlayState();
-        showToast(result.replacementCreated
+        ExperimentalWorldsHost.notify(result.replacementCreated
             ? 'Timeline deleted. A fresh Sidecar timeline is ready for setup.'
             : 'Timeline deleted. Child forks were kept as independent timelines.', 'success');
     });
@@ -3283,7 +3282,7 @@ function openSessionZero(onDone) {
     const lifeSeedOption = document.getElementById('sz-life-seed-option');
     const lifeSeedEnabled = document.getElementById('sz-life-seed-enabled');
     const lifeSeedStatus = document.getElementById('sz-life-seed-status');
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const isFirstRun = typeof onDone === 'function';
     // Every control in this modal is provisional until an explicit Begin/Save.
     // Starting-Life cards update the session for a live preview, so snapshot the
@@ -3303,15 +3302,15 @@ function openSessionZero(onDone) {
     // Do not borrow whichever reusable Persona happens to be globally active.
     const storedPersonaId = sess.personaId !== undefined ? sess.personaId : '';
     personaSelect.innerHTML = '<option value="">No Persona — use only the Starting Life</option>'
-        + state.personas.map(persona => `<option value="${escapeHTML(persona.id)}">${escapeHTML(persona.name || 'Unnamed Persona')}</option>`).join('');
-    personaSelect.value = state.personas.some(persona => persona.id === storedPersonaId) ? storedPersonaId : '';
+        + ExperimentalWorldsState.personas.map(persona => `<option value="${escapeHTML(persona.id)}">${escapeHTML(persona.name || 'Unnamed Persona')}</option>`).join('');
+    personaSelect.value = ExperimentalWorldsState.personas.some(persona => persona.id === storedPersonaId) ? storedPersonaId : '';
     controlledEntitySelect.innerHTML = '<option value="player">Create / control this player character</option>'
         + (world?.entities || []).filter(entity => entity.type === 'npc').map(entity =>
             `<option value="${escapeHTML(entity.id)}">Play ${escapeHTML(entity.name || entity.id)}</option>`).join('');
     controlledEntitySelect.value = (sess.controlledEntityId && (world?.entities || []).some(entity => entity.id === sess.controlledEntityId))
         ? sess.controlledEntityId : 'player';
     const renderPersonaPreview = () => {
-        const selected = state.personas.find(persona => persona.id === personaSelect.value);
+        const selected = ExperimentalWorldsState.personas.find(persona => persona.id === personaSelect.value);
         personaPreview.textContent = selected && personaPromptText(selected).trim()
             ? personaPromptText(selected)
             : 'No Persona selected. The Starting Life will be the only identity source.';
@@ -3357,14 +3356,14 @@ function openSessionZero(onDone) {
                 card.onclick = () => {
                     applyStartingLifeToSession(world, sess, life.id);
                     renderOrigins();
-                    renderSessionRoleSetup(world, sess, state.personas.find(persona => persona.id === personaSelect.value) || null);
+                    renderSessionRoleSetup(world, sess, ExperimentalWorldsState.personas.find(persona => persona.id === personaSelect.value) || null);
                     saveStatus.textContent = `Starting as ${life.name}`;
                 };
                 originList.appendChild(card);
             });
         };
         renderOrigins();
-        renderSessionRoleSetup(world, sess, state.personas.find(persona => persona.id === personaSelect.value) || null);
+        renderSessionRoleSetup(world, sess, ExperimentalWorldsState.personas.find(persona => persona.id === personaSelect.value) || null);
     }
 
     overlay.classList.remove('hidden');
@@ -3381,7 +3380,7 @@ function openSessionZero(onDone) {
         // A brand-new blank timeline is not valid gameplay state. Dismissing
         // setup returns to the world library instead of leaving a live input
         // that can start play without a chosen identity/start state.
-        if (isFirstRun && !sess.history?.length && !sess.setupComplete) switchView('worlds');
+        if (isFirstRun && !sess.history?.length && !sess.setupComplete) ExperimentalWorldsHost.navigate('worlds');
     };
 
     const readPreferences = () => ({
@@ -3423,14 +3422,14 @@ function openSessionZero(onDone) {
         s.storyPrefs = readPreferences();
         s.personaId = personaSelect.value || '';
         s.controlledEntityId = controlledEntitySelect.value || 'player';
-        const selectedPersona = state.personas.find(persona => persona.id === s.personaId) || null;
+        const selectedPersona = ExperimentalWorldsState.personas.find(persona => persona.id === s.personaId) || null;
         const controlledEntity = s.controlledEntityId !== 'player'
             ? (world.entities || []).find(entity => entity.id === s.controlledEntityId && entity.type === 'npc') : null;
         const roleSection = document.getElementById('sz-role-section');
         if (roleSection && !roleSection.classList.contains('hidden') && typeof roleSection._remainingPoints === 'function'
             && roleSection._remainingPoints() < 0) {
             saveStatus.textContent = 'Spend within the starting-point budget';
-            showToast('Your role uses more points than this World allows.', 'error');
+            ExperimentalWorldsHost.notify('Your role uses more points than this World allows.', 'error');
             saving = false;
             skipButton.disabled = false;
             saveButton.disabled = false;
@@ -3476,8 +3475,8 @@ function openSessionZero(onDone) {
             inventory: [...(s.inventory || [])]
         };
         s.setupComplete = true;
-        const sidecarProtocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, s);
-        const hierarchy = sidecarProtocol && window.HordeSidecarTimeline?.ensureHierarchy?.(sidecarProtocol, s);
+        const sidecarProtocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, s);
+        const hierarchy = sidecarProtocol && window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy?.(sidecarProtocol, s);
         if (hierarchy?.sequence) hierarchy.sequence.controlledEntityId = s.controlledEntityId;
         try {
             if (seedLife && isFirstRun && lifeSeedEnabled.checked && !s.lifeSeed?.initialized) {
@@ -3486,13 +3485,13 @@ function openSessionZero(onDone) {
                 const result = await initializeTimelineLife(world, s, selectedPersona);
                 lifeSeedStatus.textContent = result.summary;
             }
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             saveStatus.textContent = 'Saved';
             return true;
         } catch (error) {
             console.error('New Session Setup failed to save:', error);
             saveStatus.textContent = 'Save failed — try again';
-            showToast('Story preferences were not saved. Check available browser storage.', 'error');
+            ExperimentalWorldsHost.notify('Story preferences were not saved. Check available browser storage.', 'error');
             return false;
         } finally {
             saving = false;
@@ -3517,7 +3516,7 @@ function openSessionZero(onDone) {
  * disposition, goal, activity, and memories (deletable, for pruning bad ones).
  */
 function openNpcDossier(npcId) {
-    const world = state.worlds.find(w => w.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
     const npc = world ? world.entities.find(e => e.id === npcId) : null;
     const overlay = document.getElementById('npc-dossier-overlay');
@@ -3529,8 +3528,8 @@ function openNpcDossier(npcId) {
     const dispo = Math.max(0, Math.min(100, Number.isFinite(parsedDisposition) ? parsedDisposition : 50));
     const dispoColor = dispo < 35 ? 'var(--red)' : (dispo < 65 ? 'var(--warning, #FF8C42)' : 'var(--success)');
     const locName = world.locations.find(l => l.id === entState.location)?.name || 'Unknown';
-    const sidecarWorld = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
-    const sidecarGraph = sidecarWorld ? window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar) : null;
+    const sidecarWorld = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    const sidecarGraph = sidecarWorld ? window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar) : null;
     // A Sidecar dossier deliberately exposes only character-specific cognition.
     // Objective transcript snippets remain World History, never pseudo-memories.
     const obs = sidecarWorld
@@ -3621,14 +3620,14 @@ function openNpcDossier(npcId) {
         dispoSaveTimer = setTimeout(async () => {
             if (!sess.entityStates[npc.id]) sess.entityStates[npc.id] = { location: sess.playerLocation };
             sess.entityStates[npc.id].disposition = v;
-            await saveState();
+            await ExperimentalWorldsHost.persist();
         }, 400);
     };
 
     content.querySelectorAll('[data-dossier-claim-dismiss]').forEach(button => {
         button.onclick = async () => {
             if (!window.HordeDossierClaims?.suppressClaim(world, sess, button.dataset.dossierClaimDismiss, 'Dismissed from NPC dossier')) return;
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             openNpcDossier(npcId);
         };
     });
@@ -3662,8 +3661,8 @@ function openNpcDossier(npcId) {
             delete es.goalDeadlineTurn;
             delete es.goalStatus;
         }
-        await saveState();
-        showToast(goal ? `🎯 Goal set for ${npc.name}` : `Goal cleared for ${npc.name}`, 'success');
+        await ExperimentalWorldsHost.persist();
+        ExperimentalWorldsHost.notify(goal ? `🎯 Goal set for ${npc.name}` : `Goal cleared for ${npc.name}`, 'success');
     };
 
     // Observation rows with delete (prune wrong/stale NPC memories)
@@ -3678,7 +3677,7 @@ function openNpcDossier(npcId) {
         row.querySelector('button').onclick = async () => {
             if (sidecarWorld) sidecarGraph.cognition = sidecarGraph.cognition.filter(memory => memory.id !== o.id);
             else entState.observations.splice(idx, 1);
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             openNpcDossier(npcId); // re-render
         };
         obsList.appendChild(row);
@@ -3689,36 +3688,36 @@ function openNpcDossier(npcId) {
 }
 
 function enterWorld(worldId, sessionId = null) {
-    const world = state.worlds.find(w => w.id === worldId);
+    const world = ExperimentalWorldsState.worlds.find(w => w.id === worldId);
     if (!world) return;
     
-    state.activeWorldId = worldId;
+    ExperimentalWorldsState.activeWorldId = worldId;
     
     // Init Instance if not present
-    const isNewInstance = !state.worldInstances[worldId];
+    const isNewInstance = !ExperimentalWorldsState.worldInstances[worldId];
     if (isNewInstance) {
-        state.worldInstances[worldId] = {
+        ExperimentalWorldsState.worldInstances[worldId] = {
             sessions: [],
             activeSessionId: null
         };
         // This will trigger migration/init in getCurrentWorldSession()
     }
     
-    const inst = state.worldInstances[worldId];
+    const inst = ExperimentalWorldsState.worldInstances[worldId];
     if (sessionId && inst.sessions?.some(session => session.id === sessionId)) {
         inst.activeSessionId = sessionId;
-        saveState().catch(() => {});
+        ExperimentalWorldsHost.persist().catch(() => {});
     }
     const sess = getCurrentWorldSession({ newWorld: isNewInstance });
     normalizeLivingWorldState(world, sess);
     // Schedules remain useful constraints for Sidecar, but they must not
     // silently author arrivals merely because a world was opened.
-    const sidecarMode = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    const sidecarMode = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     const entryScheduleSync = sidecarMode ? { moves: 0 } : syncNPCSchedules(world, sess);
-    if (entryScheduleSync.moves > 0) saveState().catch(() => {});
+    if (entryScheduleSync.moves > 0) ExperimentalWorldsHost.persist().catch(() => {});
     
     document.getElementById('world-active-name').textContent = 'Living world';
-    switchView('worldPlay');
+    ExperimentalWorldsHost.navigate('worldPlay');
     renderWorldPlayState();
     
     // If history is empty, run New Session Setup then trigger the DM intro.
@@ -3728,16 +3727,16 @@ function enterWorld(worldId, sessionId = null) {
 }
 
 function renderWorldPlayState() {
-    const world = state.worlds.find(w => w.id === state.activeWorldId);
-    const inst = state.worldInstances[state.activeWorldId];
+    const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
+    const inst = ExperimentalWorldsState.worldInstances[ExperimentalWorldsState.activeWorldId];
     const sess = getCurrentWorldSession(); // Triggers Healing Pass
     if (!world || !inst || !sess) return;
     const ruleModules = normalizeWorldGameRules(world).modules;
-    const sidecarMode = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    const sidecarMode = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     // Legacy quest evaluation can mutate progress based on ambient state. In
     // Sidecar worlds it remains a reconciliation input, not a passive author.
     const questEvaluation = sidecarMode ? { changed: false } : evaluateQuestProgress(world, sess);
-    if (questEvaluation.changed) saveState().catch(() => {});
+    if (questEvaluation.changed) ExperimentalWorldsHost.persist().catch(() => {});
 
     // Auto-sync start location if history is empty (fixes workshop start location updates not applying)
     if (sess.history.length === 0) {
@@ -3756,7 +3755,7 @@ function renderWorldPlayState() {
         worldAvatar.textContent = world.banner ? '' : '🌐';
         worldAvatar.title = world.banner ? `${world.name || 'World'} artwork` : 'World';
     }
-    const modelName = (world.model || state.globalSettings.defaultModel || 'Default').split('/').pop();
+    const modelName = (world.model || ExperimentalWorldsState.globalSettings.defaultModel || 'Default').split('/').pop();
     document.getElementById('world-model-name').textContent = 'Model: ' + modelName;
     const personaButton = document.getElementById('world-persona-btn');
     if (personaButton) {
@@ -3875,7 +3874,7 @@ function renderWorldPlayState() {
                         <button type="button" class="wm-proposal-approve">Approve & commit</button>
                     </div>`).join('')}
                 </div>` : ''}`;
-            const mechApply = action => { action(); saveState().catch(() => {}); renderWorldPlayState(); };
+            const mechApply = action => { action(); ExperimentalWorldsHost.persist().catch(() => {}); renderWorldPlayState(); };
             mechCard.querySelectorAll('.wm-state-row').forEach(row => {
                 const actorId = row.dataset.actor, profileKey = row.dataset.profile;
                 row.querySelector('.wm-dose-dec')?.addEventListener('click', () => mechApply(() =>
@@ -3929,15 +3928,15 @@ function renderWorldPlayState() {
                     const cleanCommit = !!proposalAudit && proposalAudit.cast_checksum_match !== false
                         && !proposalRejected.length && !proposalMechanicsErrors.length;
                     if (!cleanCommit) {
-                        showToast('Proposal commit did not land cleanly; it stays pending for review', 'warning');
-                        saveState().catch(() => {});
+                        ExperimentalWorldsHost.notify('Proposal commit did not land cleanly; it stays pending for review', 'warning');
+                        ExperimentalWorldsHost.persist().catch(() => {});
                         renderWorldPlayState();
                         return;
                     }
                     window.HordeWorldMechanics?.approveGmProposal?.(world, sess, proposal.id,
                         receipt.turn_id, proposalAudit.world_state_version);
-                    showToast('GM proposal committed and marked approved', 'success');
-                    saveState().catch(() => {});
+                    ExperimentalWorldsHost.notify('GM proposal committed and marked approved', 'success');
+                    ExperimentalWorldsHost.persist().catch(() => {});
                     renderWorldPlayState();
                 });
             });
@@ -4007,19 +4006,19 @@ function renderWorldPlayState() {
             btn.onclick = () => {
                 const playerState = normalizePlayerRulesState(world, sess);
                 if (playerState.status !== 'active') {
-                    showToast(playerState.status === 'dead'
+                    ExperimentalWorldsHost.notify(playerState.status === 'dead'
                         ? 'Game Over — this timeline cannot continue.'
                         : 'You are incapacitated and cannot travel until you recover.', 'info');
                     return;
                 }
                 const targetLoc = resolveWorldExitTarget(world, exit);
                 if (!targetLoc) {
-                    showToast(`Broken exit: "${exitText}" does not resolve to one unique location.`, 'error');
+                    ExperimentalWorldsHost.notify(`Broken exit: "${exitText}" does not resolve to one unique location.`, 'error');
                     return;
                 }
                 if (sidecarMode) {
                     if (worldTurnInProgress) {
-                        showToast('The narrator is still responding — please wait.', 'info');
+                        ExperimentalWorldsHost.notify('The narrator is still responding — please wait.', 'info');
                         return;
                     }
                     // An exit is player intent in Sidecar mode. The Narrator
@@ -4033,7 +4032,7 @@ function renderWorldPlayState() {
                 }
                 const movement = movePlayerAlongWorldPath(world, sess, targetLoc);
                 if (!movement.ok || !movement.moved) {
-                    showToast(movement.reason === 'already_there'
+                    ExperimentalWorldsHost.notify(movement.reason === 'already_there'
                         ? `You are already at ${targetLoc.name}.`
                         : `${targetLoc.name} is not reachable from here.`, 'info');
                     return;
@@ -4041,7 +4040,7 @@ function renderWorldPlayState() {
                 rollForScenePopulation(targetLoc.id, false);
                 evaluateQuestProgress(world, sess);
                 addWorldMessage('system', `You move to ${targetLoc.name}.`);
-                saveState().catch(() => {}); // PERSIST IMMEDIATELY
+                ExperimentalWorldsHost.persist().catch(() => {}); // PERSIST IMMEDIATELY
                 renderWorldPlayState();
                 executeWorldTurn("look");
             };
@@ -4072,8 +4071,8 @@ function renderWorldPlayState() {
         invList.innerHTML = '<div style="color:var(--text-3); font-size:0.8rem;">Empty</div>';
     } else {
         sess.inventory.forEach((item, idx) => {
-            const itemName = globalThis.HordeRpgMechanics?.itemName(item) || String(item || 'Item');
-            const detail = globalThis.HordeRpgMechanics?.describeModifiers(item) || '';
+            const itemName = globalThis.ExperimentalWorldsRpgMechanics?.itemName(item) || String(item || 'Item');
+            const detail = globalThis.ExperimentalWorldsRpgMechanics?.describeModifiers(item) || '';
             const equipped = !!item?.equipped || Object.values(sess.equipment || {}).includes(item?.id);
             const chip = document.createElement('span');
             chip.className = `inv-chip${equipped ? ' equipped' : ''}`;
@@ -4085,7 +4084,7 @@ function renderWorldPlayState() {
             `;
             const inputEl = document.getElementById('world-user-input');
             const sendIntent = (text) => {
-                if (worldTurnInProgress) return showToast('The DM is still responding — please wait.', 'info');
+                if (worldTurnInProgress) return ExperimentalWorldsHost.notify('The DM is still responding — please wait.', 'info');
                 inputEl.value = text;
                 inputEl.focus();
             };
@@ -4099,14 +4098,14 @@ function renderWorldPlayState() {
                     if (prior) prior.equipped = false;
                     sess.equipment[slot] = item.id; item.equipped = true;
                 }
-                await saveState(); renderWorldPlayState();
+                await ExperimentalWorldsHost.persist(); renderWorldPlayState();
             });
             chip.querySelector('.inv-chip-drop').onclick = () => {
-                showConfirmModal('Drop Item', `Drop "${itemName}" here? It will be removed from your pack.`, async () => {
+                ExperimentalWorldsHost.confirmModal('Drop Item', `Drop "${itemName}" here? It will be removed from your pack.`, async () => {
                     Object.keys(sess.equipment || {}).forEach(slot => { if (sess.equipment[slot] === item?.id) sess.equipment[slot] = null; });
                     sess.inventory.splice(idx, 1);
                     addWorldMessage('system', `You drop the ${itemName}.`);
-                    await saveState();
+                    await ExperimentalWorldsHost.persist();
                     renderWorldPlayState();
                 });
             };
@@ -4248,7 +4247,7 @@ function renderWorldPlayState() {
             sel.focus();
             sel.onchange = async () => {
                 sess.weatherOverride = sel.value || null;
-                await saveState();
+                await ExperimentalWorldsHost.persist();
                 renderWorldPlayState();
             };
             sel.onblur = () => renderWorldPlayState();
@@ -4540,9 +4539,9 @@ function renderWorldPlayState() {
         appendWorldMessageUI(msg, idx);
     });
     container.scrollTop = container.scrollHeight;
-    const sidecarProtocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const sidecarProtocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     {
-        const sidecarAvailable = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+        const sidecarAvailable = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
         const worldInput = document.getElementById('world-user-input');
         if (worldInput) worldInput.placeholder = sidecarAvailable && sidecarProtocol?.inputMode === 'sidecar'
             ? 'Ask Sidecar about continuity, questions, or a refinement…'
@@ -4554,7 +4553,7 @@ function renderWorldPlayState() {
             button.style.display = sidecarAvailable ? '' : 'none';
         });
         const hierarchy = sidecarAvailable
-            ? window.HordeSidecarTimeline?.ensureHierarchy(sidecarProtocol, sess)
+            ? window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(sidecarProtocol, sess)
             : null;
         const closeButton = document.getElementById('world-close-sequence-btn');
         if (closeButton && sidecarAvailable) {
@@ -4798,7 +4797,7 @@ function worldSpeechIsPlayerVoice(lead, after) {
 }
 
 function renderWorldPlayerVoiceCard(sess, dialogue) {
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const persona = getTimelinePersona(sess, world);
     const identity = worldControlledPlayerIdentity(world, sess);
     const name = persona?.name || identity.name || 'You';
@@ -4950,7 +4949,7 @@ function renderWorldNarrativeHtml(world, text, sess = null) {
 }
 
 function renderWorldPlayerMessageHtml(sess, text) {
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const persona = getTimelinePersona(sess, world);
     const identity = worldControlledPlayerIdentity(world, sess);
     const name = persona?.name || identity.name || 'You';
@@ -5079,7 +5078,7 @@ function appendWorldMessageUI(msg, index = null) {
     const displayText = versions[currentVersionIdx] || msg.text;
 
     // Per-message metadata line (revealed by the 👁️ Metadata toggle)
-    const world = state.worlds.find(w => w.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
     const activeSession = getCurrentWorldSession();
     const presentation = world ? normalizeWorldPresentation(world) : null;
     const presentationMode = ['classic', 'cinematic'].includes(activeSession?.presentationMode)
@@ -5203,7 +5202,7 @@ function appendWorldMessageUI(msg, index = null) {
         const textDiv = div.querySelector('.msg-text');
         const rewindDraftBtn = div.querySelector('.msg-rewind-draft-btn');
         const sess = getCurrentWorldSession();
-        const world = state.worlds.find(item => item.id === state.activeWorldId);
+        const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
         div.querySelector('.sidecar-retry-scene-update')?.addEventListener('click', async event => {
             if (!world || !sess || sidecarRetryInProgress) return;
             const button = event.currentTarget;
@@ -5234,12 +5233,12 @@ function appendWorldMessageUI(msg, index = null) {
                 else delete msg.ledgerEntry;
                 if (msg.sidecarBackstages?.[msg.currentVersion]) msg.sidecarBackstage = msg.sidecarBackstages[msg.currentVersion];
                 const sess = getCurrentWorldSession();
-                const world = state.worlds.find(w => w.id === state.activeWorldId);
+                const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
                 const snapshot = msg.versionSnapshots?.[msg.currentVersion];
                 if (world && snapshot) restoreWorldTurnState(world, sess, snapshot);
                 selectSidecarTake(sess, msg, msg.currentVersion);
                 if (sess) invalidateEpisodicFrom(sess, sess.history.indexOf(msg));
-                await saveState();
+                await ExperimentalWorldsHost.persist();
                 renderWorldPlayState();
             };
             div.querySelector('.next-ver').onclick = async () => {
@@ -5250,12 +5249,12 @@ function appendWorldMessageUI(msg, index = null) {
                 else delete msg.ledgerEntry;
                 if (msg.sidecarBackstages?.[msg.currentVersion]) msg.sidecarBackstage = msg.sidecarBackstages[msg.currentVersion];
                 const sess = getCurrentWorldSession();
-                const world = state.worlds.find(w => w.id === state.activeWorldId);
+                const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
                 const snapshot = msg.versionSnapshots?.[msg.currentVersion];
                 if (world && snapshot) restoreWorldTurnState(world, sess, snapshot);
                 selectSidecarTake(sess, msg, msg.currentVersion);
                 if (sess) invalidateEpisodicFrom(sess, sess.history.indexOf(msg));
-                await saveState();
+                await ExperimentalWorldsHost.persist();
                 renderWorldPlayState();
             };
         }
@@ -5272,14 +5271,14 @@ function appendWorldMessageUI(msg, index = null) {
             // When the player has not opened Edit, restore the submitted
             // wording itself. A hidden textarea must not make rewind inert.
             const editedText = editArea.value.trim() || String(displayText || msg.text || '').trim();
-            if (!editedText) return showToast('The replay draft cannot be empty.', 'info');
+            if (!editedText) return ExperimentalWorldsHost.notify('The replay draft cannot be empty.', 'info');
             const currentSession = getCurrentWorldSession();
             const messageIndex = currentSession?.history.indexOf(msg) ?? -1;
             const affectedDm = messageIndex >= 0
                 ? currentSession.history.slice(messageIndex + 1).find(entry => entry.role === 'dm' && entry.turnSnapshot)
                 : null;
-            if (!affectedDm) return showToast('There is no committed response after this message to rewind.', 'info');
-            const world = state.worlds.find(item => item.id === state.activeWorldId);
+            if (!affectedDm) return ExperimentalWorldsHost.notify('There is no committed response after this message to rewind.', 'info');
+            const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
             if (world && affectedDm.turnSnapshot) restoreWorldTurnState(world, currentSession, affectedDm.turnSnapshot);
             // The snapshot restores Sidecar's selected pre-turn revision
             // and invalidates all derived Episode, cognition, scene and
@@ -5287,9 +5286,9 @@ function appendWorldMessageUI(msg, index = null) {
             // legacy archive receives the same rewind for Inline timelines.
             invalidateEpisodicFrom(currentSession, messageIndex);
             currentSession.history.splice(messageIndex);
-            const protocol = world && window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, currentSession);
+            const protocol = world && window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, currentSession);
             if (protocol) protocol.inputMode = 'narrator';
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             renderWorldPlayState();
             // renderWorldPlayState rebuilds the composer. Restore the draft
             // only after that replacement has happened; setting it before the
@@ -5301,7 +5300,7 @@ function appendWorldMessageUI(msg, index = null) {
                 resizeWorldMessageInput(restoredInput);
                 restoredInput.focus();
             }
-            showToast('Timeline rewound. Review the draft, then send it to continue from here.', 'success');
+            ExperimentalWorldsHost.notify('Timeline rewound. Review the draft, then send it to continue from here.', 'success');
         };
         rewindDraftBtn?.addEventListener('click', async () => {
             if (!rewindArmed) {
@@ -5334,7 +5333,7 @@ function appendWorldMessageUI(msg, index = null) {
                 editArea.focus();
             } else {
                 const editedText = editArea.value.trim();
-                if (!editedText) return showToast('The edited message cannot be empty.', 'info');
+                if (!editedText) return ExperimentalWorldsHost.notify('The edited message cannot be empty.', 'info');
                 const currentSession = getCurrentWorldSession();
                 const messageIndex = currentSession?.history.indexOf(msg) ?? -1;
                 if (msg.versions) {
@@ -5350,7 +5349,7 @@ function appendWorldMessageUI(msg, index = null) {
                         note: 'Visible player wording was edited without replaying the already committed response.'
                     };
                 }
-                await saveState();
+                await ExperimentalWorldsHost.persist();
                 renderWorldPlayState();
                 isEditing = false;
             }
@@ -5440,7 +5439,7 @@ function invalidateSidecarDerivedAfterRestore(sess, activeTurnIds) {
             question.supersededAt = question.supersededAt || new Date().toISOString();
         }
     });
-    const graph = window.HordeSidecarMemoryGraph?.graph?.(protocol);
+    const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(protocol);
     if (graph) {
         graph.worldHistory = (graph.worldHistory || []).filter(record => isActiveSource(record.turnId));
         const removedEpisodes = new Set((graph.episodes || []).filter(episode =>
@@ -5535,7 +5534,7 @@ function restoreWorldTurnState(world, sess, snapshot) {
         // Do this after canonical snapshot restoration so the snapshot remains
         // authoritative for story state, while the selected Sidecar pipeline
         // and its migration provenance remain authoritative for execution.
-        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess) || sess.sidecar;
+        const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess) || sess.sidecar;
         if (protocol) {
             protocol.mode = 'sidecar';
             protocol.migration = {
@@ -5573,8 +5572,8 @@ function addWorldMessage(role, text, metadata = {}) {
             
             // Scrub NPC observations for the previous version
             if (lastMsg.id) {
-                const world = state.worlds.find(w => w.id === state.activeWorldId);
-                if (world && !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
+                const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
+                if (world && !window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
                     world.entities.forEach(ent => {
                         if (ent.type === 'npc' && sess.entityStates[ent.id]) {
                             const entState = sess.entityStates[ent.id];
@@ -5627,7 +5626,7 @@ function addWorldMessage(role, text, metadata = {}) {
             invalidateEpisodicFrom(sess, sess.history.length - 1);
 
             if (!metadata.deferPersist) {
-                saveState().catch(() => {});
+                ExperimentalWorldsHost.persist().catch(() => {});
                 renderWorldPlayState();
             }
         }
@@ -5639,8 +5638,8 @@ function addWorldMessage(role, text, metadata = {}) {
         // Legacy observations are a compatibility cache only.  Sidecar worlds
         // derive private cognition later from episode-scoped perception evidence;
         // copying raw narration into every NPC dossier would grant false memory.
-        const world = state.worlds.find(w => w.id === state.activeWorldId);
-        if (world && !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
+        const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
+        if (world && !window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
             world.entities.forEach(ent => {
                 if (ent.type === 'npc') {
                     const entState = sess.entityStates[ent.id];
@@ -5656,13 +5655,13 @@ function addWorldMessage(role, text, metadata = {}) {
         }
 
         if (!metadata.deferPersist) {
-            saveState().catch(() => {});
+            ExperimentalWorldsHost.persist().catch(() => {});
             renderWorldPlayState();
         }
     }
 
     // Background, non-blocking asynchronous embedding pre-computation for future world turns
-    const embeddingWorld = state.worlds.find(w => w.id === state.activeWorldId);
+    const embeddingWorld = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
     const shouldEmbedMessage = !embeddingWorld
         || !normalizeWorldKernelConfig(embeddingWorld).enabled
         || normalizeWorldKernelConfig(embeddingWorld).memoryMode === 'semantic';
@@ -5674,7 +5673,7 @@ function addWorldMessage(role, text, metadata = {}) {
                 const emb = await HordeVectorMemory.getCachedEmbedding(msgText);
                 if (emb) {
                     msgRef.embedding = emb;
-                    await saveState();
+                    await ExperimentalWorldsHost.persist();
                     console.log(`World Mode: Asynchronously generated/cached embedding for event.`);
                 }
             } catch (err) {
@@ -5726,8 +5725,8 @@ async function getMemoryMatrixContext(world, sess, userInput) {
     if (allCandidates.length === 0) return "";
 
     // 2. Perform hybrid search
-    const thresh = state.globalSettings.memoryThreshold !== undefined ? state.globalSettings.memoryThreshold : 0.35;
-    const topk = state.globalSettings.memoryTopK !== undefined ? state.globalSettings.memoryTopK : 8;
+    const thresh = ExperimentalWorldsState.globalSettings.memoryThreshold !== undefined ? ExperimentalWorldsState.globalSettings.memoryThreshold : 0.35;
+    const topk = ExperimentalWorldsState.globalSettings.memoryTopK !== undefined ? ExperimentalWorldsState.globalSettings.memoryTopK : 8;
     
     let retrieved = [];
     const kernelMemoryMode = normalizeWorldKernelConfig(world).memoryMode;
@@ -5808,9 +5807,9 @@ function getObservationWindow(npcId) {
     const sess = getCurrentWorldSession();
     const entState = sess ? sess.entityStates[npcId] : null;
     if (!entState) return [];
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
-    if (world && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
-        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
+    if (world && window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
+        const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar);
         return (graph?.cognition || []).filter(memory => memory.characterId === npcId && memory.status === 'active')
             .slice(-30).map(memory => ({ text: memory.text, id: memory.id, epistemicStatus: memory.epistemicStatus, sourceTurnIds: memory.sourceTurnIds }));
     }
@@ -5943,8 +5942,8 @@ function buildWorldMicroFrameEnvelope(world, sess, userInput) {
 }
 
 async function requestWorldMicroFrame(world, sess, userInput) {
-    if (!userInput || !window.HordeLabs) return null;
-    return labsProposal('world_micro_frame', buildWorldMicroFrameEnvelope(world, sess, userInput),
+    if (!userInput || !ExperimentalWorldsHost.labsAvailable()) return null;
+    return ExperimentalWorldsHost.labsProposal('world_micro_frame', buildWorldMicroFrameEnvelope(world, sess, userInput),
         'worlds', { priority: 135 });
 }
 
@@ -5960,17 +5959,17 @@ function captureExperimentalTurnOwner(world, sess) {
         worldEpoch: Number(sess?._worldEpoch) || 0,
         restoreGeneration: Number(window.ExperimentalWorldsRestoreGeneration) || 0,
         effectiveSettings: Object.freeze({
-            model: String(world?.model || state.globalSettings?.defaultModel || ''),
-            provider: String(world?.provider || state.globalSettings?.apiProvider || '')
+            model: String(world?.model || ExperimentalWorldsState.globalSettings?.defaultModel || ''),
+            provider: String(world?.provider || ExperimentalWorldsState.globalSettings?.apiProvider || '')
         })
     });
 }
 
 function assertExperimentalTurnOwner(owner) {
-    const currentWorld = state.worlds.find(candidate => candidate.id === owner.worldId);
+    const currentWorld = ExperimentalWorldsState.worlds.find(candidate => candidate.id === owner.worldId);
     const currentSession = getCurrentWorldSession();
-    const valid = state.view === 'worldPlay'
-        && currentWorld === state.worlds.find(candidate => candidate.id === state.activeWorldId)
+    const valid = ExperimentalWorldsState.view === 'worldPlay'
+        && currentWorld === ExperimentalWorldsState.worlds.find(candidate => candidate.id === ExperimentalWorldsState.activeWorldId)
         && String(currentSession?.id || '') === owner.timelineId
         && Number(currentSession?._worldEpoch) === owner.worldEpoch
         && Number(window.ExperimentalWorldsRestoreGeneration) === owner.restoreGeneration;
@@ -5999,7 +5998,7 @@ function applyUserDirectedMovement(world, sess, userInput, microCandidate = null
     let targetPhrase = extractUserMovementTarget(userInput);
     const playerState = normalizePlayerRulesState(world, sess);
     if (playerState?.status !== 'active') {
-        showToast(playerState.status === 'dead'
+        ExperimentalWorldsHost.notify(playerState.status === 'dead'
             ? 'This timeline has ended. Reroll the fatal turn or begin a new timeline.'
             : 'You are incapacitated and cannot travel until you recover.', 'info');
         return '';
@@ -6018,7 +6017,7 @@ function applyUserDirectedMovement(world, sess, userInput, microCandidate = null
     if (!targetLoc) {
         const knownButBlocked = findFuzzyLocation(targetPhrase, world.locations);
         if (knownButBlocked) {
-            showToast(`${knownButBlocked.name} has no valid route from here.`, 'info');
+            ExperimentalWorldsHost.notify(`${knownButBlocked.name} has no valid route from here.`, 'info');
             return '';
         }
         // A line of roleplay is not a failed command. When the player is clearly
@@ -6033,7 +6032,7 @@ function applyUserDirectedMovement(world, sess, userInput, microCandidate = null
         // header never changed.
         sess.unresolvedDestination = targetPhrase.slice(0, 60);
         if (!looksLikeProse) {
-            showToast(`No route from here to "${targetPhrase.slice(0, 60)}".`, 'info');
+            ExperimentalWorldsHost.notify(`No route from here to "${targetPhrase.slice(0, 60)}".`, 'info');
         } else {
             console.log(`Horde Engine: no registered location matches "${targetPhrase}" — leaving it to the DM.`);
         }
@@ -6041,12 +6040,12 @@ function applyUserDirectedMovement(world, sess, userInput, microCandidate = null
     }
     const result = movePlayerAlongWorldPath(world, sess, targetLoc);
     if (!result.ok) {
-        showToast(`${targetLoc.name} is not reachable from here.`, 'info');
+        ExperimentalWorldsHost.notify(`${targetLoc.name} is not reachable from here.`, 'info');
         return '';
     }
     if (!result.moved) return '';
     console.log(`Horde Engine: User-Initiated Move — ${targetLoc.name}`);
-    showToast(`Heading to ${targetLoc.name}...`, 'info');
+    ExperimentalWorldsHost.notify(`Heading to ${targetLoc.name}...`, 'info');
     rollForScenePopulation(sess.playerLocation, false);
     const routeDescription = (result.travelLegs || []).map(describeWorldTravelLeg).filter(Boolean).join('; ');
     return `\n[SYSTEM: The player has just arrived at ${targetLoc.name}${routeDescription ? ` after travelling via ${routeDescription}` : ''}. ${result.travelMinutes ? `${result.travelMinutes} minutes elapsed.` : ''} Narrate the journey or arrival in a way that respects the transport mode, route, fare and elapsed time. Describe who they see there immediately.]`;
@@ -6061,10 +6060,10 @@ async function executeWorldTurn(commandOrReroll = null) {
     // spawns — running two concurrently corrupts state. Block until the
     // in-flight turn finishes.
     if (worldTurnInProgress) {
-        showToast('The DM is still responding — please wait.', 'info');
+        ExperimentalWorldsHost.notify('The DM is still responding — please wait.', 'info');
         return;
     }
-    if (!(await ensureSharedLibraryFreshForGeneration())) return;
+    if (!(await ExperimentalWorldsHost.ensureSharedLibraryFresh())) return;
     worldTurnInProgress = true;
     const worldSendBtn = document.getElementById('world-send-btn');
     if (worldSendBtn) {
@@ -6101,17 +6100,17 @@ async function executeWorldTurn(commandOrReroll = null) {
     let turnOwner = null;
 
     try {
-        world = state.worlds.find(w => w.id === state.activeWorldId);
+        world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
         sess = getCurrentWorldSession();
         
         if (!world || !sess) {
             throw new Error("World state not initialized. Please ensure a world is selected.");
         }
         normalizeLivingWorldState(world, sess);
-        sidecarMode = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+        sidecarMode = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
         if (sidecarMode && command !== 'init') {
-            const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline(world, sess);
-            let hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess);
+            const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline(world, sess);
+            let hierarchy = window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(protocol, sess);
             // Versions before the opening bootstrap could store a visible
             // authored intro without any Sidecar turn. Repair exactly that
             // orphaned opening before treating a closed sequence as an
@@ -6121,22 +6120,22 @@ async function executeWorldTurn(commandOrReroll = null) {
                 ? (sess.history || []).find(message => message?.role === 'dm' && String(message.text || '').trim())
                 : null;
             if (!hierarchy && opening) {
-                hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: true });
+                hierarchy = window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: true });
                 await bootstrapSidecarOpeningTurn(world, sess, String(opening.text || ''));
-                hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess);
-                await saveState();
+                hierarchy = window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(protocol, sess);
+                await ExperimentalWorldsHost.persist();
             }
             if (!hierarchy) {
                 const activeSequence = (protocol?.sequences || []).find(sequence =>
                     sequence?.id === protocol?.activeSequenceId && sequence.status === 'active');
-                showToast(activeSequence
+                ExperimentalWorldsHost.notify(activeSequence
                     ? 'This scene is closed. Ask Sidecar to begin the next scene before continuing narration.'
                     : 'This sequence is closed. Plan and approve the next sequence before continuing narration.', 'info');
                 return;
             }
         }
         if (sess.pendingChecks?.length && !isReroll && command !== 'init') {
-            showToast('Resolve the pending check before taking another action.', 'info');
+            ExperimentalWorldsHost.notify('Resolve the pending check before taking another action.', 'info');
             return;
         }
         if (!isReroll) bumpWorldEpoch(sess);
@@ -6155,7 +6154,7 @@ async function executeWorldTurn(commandOrReroll = null) {
         const turnRuleModules = normalizeWorldGameRules(world).modules;
         const playerState = normalizePlayerRulesState(world, sess);
         if (playerState?.status === 'dead' && !isReroll) {
-            showToast('Game Over — reroll the fatal turn or begin a new timeline.', 'error');
+            ExperimentalWorldsHost.notify('Game Over — reroll the fatal turn or begin a new timeline.', 'error');
             return;
         }
 
@@ -6218,7 +6217,7 @@ async function executeWorldTurn(commandOrReroll = null) {
             introMsg.versionSnapshots = [captureWorldTurnState(world, sess)];
             delete introMsg.postSnapshot;
             delete sess.pendingOriginIntro;
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             renderWorldPlayState();
             return;
         }
@@ -6228,10 +6227,10 @@ async function executeWorldTurn(commandOrReroll = null) {
     console.log(`Horde Engine: Starting Turn — Command: ${command || 'None'}, Reroll: ${isReroll}`);
 
     if (isReroll) {
-        if (sess.history.length === 0) return showToast('No history to reroll', 'info');
+        if (sess.history.length === 0) return ExperimentalWorldsHost.notify('No history to reroll', 'info');
         const lastMsg = sess.history[sess.history.length - 1];
-        if (lastMsg.role !== 'dm') return showToast('Can only reroll DM responses', 'info');
-        if (!lastMsg.turnSnapshot) return showToast('This older response predates safe rerolls. Continue once, then reroll the new response.', 'info');
+        if (lastMsg.role !== 'dm') return ExperimentalWorldsHost.notify('Can only reroll DM responses', 'info');
+        if (!lastMsg.turnSnapshot) return ExperimentalWorldsHost.notify('This older response predates safe rerolls. Continue once, then reroll the new response.', 'info');
         restoredRerollSnapshot = !!lastMsg.turnSnapshot;
         turnSnapshot = lastMsg.turnSnapshot || captureWorldTurnState(world, sess);
         restoreWorldTurnState(world, sess, turnSnapshot);
@@ -6622,7 +6621,7 @@ Characters in this world are NOT omniscient. They only know what they have perso
     let systemPrompt = sidecarMode ? '' : `${world.dmPrompt}${personaContext}${storyPrefsPrompt}${knowledgeBarrier}${labsWorldHint}
 
 ${HORDE_NARRATIVE_RULES}
-${state.globalSettings.immersionMode !== false ? '\n' + HORDE_IMMERSION_DIRECTIVE + '\n' : ''}
+${ExperimentalWorldsState.globalSettings.immersionMode !== false ? '\n' + HORDE_IMMERSION_DIRECTIVE + '\n' : ''}
 [ENGINE MANDATE: SHADOW LEDGER]
 You are the DM. You have access to "Hints" about secrets in this scene. 
 1. If a secret is [LOCKED SECRET], you only know the hint. You DO NOT know the actual truth.
@@ -6668,8 +6667,8 @@ NPCs NOT Present (ABSENT): ${absentNpcManifest || 'None'}${referencedNpcContext}
   ↳ ABSENT characters must NOT appear, speak, or act in this scene. If the story needs one of them here, ${sidecarMode ? 'author their arrival clearly and name it in the hidden handoff' : "move them with 'npc_moves' AND narrate their arrival"} — characters walk in, they do not materialize.${deadNpcManifest ? `
 Dead / Departed (PERMANENT — they can NEVER appear again): ${deadNpcManifest}
   ↳ The dead stay dead. They may be mourned, mentioned, or found as remains — never walking, talking, or acting. Only an explicitly authored resurrection${sidecarMode ? ' reconciled by Sidecar' : " story event (with 'npc_status_changes' setting them alive)"} can undo this.` : ''}
-Inventory: ${ruleModules.inventory ? (sess.inventory.map(item => globalThis.HordeRpgMechanics?.itemName(item) || String(item || '')).filter(Boolean).join(', ') || 'None') : 'Disabled for this world'}
-Equipped: ${ruleModules.equipment ? Object.entries(sess.equipment || {}).filter(([, itemId]) => itemId).map(([slot, itemId]) => `${slot}: ${globalThis.HordeRpgMechanics?.itemName((sess.inventory || []).find(item => item?.id === itemId)) || 'unknown item'}`).join(', ') || 'None' : 'Disabled for this world'}
+Inventory: ${ruleModules.inventory ? (sess.inventory.map(item => globalThis.ExperimentalWorldsRpgMechanics?.itemName(item) || String(item || '')).filter(Boolean).join(', ') || 'None') : 'Disabled for this world'}
+Equipped: ${ruleModules.equipment ? Object.entries(sess.equipment || {}).filter(([, itemId]) => itemId).map(([slot, itemId]) => `${slot}: ${globalThis.ExperimentalWorldsRpgMechanics?.itemName((sess.inventory || []).find(item => item?.id === itemId)) || 'unknown item'}`).join(', ') || 'None' : 'Disabled for this world'}
 Player Stats: ${statContext}
 Player Condition: ${ruleModules.health || ruleModules.conditions
         ? `${playerRulesState.status}${playerRulesState.conditions.length ? ` — ${playerRulesState.conditions.join(', ')}` : ''}`
@@ -6698,7 +6697,7 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
     }
     
     // --- Preset Modular Logic ---
-    const allPresets = getAllPresets();
+    const allPresets = ExperimentalWorldsHost.getAllPresets();
     const preset = allPresets.find(p => p.id === world.activePresetId);
     let injectedHistory = [];
     let directorNotesRequired = false;
@@ -6713,14 +6712,14 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
             personality: world.dmPrompt || '',
             desc: world.description || ''
         };
-        getOrderedPresetPrompts(preset, false, true).forEach((p) => {
+        ExperimentalWorldsHost.getOrderedPresetPrompts(preset, false, true).forEach((p) => {
             const idx = preset.data.prompts.indexOf(p);
             const override = overrides[idx] || {};
-            if (!isPresetPromptEnabled(preset, p, override)) return;
+            if (!ExperimentalWorldsHost.isPresetPromptEnabled(preset, p, override)) return;
 
             const promptContent = override.prompt !== undefined ? override.prompt : (p.content || p.prompt || '');
             if (!promptContent.trim()) return;
-            const resolvedContent = replaceMacros(promptContent, worldMacroContext);
+            const resolvedContent = ExperimentalWorldsHost.replaceMacros(promptContent, worldMacroContext);
             if (/<plot_tracking_module\b|<summary>\s*Plot Momentum\s*<\/summary>|Append_Hidden_Block/i.test(resolvedContent)) {
                 directorNotesRequired = true;
             }
@@ -6760,8 +6759,8 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
             effectiveSidecarMemoryConfig(world).retrievalLimit,
             { characterIds: priorPacket.activeCast || [] }).catch(() => []);
         if (sess.sidecar) sess.sidecar.lastRetrievalCount = sidecarRecall.length;
-        const memoryGraph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar);
-        const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy?.(sess.sidecar, sess);
+        const memoryGraph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar);
+        const hierarchy = window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy?.(sess.sidecar, sess);
         const replacementMemory = [
             ...(memoryGraph?.sequences || []).filter(record => record.sequenceId === hierarchy?.sequence?.id && record.summary),
             ...(memoryGraph?.scenes || []).filter(record => record.sceneId === hierarchy?.scene?.id && record.summary),
@@ -6856,7 +6855,7 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
     const dmTypingLabel = document.getElementById('world-dm-typing-label');
     if (dmTyping) { dmTypingLabel.textContent = 'DM is writing...'; dmTyping.style.display = 'flex'; }
 
-    showToast('DM is thinking...', 'info');
+    ExperimentalWorldsHost.notify('DM is thinking...', 'info');
     
         // --- History Truncation (Safety Audit: More Conservative) ---
         const CONTEXT_LIMIT = parseInt(world.contextSize) || 8192;
@@ -6878,14 +6877,14 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
             const warningKey = `${world.id}:${preset.id}:${CONTEXT_LIMIT}:${recommendedContext}`;
             if (lastPresetContextWarningKey !== warningKey) {
                 lastPresetContextWarningKey = warningKey;
-                showToast(`Preset context is too small (${CONTEXT_LIMIT} tokens). Raise World Context Size to at least ${recommendedContext}.`, 'warning');
+                ExperimentalWorldsHost.notify(`Preset context is too small (${CONTEXT_LIMIT} tokens). Raise World Context Size to at least ${recommendedContext}.`, 'warning');
             }
             console.warn(`Horde Engine: preset "${preset.name}" plus engine instructions exceed the configured context (${CONTEXT_LIMIT}); recommended minimum ${recommendedContext}.`);
         }
         
         let historyToSend = [];
         const retainedVerbatim = Math.max(0, effectiveSidecarMemoryConfig(world).verbatimTurnWindow);
-        const sidecarHistoryGraph = sidecarMode ? window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar) : null;
+        const sidecarHistoryGraph = sidecarMode ? window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar) : null;
         const completedSourceTurnIds = new Set(sidecarMode
             ? (sidecarHistoryGraph?.episodes || []).filter(episode => episode.status === 'active' && episode.summary).flatMap(episode => episode.sourceTurnIds || [])
             : []);
@@ -7054,7 +7053,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
 
         const controller = new AbortController();
         worldGenController = controller; // expose for the user Stop button
-        const configuredIdleTimeout = isLocalProvider() ? localGenerationIdleTimeoutMs() : cloudGenerationIdleTimeoutMs();
+        const configuredIdleTimeout = ExperimentalWorldsHost.isLocalProvider() ? ExperimentalWorldsHost.localGenerationIdleTimeoutMs() : ExperimentalWorldsHost.cloudGenerationIdleTimeoutMs();
         const armGenerationIdleTimeout = (overrideMs = configuredIdleTimeout) => {
             if (timeoutId) clearTimeout(timeoutId);
             activeIdleTimeoutMs = Math.max(0, Number(overrideMs) || 0);
@@ -7669,14 +7668,14 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         const sidecarCommitTool = sidecarMode ? (safeJsonClone(worldStateTool) || sidecarCommitToolFor(world, sess)) : null;
         if (sidecarMode) toolsConfig.splice(0, toolsConfig.length);
 
-        const modelId = world.model || state.globalSettings.defaultModel;
+        const modelId = world.model || ExperimentalWorldsState.globalSettings.defaultModel;
 
         // Tool calling across OpenAI-compatible providers is not uniform. Give
         // every action turn an explicit textual emergency channel from turn
         // one; proper tool callers still use the tool, while a tool-shy model
         // no longer gets two free turns in which state silently disappears.
-        const knownToolShy = Array.isArray(state.globalSettings.toolShyModels)
-            && state.globalSettings.toolShyModels.includes(modelId);
+        const knownToolShy = Array.isArray(ExperimentalWorldsState.globalSettings.toolShyModels)
+            && ExperimentalWorldsState.globalSettings.toolShyModels.includes(modelId);
         if (!sidecarMode && command !== 'look' && command !== 'init') {
             const escapeHatch = `\n\n[TURN RECEIPT DELIVERY FAILSAFE]\nUse commit_world_turn as a real tool call. If and only if this provider cannot emit that tool call, append exactly one block at the end instead:\n<world_turn_receipt>{"scene":{"player_location_id":"${sess.playerLocation}","player_location_changed":false,"present_character_ids":[]},"events":[],"entity_updates":[],"state_updates":{}}</world_turn_receipt>\nThe receipt is mandatory even when nothing changes. Fill it with the same actor-scoped events, full ending cast and updates you would have sent to the tool. Never send both a successful tool call and the tagged block.${knownToolShy ? '\nThis model has previously failed to deliver tool calls, so use the tagged receipt rather than dropping state.' : ''}`;
             const lastSystem = [...messages].reverse().find(entry => entry.role === 'system');
@@ -7686,7 +7685,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
 
         const requestBody = {
             model: modelId,
-            messages: sanitizeMessagesForProvider(messages),
+            messages: ExperimentalWorldsHost.sanitizeMessagesForProvider(messages),
             stream: true
         };
         if (!sidecarMode) {
@@ -7744,22 +7743,22 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
 
         let questFallbackMode = false;
         turnCallAudit.main++;
-        let response = await fetch(apiBase() + '/chat/completions', {
+        let response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
             method: 'POST',
             signal: controller.signal,
             headers: {
-                ...authHeaders(),
+                ...ExperimentalWorldsHost.authHeaders(),
                 'Content-Type': 'application/json',
-                ...attributionHeaders()
+                ...ExperimentalWorldsHost.attributionHeaders()
             },
-            body: JSON.stringify(applyOpenRouterRouting(requestBody, world))
+            body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting(requestBody, world))
         });
 
         if (!response.ok) {
             let errBody = await response.text();
             if (errBody.includes("tool use") || errBody.includes("commit_world_turn")) {
                 console.warn("Horde Engine: Model does not support tools. Retrying in Narrative Rescue mode.");
-                showToast("Model doesn't support tools. Using Narrative Fallback...", "info");
+                ExperimentalWorldsHost.notify("Model doesn't support tools. Using Narrative Fallback...", "info");
                 // RETRY WITHOUT TOOLS
                 delete requestBody.tools;
                 requestBody.tool_choice = "none";
@@ -7772,11 +7771,11 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                     index === 0 ? { ...message, content: String(message.content || '') + fallbackInstruction } : message);
                 
                 turnCallAudit.providerFallback++;
-                response = await fetch(apiBase() + '/chat/completions', {
+                response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
                     method: 'POST',
                     signal: controller.signal,
-                    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                    body: JSON.stringify(applyOpenRouterRouting(requestBody, world))
+                    headers: { 'Content-Type': 'application/json', ...ExperimentalWorldsHost.authHeaders() },
+                    body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting(requestBody, world))
                 });
                 if (!response.ok) errBody = await response.text();
             }
@@ -8000,13 +7999,13 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                         preFrame: buildWorldSceneFrame(world, sess),
                         preClock: buildSidecarClockEvidence(world, sess),
                         model: modelId,
-                        provider: normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter'),
+                        provider: ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider || 'openrouter'),
                         handoffComplete: narratorOutput.complete
                     });
                     failedAttempt = failSidecarTurnAttempt(world, sess, attempt, sidecarError, {
                         code: narratorOutput.complete ? 'sidecar_reconciliation_failed' : 'narrator_handoff_missing',
                         model: modelId,
-                        provider: normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter')
+                        provider: ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider || 'openrouter')
                     });
                 }
                 sidecarPacket = failedAttempt.packet || sess.sidecar?.packet || null;
@@ -8141,10 +8140,10 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                     messages: [{ role: 'system', content: repairPrompt }]
                 };
                 turnCallAudit.receiptRepair++;
-                const repairResponse = await fetch(apiBase() + '/chat/completions', {
+                const repairResponse = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
                     method: 'POST',
                     signal: controller.signal,
-                    headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+                    headers: { ...ExperimentalWorldsHost.authHeaders(), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.attributionHeaders() },
                     body: JSON.stringify(repairBody)
                 });
                 if (repairResponse.ok) {
@@ -8215,18 +8214,18 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         // the plain-text channel on the next turn. A tool call clears it, so a
         // model that recovers stops being nagged.
         if (!sidecarMode && command !== 'init' && command !== 'look' && command !== 'continue') {
-            const shyList = Array.isArray(state.globalSettings.toolShyModels)
-                ? state.globalSettings.toolShyModels : [];
+            const shyList = Array.isArray(ExperimentalWorldsState.globalSettings.toolShyModels)
+                ? ExperimentalWorldsState.globalSettings.toolShyModels : [];
             if (successfulStateCall || inlineStateApplied || repairedReceiptApplied) {
                 sess.toolCallMissStreak = 0;
                 // It does call tools after all — stop pre-arming the text channel.
                 if (shyList.includes(modelId)) {
-                    state.globalSettings.toolShyModels = shyList.filter(id => id !== modelId);
+                    ExperimentalWorldsState.globalSettings.toolShyModels = shyList.filter(id => id !== modelId);
                 }
             } else {
                 sess.toolCallMissStreak = (sess.toolCallMissStreak || 0) + 1;
                 if (sess.toolCallMissStreak >= 2 && !shyList.includes(modelId)) {
-                    state.globalSettings.toolShyModels = [...shyList, modelId].slice(-20);
+                    ExperimentalWorldsState.globalSettings.toolShyModels = [...shyList, modelId].slice(-20);
                     console.warn(`Horde Engine: remembering that "${modelId}" does not emit tool calls; the text channel will open from turn one in future sessions.`);
                 }
             }
@@ -8250,20 +8249,20 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                     { role: 'user', content: `[SYSTEM: The requested tools have been processed. Now finish the response:\n1. Narrate the authoritative result in vivid, immersive prose.${resolvedCheckThisTurn ? ' A dice check was resolved by the engine: use the tool result exactly, never invent or reroll it, and do not repeat the pre-roll setup.' : ' If a secret was revealed, narrate its discovery.'}\n2. If canon changed and ledger_update was not already supplied, add a one-sentence [MEMORY] line.${directorNotesRequired ? '\n3. DIRECTOR MODE remains required: append the active preset\'s <details><summary>Plot Momentum</summary>...</details> block as the final element.' : ''}]` }
                 ];
 
-                const followUpBody = { ...requestBody, messages: sanitizeMessagesForProvider(followUpMessages), stream: false };
+                const followUpBody = { ...requestBody, messages: ExperimentalWorldsHost.sanitizeMessagesForProvider(followUpMessages), stream: false };
                 delete followUpBody.tools;
                 followUpBody.tool_choice = 'none';
 
                 turnCallAudit.narrativeFollowUp++;
-                const followUpResponse = await fetch(apiBase() + '/chat/completions', {
+                const followUpResponse = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
                     method: 'POST',
                     signal: controller.signal,
                     headers: { 
-                        ...authHeaders(),
+                        ...ExperimentalWorldsHost.authHeaders(),
                         'Content-Type': 'application/json',
-                        ...attributionHeaders()
+                        ...ExperimentalWorldsHost.attributionHeaders()
                     },
-                    body: JSON.stringify(applyOpenRouterRouting(followUpBody, world))
+                    body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting(followUpBody, world))
                 });
 
                 if (followUpResponse.ok) {
@@ -8296,21 +8295,21 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             if (dmTyping) { dmTyping.style.display = 'flex'; if (dmTypingLabel) dmTypingLabel.textContent = 'DM lost their train of thought — retrying...'; }
             try {
                 // Non-streaming call can't reset the idle timer — give it its own window
-                armGenerationIdleTimeout(isLocalProvider() ? configuredIdleTimeout : Math.max(90000, configuredIdleTimeout));
+                armGenerationIdleTimeout(ExperimentalWorldsHost.isLocalProvider() ? configuredIdleTimeout : Math.max(90000, configuredIdleTimeout));
                 const rescueBody = {
                     model: modelId,
                     stream: false,
                     max_tokens: Math.max(1500, parseInt(world.maxTokens) || 2048),
-                    messages: sanitizeMessagesForProvider([
+                    messages: ExperimentalWorldsHost.sanitizeMessagesForProvider([
                         ...messages,
                         { role: 'user', content: `[SYSTEM: Your previous attempt produced no readable prose${reasoningSeen ? ' — it was consumed by internal reasoning' : ''}. ${streamedToolCalls.size > 0 ? 'The engine has ALREADY applied your state changes — do not call tools again. ' : ''}Write the narrative response NOW. No tools, JSON, or OOC commentary.${directorNotesRequired ? ' After the prose, append the active preset\'s required <details><summary>Plot Momentum</summary>...</details> Director block.' : ''}]` }
                     ])
                 };
-                const rescueResp = await fetch(apiBase() + '/chat/completions', {
+                const rescueResp = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
                     method: 'POST',
                     signal: controller.signal,
-                    headers: { 'Content-Type': 'application/json', ...authHeaders(), ...attributionHeaders() },
-                    body: JSON.stringify(applyOpenRouterRouting(rescueBody, world))
+                    headers: { 'Content-Type': 'application/json', ...ExperimentalWorldsHost.authHeaders(), ...ExperimentalWorldsHost.attributionHeaders() },
+                    body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting(rescueBody, world))
                 });
                 if (rescueResp.ok) {
                     const rescueData = await rescueResp.json();
@@ -8333,10 +8332,10 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                 const finalFrame = buildWorldSceneFrame(world, sess);
                 const finalRepairPrompt = `[WORLD TURN RECEIPT REPAIR]\nReturn JSON only. Do not rewrite the narrative. Produce one commit_world_turn receipt with scene, events, entity_updates, state_updates and summary. Actor-scope every action; NPC movement never moves the player; intent/attempt/in_progress does not mutate state; scene is the complete ending checksum.\nAuthoritative scene: ${JSON.stringify(finalFrame)}\nPlayer input: ${JSON.stringify(String(submittedInput || userInput).slice(0, 1200))}\nFinal narrative: ${JSON.stringify(String(fullText).slice(0, 7000))}`;
                 turnCallAudit.receiptRepair++;
-                const finalRepairResponse = await fetch(apiBase() + '/chat/completions', {
+                const finalRepairResponse = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
                     method: 'POST',
                     signal: controller.signal,
-                    headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+                    headers: { ...ExperimentalWorldsHost.authHeaders(), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.attributionHeaders() },
                     body: JSON.stringify({
                         model: structuredModelFor(world), stream: false, max_tokens: 650, temperature: 0,
                         messages: [{ role: 'system', content: finalRepairPrompt }]
@@ -8447,8 +8446,8 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             cleanText = cleanText.replace(/\[Loc:.*?\]\s*/gi, '').replace(/\[DISTANT EVENT.*?\]:\s*/gi, '').trim();
             // Scrub tool/engine artifacts models emit as plain text (JSON payloads, tool-call wrappers)
             cleanText = scrubNarrativeArtifacts(cleanText);
-            if (state.globalSettings.slopStripper) cleanText = stripSlop(cleanText);
-            cleanText = applyRegexScripts(cleanText, 'ai');
+            if (ExperimentalWorldsState.globalSettings.slopStripper) cleanText = stripSlop(cleanText);
+            cleanText = ExperimentalWorldsHost.applyRegexScripts(cleanText, 'ai');
 
             // Prose scanners are now auditors, never state authorities. A sentence
             // beginning with "The Chapel..." or describing Rowena walking there
@@ -8588,10 +8587,10 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             // identical postSnapshot beside it doubled every ordinary turn in
             // persisted timelines, especially painfully in large worlds.
             delete dmMsg.postSnapshot;
-            const continuityCapability = window.HordeLabs?.taskCapabilities?.()
+            const continuityCapability = ExperimentalWorldsHost.labsAvailable()?.taskCapabilities?.()
                 .find(task => task.id === 'continuity_sentinel');
-            if (window.HordeLabs?.policyFor('worlds') === 'audit' && continuityCapability?.available) {
-                void window.HordeLabs.propose('continuity_sentinel', {
+            if (ExperimentalWorldsHost.labsAvailable()?.policyFor('worlds') === 'audit' && continuityCapability?.available) {
+                void ExperimentalWorldsHost.labsAvailable().propose('continuity_sentinel', {
                     narrative: cleanText.slice(0, 6500),
                     preFrame: {
                         playerLocationId: startLocation || '',
@@ -8603,8 +8602,8 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                     allowedEntityIds: ['player', ...sessionNpcs(world, sess).map(npc => npc.id)]
                 }, { mode: 'worlds', background: true, priority: 15 }).catch(() => {});
             }
-            await saveState();
-            recordSharedLibraryAssistantTurn();
+            await ExperimentalWorldsHost.persist();
+            ExperimentalWorldsHost.recordSharedLibraryAssistantTurn();
         } else if (command === "init") {
             // INIT RESCUE: If the AI failed to introduce the world, provide a basic descriptive fallback
             const fallbackIntro = `You arrive at ${locName}. ${locDesc}\n\n[SYSTEM: The AI failed to generate a custom introduction. You can now take your first action.]`;
@@ -8628,8 +8627,8 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             });
             fallbackMsg.versionSnapshots = [captureWorldTurnState(world, sess)];
             delete fallbackMsg.postSnapshot;
-            await saveState();
-            recordSharedLibraryAssistantTurn();
+            await ExperimentalWorldsHost.persist();
+            ExperimentalWorldsHost.recordSharedLibraryAssistantTurn();
             fullText = fallbackIntro; // Set fullText so sync logic has something to work with if needed
         } else {
             const why = lastFinishReason === 'length'
@@ -8650,19 +8649,19 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         // the blocking chat transaction. Deterministic schedules, events and
         // goals have already advanced locally; this call only seeds future
         // surprises when the configured interval says the queue needs it.
-        if (command !== 'init' && !isReroll && shouldRunWorldAgent(world, sess) && hasApiCredentials()) {
-            const sidecarProtocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        if (command !== 'init' && !isReroll && shouldRunWorldAgent(world, sess) && ExperimentalWorldsHost.hasApiCredentials()) {
+            const sidecarProtocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
             const agentReason = sidecarProtocol?.activeSceneId && sess.lastWorldAgentSceneId !== sidecarProtocol.activeSceneId ? 'scene_change' : 'turn_cadence';
             runWorldAgent(world, sess, { triggerReason: agentReason }).then(async () => {
-                await saveState();
-                if (state.activeWorldId === world.id) renderWorldPlayState();
+                await ExperimentalWorldsHost.persist();
+                if (ExperimentalWorldsState.activeWorldId === world.id) renderWorldPlayState();
             }).catch(agentError => console.warn('Horde Engine: background world agent skipped —', agentError.message));
         }
 
         // Sidecar keeps a separate, source-pinned Turn → Episode graph. Legacy
         // worlds retain the established episodic archive path unchanged.
         if (sidecarMode) {
-            const sidecarProtocolAfterTurn = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+            const sidecarProtocolAfterTurn = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
             const latestSidecarTurnAfterTurn = (sidecarProtocolAfterTurn?.turns || [])
                 .filter(turn => turn.status !== 'superseded').at(-1);
             const settledForMemory = !latestSidecarTurnAfterTurn
@@ -8754,7 +8753,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             const input = document.getElementById('world-user-input');
             if (input) input.value = submittedInput;
         }
-        try { if (sess) await saveState(); } catch (saveErr) { console.error('Rollback persistence failed:', saveErr); }
+        try { if (sess) await ExperimentalWorldsHost.persist(); } catch (saveErr) { console.error('Rollback persistence failed:', saveErr); }
 
         // A user stop is informational. A configured idle timeout is actionable:
         // the backend may still be working, so tell the user how to extend it.
@@ -8763,16 +8762,16 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             if (generationTimedOut) {
                 const seconds = Math.max(1, Math.round(activeIdleTimeoutMs / 1000));
                 const prefix = movementPreserved ? 'Movement saved. ' : '';
-                showToast(`${prefix}Generation received no data for ${seconds}s and was stopped. Increase or disable the local timeout in Settings → AI & Models.`, 'error');
+                ExperimentalWorldsHost.notify(`${prefix}Generation received no data for ${seconds}s and was stopped. Increase or disable the local timeout in Settings → AI & Models.`, 'error');
             } else {
-                showToast(movementPreserved ? 'Movement saved; DM generation stopped.' : 'Generation stopped.', 'info');
+                ExperimentalWorldsHost.notify(movementPreserved ? 'Movement saved; DM generation stopped.' : 'Generation stopped.', 'info');
             }
             renderWorldPlayState();
             return;
         }
 
         console.error("Horde Engine: Fatal Error", err);
-        const friendlyError = humanizeApiError(err) || "Unknown error";
+        const friendlyError = ExperimentalWorldsHost.humanizeApiError(err) || "Unknown error";
 
         if (command === "init") {
             const fallbackIntro = `[ENGINE FALLBACK]\n\nYou arrive at ${locName}. ${locDesc}\n\n(Note: The AI failed to respond: ${friendlyError})`;
@@ -8793,11 +8792,11 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                 });
                 fallbackMsg.versionSnapshots = [captureWorldTurnState(world, sess)];
                 delete fallbackMsg.postSnapshot;
-                await saveState();
+                await ExperimentalWorldsHost.persist();
                 renderWorldPlayState();
             }
         } else {
-            showToast((movementPreserved ? 'Movement saved. ' : '') + 'Horde Engine Error: ' + friendlyError, 'error');
+            ExperimentalWorldsHost.notify((movementPreserved ? 'Movement saved. ' : '') + 'Horde Engine Error: ' + friendlyError, 'error');
             renderWorldPlayState();
         }
     } finally {

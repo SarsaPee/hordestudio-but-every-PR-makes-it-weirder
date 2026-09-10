@@ -1050,8 +1050,8 @@ ACCEPTED PLAYER DETAILS
 
 async function bootstrapSidecarOpeningTurn(world, sess, narration) {
     const handoff = buildSidecarOpeningHandoff(world, sess, narration);
-    const model = world.model || state.globalSettings.defaultModel;
-    const provider = normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter');
+    const model = world.model || ExperimentalWorldsState.globalSettings.defaultModel;
+    const provider = ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider || 'openrouter');
     try {
         const reconciled = await runSidecarReconciliation(world, sess, {
             handoff,
@@ -1413,8 +1413,8 @@ function buildSidecarCanonicalReferenceManifest(world, sess, evidenceText = '') 
     const locationLimit = 600;
     return {
         controlledEntity: {
-            id: window.HordeSidecarTimeline?.ensureHierarchy?.(
-                window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess), sess
+            id: window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy?.(
+                window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess), sess
             )?.sequence?.controlledEntityId || 'player',
             personaId: String(sess.personaId || ''),
             personaName: String(getTimelinePersona(sess, view)?.name || worldControlledPlayerIdentity(view, sess).name || 'Player')
@@ -1490,7 +1490,7 @@ const FF54_AGENTIC_OS = {
         artifact: 'Freaky Frankenstein 5.4 — Agent Gating.marinara.json',
         author: 'Dbtgreg (converted)',
         excluded: ['internal_states backend (state_mode pinned to AGENTS)', 'macro variable persistence (setvar/getvar neutralized)', 'regex state management'],
-        upstreamSource: 'installation-level source registry (state.roleplayOSSources), resolved verbatim per world sourceId pin; built-in adapted registry when absent'
+        upstreamSource: 'installation-level source registry (ExperimentalWorldsState.roleplayOSSources), resolved verbatim per world sourceId pin; built-in adapted registry when absent'
     }
 };
 
@@ -1541,7 +1541,7 @@ function normalizeRoleplayOSConfig(raw) {
 // ---------------------------------------------------------------------------
 // Installation-level Roleplay OS source registry. Imported Marinara presets
 // are parsed once (sections + choiceBlocks + derived defaults + provenance),
-// stored in state.roleplayOSSources, persisted in device state and full
+// stored in ExperimentalWorldsState.roleplayOSSources, persisted in device state and full
 // migration backups. Registry entries are hash-ID'd: re-importing the same
 // version is an idempotent upsert, and different FF versions coexist while
 // each world resolves against the entry it is pinned to.
@@ -1664,16 +1664,16 @@ function normalizeRoleplayOSSourceRegistry(raw) {
 }
 
 function getInstalledRoleplayOSSources() {
-    return normalizeRoleplayOSSourceRegistry(state.roleplayOSSources);
+    return normalizeRoleplayOSSourceRegistry(ExperimentalWorldsState.roleplayOSSources);
 }
 
 function installRoleplayOSSource(raw) {
     const entry = normalizeFF54SourcePreset(raw);
     if (!entry) return null;
-    if (!Array.isArray(state.roleplayOSSources)) state.roleplayOSSources = [];
-    const index = state.roleplayOSSources.findIndex(item => item && item.id === entry.id);
-    if (index !== -1) state.roleplayOSSources[index] = entry;
-    else state.roleplayOSSources.push(entry);
+    if (!Array.isArray(ExperimentalWorldsState.roleplayOSSources)) ExperimentalWorldsState.roleplayOSSources = [];
+    const index = ExperimentalWorldsState.roleplayOSSources.findIndex(item => item && item.id === entry.id);
+    if (index !== -1) ExperimentalWorldsState.roleplayOSSources[index] = entry;
+    else ExperimentalWorldsState.roleplayOSSources.push(entry);
     return entry;
 }
 
@@ -1713,7 +1713,7 @@ function reconcileFF54WorldChoices(stored, sourcePreset) {
 }
 
 function worldRoleplayOS(world) {
-    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world);
+    const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world);
     const os = normalizeRoleplayOSConfig(config?.roleplayOS);
     const registry = typeof getInstalledRoleplayOSSources === 'function' ? getInstalledRoleplayOSSources() : [];
     // 'builtin' is an explicit pin to the built-in adapted registry; an empty
@@ -2543,7 +2543,7 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
 
     // FF inventory tracker.
     if (ruleModules.inventory || ruleModules.equipment) {
-        const itemName = item => (globalThis.HordeRpgMechanics && globalThis.HordeRpgMechanics.itemName) ? globalThis.HordeRpgMechanics.itemName(item) : String(item || '');
+        const itemName = item => (globalThis.ExperimentalWorldsRpgMechanics && globalThis.ExperimentalWorldsRpgMechanics.itemName) ? globalThis.ExperimentalWorldsRpgMechanics.itemName(item) : String(item || '');
         add('agent_inventory_tracker', 'INVENTORY', jsonText({
             inventory: (Array.isArray(sess.inventory) ? sess.inventory : []).map(itemName).filter(Boolean),
             equipped: Object.entries(sess.equipment || {}).filter(entry => entry[1]).map(entry =>
@@ -2700,7 +2700,7 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
 
 
 function beginSidecarTurnAttempt(world, sess, options = {}) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return { protocol: null, turnRecord: null };
     const existing = options.existingTurnRecord || null;
     const attemptId = `sidecar_attempt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -2775,7 +2775,7 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
     turnRecord.attempts.push({ id: attemptId, status: 'pending', createdAt: new Date().toISOString(), logicalCommitIdentity: logicalIdentity, readerReused: !!options.readerPacketOverride, source: safeJsonClone({ narrationHash: turnRecord.authorialArtifact.narrationHash, handoffHash: turnRecord.authorialArtifact.handoffHash, playerInputHash: turnRecord.authorialArtifact.playerInputHash, preCanonicalFingerprint: turnRecord.preCanonicalFingerprint }) });
     turnRecord.attempts = turnRecord.attempts.slice(-24);
     if (!existing) {
-        window.HordeSidecarTimeline?.recordTurn(protocol, sess, turnRecord);
+        window.ExperimentalWorldsSidecarTimeline?.recordTurn(protocol, sess, turnRecord);
         protocol.turns.push(turnRecord);
         protocol.turns = protocol.turns.slice(-500);
     }
@@ -2823,7 +2823,7 @@ function sidecarCanonicalCheckpointFingerprint(world, sess) {
 }
 
 function failSidecarTurnAttempt(world, sess, attempt, error, detail = {}) {
-    const protocol = attempt?.protocol || window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = attempt?.protocol || window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const turnRecord = attempt?.turnRecord;
     const failure = {
         code: String(detail.code || error?.code || 'sidecar_reconciliation_failed'),
@@ -2887,7 +2887,7 @@ function failSidecarTurnAttempt(world, sess, attempt, error, detail = {}) {
 }
 
 function recordSidecarCoreAnswers(world, sess, handoff) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return {};
     const answers = protocol.coreAnswers || (protocol.coreAnswers = {});
     SIDECAR_CORE_QUESTION_IDS.forEach(id => {
@@ -2904,7 +2904,7 @@ function recordSidecarCoreAnswers(world, sess, handoff) {
 }
 
 function recordSidecarRequests(world, sess, handoff) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return [];
     const match = String(handoff || '').match(/(?:REQUESTS?|NARRATIVE\s+REQUESTS?)\s*[:\n]\s*([\s\S]*?)(?=\n\s*(?:ACCEPTED\s+PLAYER\s+DETAILS|ANSWER)\b|$)/i);
     const body = String(match?.[1] || '').trim();
@@ -2923,7 +2923,7 @@ function recordSidecarRequests(world, sess, handoff) {
 }
 
 function recordSidecarTemporalEvidence(world, sess, handoff, beforeClock, explicitEndpointEvidence = null) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return null;
     const afterClock = getWorldTimeData(world, sess);
     const authoredMeaning = sidecarTemporalStatement(handoff);
@@ -2958,8 +2958,8 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
     const clock = getWorldTimeData(world, sess);
     const hour12 = clock.hours24 % 12 || 12;
     const location = getLocationRef(world, frame.player_location_id);
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-    const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const hierarchy = window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(protocol, sess);
     const historyChars = (sess.history || []).reduce((total, message) => total + String(message?.text || '').length, 0);
     const sceneChars = String(world.dmPrompt || '').length + String(world.authorNote || '').length
         + String(location?.description || '').length + String(sess.ledger || '').length;
@@ -2987,14 +2987,14 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
             } : null,
             provenance: turn.provenance || null
         }));
-    const traversalState = window.HordeSidecarTraversal?.ensureState(protocol);
-    const memoryGraph = window.HordeSidecarMemoryGraph?.graph(protocol);
+    const traversalState = window.ExperimentalWorldsSidecarTraversal?.ensureState(protocol);
+    const memoryGraph = window.ExperimentalWorldsSidecarMemoryGraph?.graph(protocol);
     const readerSnapshot = protocol?.readerSnapshots?.filter(snapshot => snapshot.status === 'active').at(-1) || null;
     const pendingReaderSnapshot = !readerSnapshot
         ? protocol?.readerSnapshots?.filter(snapshot => snapshot.status === 'pending_reconciliation').at(-1) || null
         : null;
     const activeJourneys = (traversalState?.journeys || []).filter(journey => journey.status !== 'completed').slice(-4);
-    const accessibleVehicles = window.HordeSidecarTraversal?.accessibleVehicles(world, hierarchy?.sequence?.controlledEntityId || 'player') || [];
+    const accessibleVehicles = window.ExperimentalWorldsSidecarTraversal?.accessibleVehicles(world, hierarchy?.sequence?.controlledEntityId || 'player') || [];
     const activeSceneTurns = protocol?.turns?.filter(turn => turn.sceneId === hierarchy?.scene?.id).length || 0;
     const activeSequenceTurns = protocol?.turns?.filter(turn => turn.sequenceId === hierarchy?.sequence?.id).length || 0;
     const openQuestionRecords = (protocol?.questions || []).filter(question => question.status === 'open');
@@ -3142,20 +3142,20 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
             committed: refinement.committed === true,
             createdAt: refinement.createdAt || ''
         })),
-        contextPressure: window.HordeSidecarTimeline?.contextPressure(protocol, sess, {
+        contextPressure: window.ExperimentalWorldsSidecarTimeline?.contextPressure(protocol, sess, {
             historyCount: sess.history?.length || 0,
             contextRatio,
             factors: pressureFactors,
             thresholds: {
-                watch: state.globalSettings?.contextPressureWatchThreshold,
-                refresh: state.globalSettings?.contextPressureRefreshThreshold
+                watch: ExperimentalWorldsState.globalSettings?.contextPressureWatchThreshold,
+                refresh: ExperimentalWorldsState.globalSettings?.contextPressureRefreshThreshold
             }
         }) || null
     };
 }
 
 function recordSidecarTrace(world, sess, trace) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol?.debug?.enabled) return;
     protocol.debug.traces.push({ id: `trace_${Date.now().toString(36)}`, at: new Date().toISOString(), ...trace });
     protocol.debug.traces = protocol.debug.traces.slice(-Math.max(1, protocol.debug.retainTraceCount || 20));
@@ -3210,7 +3210,7 @@ function sidecarSupportsStructuredJson(provider, model, tracker = {}, profile = 
     const advertised = [
         ...(Array.isArray(tracker.supportedParams) ? tracker.supportedParams : []),
         ...(Array.isArray(profile.supportedParams) ? profile.supportedParams : []),
-        ...(Array.isArray(state.globalSettings?.supportedParams) ? state.globalSettings.supportedParams : [])
+        ...(Array.isArray(ExperimentalWorldsState.globalSettings?.supportedParams) ? ExperimentalWorldsState.globalSettings.supportedParams : [])
     ].map(value => String(value || '').toLowerCase());
     if (advertised.includes('response_format') || advertised.includes('structured_outputs')) return true;
     // Unknown/custom providers stay on the validated prompt+parser fallback
@@ -3275,7 +3275,7 @@ function sidecarUsesCompactCommitTransport(provider, model, tool) {
     // the full recursive world-turn receipt schema even after projection.
     // Keep the compact transport scoped to that strict adapter family.
     const modelId = String(model || '').toLowerCase();
-    return normalizedProviderId(provider) === 'openrouter'
+    return ExperimentalWorldsHost.normalizedProviderId(provider) === 'openrouter'
         && /(?:^|[/_-])(?:google|gemini|gemma)(?:[/_.-]|$)/.test(modelId);
 }
 
@@ -3328,10 +3328,10 @@ async function fetchSidecarCompletion(body, { provider, tracker, world, owner, s
             // forced function when a strict provider rejects the object form.
             payload.tool_choice = 'required';
         }
-        return fetch(providerApiBase(provider) + '/chat/completions', {
+        return fetch(ExperimentalWorldsHost.providerApiBase(provider) + '/chat/completions', {
             method: 'POST', signal,
-            headers: { ...providerAuthHeaders(provider), 'Content-Type': 'application/json', ...providerAttributionHeaders(provider) },
-            body: JSON.stringify(applyOpenRouterRouting(payload, owner || world, { scope, providerId: provider }))
+            headers: { ...ExperimentalWorldsHost.providerAuthHeaders(provider), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.providerAttributionHeaders(provider) },
+            body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting(payload, owner || world, { scope, providerId: provider }))
         });
     };
     let response = await request(forceWithoutReasoning);
@@ -3362,7 +3362,7 @@ async function fetchSidecarCompletion(body, { provider, tracker, world, owner, s
     if (retryPolicy === 'none' || forceWithoutReasoning || !policy.enabled || !response.ok) return response;
     const payload = await response.clone().json().catch(() => null);
     if (!sidecarTokenLimitIncomplete(payload)) return response;
-    showToast('Sidecar thought too hard, retrying without reasoning.', 'info');
+    ExperimentalWorldsHost.notify('Sidecar thought too hard, retrying without reasoning.', 'info');
     logSidecarConsoleTrace('Sidecar retry without optional reasoning', { model: body.model, provider, finishReason: payload?.choices?.[0]?.finish_reason || payload?.choices?.[0]?.native_finish_reason || '' });
     return request(true);
 }
@@ -3466,7 +3466,7 @@ function sidecarReaderReadOnlyProtocol(world, sess) {
     // without creating a hidden write path.
     const worldCopy = safeJsonClone(world || {});
     const sessCopy = safeJsonClone(sess || {});
-    return window.HordeSidecarHooks?.normalizeWorldTimeline?.(worldCopy, sessCopy) || null;
+    return window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(worldCopy, sessCopy) || null;
 }
 
 function runSidecarReadOnlyTool(world, sess, name, rawArgs) {
@@ -3664,7 +3664,7 @@ function retiredSidecarReaderV1MergeEnvelope(previous, delta, options = {}) {
 }
 
 function retiredSidecarReaderV1AttachSnapshot(world, sess, turnRecord, packet, options = {}) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol || !turnRecord || !packet) return null;
     const profile = options.profile || effectiveSidecarReaderProfile(world, sess);
     const source = {
@@ -3710,7 +3710,7 @@ function retiredSidecarReaderV1AttachSnapshot(world, sess, turnRecord, packet, o
 }
 
 function activateSidecarReaderSnapshot(world, sess, snapshotId, turnId = '') {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const snapshot = protocol?.readerSnapshots?.find(item => item.id === snapshotId);
     if (!snapshot) return null;
     protocol.readerSnapshots.forEach(item => {
@@ -3761,7 +3761,7 @@ function sidecarProjectionPresenceEntries(values, mode, displayName) {
 }
 
 function buildSidecarSceneProjection(world, sess, protocol, options = {}) {
-    const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy?.(protocol, sess, { createWhenMissing: false }) || {};
+    const hierarchy = window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy?.(protocol, sess, { createWhenMissing: false }) || {};
     const snapshotId = String(options.snapshotId || '').trim();
     const snapshot = snapshotId
         ? (protocol?.readerSnapshots || []).find(item => item.id === snapshotId && ['active', 'accepted_historical'].includes(item.status))
@@ -3915,7 +3915,7 @@ function sidecarTurnCognitionEvidence(intelligence = {}) {
 // and their jobs use the same provider concurrency/throttling as Episode work.
 function queueSidecarTurnCognitionJobs(world, sess, protocol, turnRecord, projection = null) {
     if (!protocol || !turnRecord?.readerSnapshotId || !turnRecord?.readerEnvelope) return [];
-    const jobs = window.HordeSidecarMemoryGraph?.ensureJobs?.(protocol) || [];
+    const jobs = window.ExperimentalWorldsSidecarMemoryGraph?.ensureJobs?.(protocol) || [];
     const readerSnapshotId = String(turnRecord.readerSnapshotId || '').trim();
     const reader = turnRecord.readerEnvelope;
     const people = projection?.people || (reader.characterIntelligence || []).map(intelligence => ({
@@ -3951,7 +3951,7 @@ function queueSidecarTurnCognitionJobs(world, sess, protocol, turnRecord, projec
             job.supersededByReaderSnapshotId = readerSnapshotId;
             job.supersededByJobId = id;
         });
-        const memory = window.HordeSidecarMemoryGraph?.graph?.(protocol);
+        const memory = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(protocol);
         (memory?.cognition || []).forEach(record => {
             if (!subjectJobs.some(job => job.id === record.turnCognitionJobId) || record.status !== 'active') return;
             record.status = 'superseded';
@@ -3992,7 +3992,7 @@ function publishSidecarSettlement(world, sess, protocol, options = {}) {
     // session. Point them at an isolated draft for the publication window.
     sess.sidecar = draftSeed;
     try {
-        const draft = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        const draft = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
         if (!draft) throw new Error('Could not open an isolated Sidecar settlement draft.');
         if (!Array.isArray(draft.settlements)) draft.settlements = [];
         const draftTurn = draft.turns.find(item => item.id === turnRecord.id);
@@ -4000,7 +4000,7 @@ function publishSidecarSettlement(world, sess, protocol, options = {}) {
         const now = new Date().toISOString();
         const stagedPacket = draftTurn.reader || options.readerPacket || {};
         draftTurn.settlementId = settlementId;
-        const stagedIntroductions = window.HordeSidecarPromotion?.stageReceiptIntroductions(draft, safeJsonClone(options.introductionDraft || {}), {
+        const stagedIntroductions = window.ExperimentalWorldsSidecarPromotion?.stageReceiptIntroductions(draft, safeJsonClone(options.introductionDraft || {}), {
             source: 'narrator_handoff', narration: options.narration || '', handoff: options.handoff || '', turnId: draftTurn.id
         }) || [];
         recordSidecarCoreAnswers(world, sess, options.handoff || '');
@@ -4042,11 +4042,11 @@ function publishSidecarSettlement(world, sess, protocol, options = {}) {
         if (currentAttempt) Object.assign(currentAttempt, { status: 'committed', committedAt: now, receiptFingerprint: settlement.receiptFingerprint, settlementId });
         const diagnostic = draft.diagnostics?.reconciliationAttempts?.find(item => item.turnId === draftTurn.id && (!options.attemptId || item.attemptId === options.attemptId));
         if (diagnostic) Object.assign(diagnostic, { status: 'committed', committedAt: now, receiptTurnId: draftTurn.receiptTurnId, audit: safeJsonClone(options.committed?.audit), explicitEndpointEvidence: safeJsonClone(options.explicitEndpointEvidence || null), settlementId });
-        window.HordeSidecarMemoryGraph?.recordTurn(draft, draftTurn);
+        window.ExperimentalWorldsSidecarMemoryGraph?.recordTurn(draft, draftTurn);
         draftTurn.turnCognitionJobIds = queueSidecarTurnCognitionJobs(world, sess, draft, draftTurn, projection);
         queueSidecarSceneOutfitQuestions(world, sess, draftTurn);
         const memoryConfig = effectiveSidecarMemoryConfig(world);
-        window.HordeSidecarMemoryGraph?.queueEpisode(draft, { batchSize: memoryConfig.episodeChunkTurns, cadenceTurns: memoryConfig.episodeCadenceTurns });
+        window.ExperimentalWorldsSidecarMemoryGraph?.queueEpisode(draft, { batchSize: memoryConfig.episodeChunkTurns, cadenceTurns: memoryConfig.episodeCadenceTurns });
         draft.packet = buildSidecarScenePacket(world, sess, options.handoff || '');
         sess.sidecarDerivedSettlementIncomplete = null;
         return { status: 'settled', settlement, projection, packet: draft.packet, protocol: draft };
@@ -4080,7 +4080,7 @@ function queueSidecarReaderQuestions(world, sess, readerPacket, turnRecord) {
 // World GM, reroll cleanup, and later memory jobs can inspect the exact
 // candidate without confusing it for a committed ledger/relationship fact.
 function recordSidecarReaderProposals(world, sess, readerPacket, turnRecord, snapshotId = '') {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol || !turnRecord || !readerPacket) return [];
     const entries = [];
     const groups = [
@@ -4274,7 +4274,7 @@ function scenePulseCandidateIsControlledCharacter(candidate = {}, controlled = {
 // not written through the world reducer: a bartender, room, outfit, prop or
 // vehicle can be useful to the next scene before it has earned a canonical ID.
 function recordSidecarReaderCandidates(world, sess, readerPacket, turnRecord, snapshotId = '') {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol || !turnRecord || !readerPacket) return [];
     const controlled = scenePulseControlledCharacterReference(world, sess);
     const raw = (readerPacket.candidateStructures || readerPacket.candidates || readerPacket.semanticInterpretation?.candidateStructures || [])
@@ -4292,7 +4292,7 @@ function recordSidecarReaderCandidates(world, sess, readerPacket, turnRecord, sn
     // supplied in this same accepted packet; it never imports a Horde registry
     // record to make ScenePulse look more complete.
     const sourceCardCandidates = scenePulseCharacterCandidatesFromCards(readerPacket, protocol, turnRecord, snapshotId, raw);
-    const candidates = window.HordeSidecarHooks?.mergeReaderCandidates?.(protocol, [...raw, ...sourceCardCandidates], {
+    const candidates = window.ExperimentalWorldsSidecarHooks?.mergeReaderCandidates?.(protocol, [...raw, ...sourceCardCandidates], {
         sourceTurnId: turnRecord.id,
         sourceTakeId: turnRecord.takeId || '',
         sourceRevisionId: turnRecord.revisionId || '',
@@ -4583,7 +4583,7 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
         ? String(window.HordeWorldMechanics.reconcilerFrame?.(world, sess,
             worldMechanicsRegistryFor(world)) || '')
         : '';
-    const readerProtocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const readerProtocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const priorReaderSnapshotId = String(options.priorReaderSnapshotId
         || readerProtocol?.readerSnapshots?.filter(snapshot => snapshot.status === 'active').at(-1)?.id
         || '').trim();
@@ -4599,7 +4599,7 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
     const hasPriorReaderProjection = isPlainObject(options.priorReaderEnvelope) && Object.keys(options.priorReaderEnvelope).length > 0;
     const customPanelSchemaChanged = hasPriorReaderProjection && priorCustomPanelSchemaFingerprint !== customPanelSchemaFingerprint;
     const forceFull = options.forceFull === true || customPanelSchemaChanged;
-    const readerHierarchy = readerProtocol && window.HordeSidecarTimeline?.ensureHierarchy?.(readerProtocol, sess, { createWhenMissing: false });
+    const readerHierarchy = readerProtocol && window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy?.(readerProtocol, sess, { createWhenMissing: false });
     const controlledEntityId = String(options.preFrame?.controlled_entity_id
         || readerHierarchy?.sequence?.controlledEntityId
         || sess?.sidecar?.activeControlledEntityId
@@ -5430,7 +5430,7 @@ function mergeSidecarReaderEnvelope(previous, delta, options = {}) {
 }
 
 function attachSidecarReaderSnapshot(world, sess, turnRecord, packet, options = {}) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol || !turnRecord || !packet) return null;
     const profile = options.profile || effectiveSidecarReaderProfile(world, sess);
     const previousSnapshot = protocol.readerSnapshots.filter(snapshot => snapshot.status === 'active').at(-1) || null;
@@ -5475,7 +5475,7 @@ function attachSidecarReaderSnapshot(world, sess, turnRecord, packet, options = 
 }
 
 function activateSidecarReaderSnapshot(world, sess, snapshotId, turnId = '') {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const snapshot = protocol?.readerSnapshots?.find(item => item.id === snapshotId);
     if (!snapshot) return null;
     protocol.readerSnapshots.forEach(item => { if (item.id !== snapshot.id && item.status === 'active') { item.status = 'accepted_historical'; item.historicalAt = new Date().toISOString(); } });
@@ -5488,7 +5488,7 @@ function activateSidecarReaderSnapshot(world, sess, snapshotId, turnId = '') {
 }
 
 function queueSidecarQuestion(world, sess, prompt, evidence = '', options = {}) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return null;
     const stableId = String(options.id || '').trim();
     const prior = protocol.questions.find(question => ['open', 'deferred'].includes(question.status)
@@ -5513,7 +5513,7 @@ function queueSidecarQuestion(world, sess, prompt, evidence = '', options = {}) 
 }
 
 function recordSidecarQuestionAttempt(world, sess, questionId, attempt = {}) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const question = protocol?.questions?.find(item => item.id === questionId);
     if (!question) return null;
     question.attempts = (Number(question.attempts) || 0) + 1;
@@ -5524,7 +5524,7 @@ function recordSidecarQuestionAttempt(world, sess, questionId, attempt = {}) {
 }
 
 function updateSidecarQuestion(world, sess, questionId, patch = {}) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const question = protocol?.questions?.find(item => item.id === questionId);
     if (!question) return null;
     if (patch.priority && ['low', 'medium', 'high'].includes(patch.priority) && patch.priority !== question.priority) {
@@ -5556,16 +5556,16 @@ function captureExperimentalSidecarOwner(world, sess) {
         worldEpoch: Number(sess?._worldEpoch) || 0,
         restoreGeneration: Number(window.ExperimentalWorldsRestoreGeneration) || 0,
         effectiveSettings: Object.freeze({
-            model: String(world?.model || state.globalSettings?.defaultModel || ''),
-            provider: String(world?.provider || state.globalSettings?.apiProvider || '')
+            model: String(world?.model || ExperimentalWorldsState.globalSettings?.defaultModel || ''),
+            provider: String(world?.provider || ExperimentalWorldsState.globalSettings?.apiProvider || '')
         })
     });
 }
 
 function assertExperimentalSidecarOwner(owner) {
-    const currentWorld = state.worlds.find(candidate => candidate.id === state.activeWorldId);
+    const currentWorld = ExperimentalWorldsState.worlds.find(candidate => candidate.id === ExperimentalWorldsState.activeWorldId);
     const currentSession = getCurrentWorldSession();
-    const valid = state.view === 'worldPlay'
+    const valid = ExperimentalWorldsState.view === 'worldPlay'
         && String(currentWorld?.id || '') === owner.worldId
         && String(currentSession?.id || '') === owner.timelineId
         && Number(currentSession?._worldEpoch) === owner.worldEpoch
@@ -5578,18 +5578,18 @@ function assertExperimentalSidecarOwner(owner) {
 
 async function runSidecarQuestionRepair(world, sess, questionId) {
     const requestOwner = captureExperimentalSidecarOwner(world, sess);
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const question = protocol?.questions?.find(item => item.id === questionId && item.status === 'open');
     if (!question) throw new Error('Question is no longer open.');
-    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {}; const tracker = config.tracker || {};
-    const narratorModel = world.model || state.globalSettings.defaultModel;
+    const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world) || {}; const tracker = config.tracker || {};
+    const narratorModel = world.model || ExperimentalWorldsState.globalSettings.defaultModel;
     const model = tracker.inheritNarrator !== false || !tracker.model ? narratorModel : tracker.model;
-    const narratorProvider = normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter');
+    const narratorProvider = ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider || 'openrouter');
     const provider = tracker.inheritNarrator !== false || !tracker.provider
-        ? narratorProvider : normalizedProviderId(tracker.provider);
+        ? narratorProvider : ExperimentalWorldsHost.normalizedProviderId(tracker.provider);
     const readerProfile = effectiveSidecarReaderProfile(world, sess);
     const readerModel = readerProfile.model || model;
-    const readerProvider = readerProfile.provider ? normalizedProviderId(readerProfile.provider) : provider;
+    const readerProvider = readerProfile.provider ? ExperimentalWorldsHost.normalizedProviderId(readerProfile.provider) : provider;
     const prompt = `[SIDECAR QUESTION REPAIR]\nAnswer only this one unresolved authorial question from the supplied evidence. Do not mutate canon and do not infer adjacent facts. Return JSON only: {"answer":"YES|NO|UNKNOWN|CLARIFICATION","explanation":"brief"}.\nQUESTION: ${JSON.stringify({ id: question.id, prompt: question.prompt, evidence: question.evidence, dependencies: question.dependencies })}\nPACKET: ${JSON.stringify(buildSidecarScenePacket(world, sess))}`;
     const body = { model, max_tokens: 800, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Provide the narrow repair answer.' }] };
     // A narrow repair should inherit the world's Sidecar reasoning policy;
@@ -5605,7 +5605,7 @@ async function runSidecarQuestionRepair(world, sess, questionId) {
     recordSidecarQuestionAttempt(world, sess, question.id, { channel: 'explicit_repair', answer: parsed.answer || 'UNKNOWN', explanation: parsed.explanation || '' });
     question.repairCallHistory = [...(question.repairCallHistory || []), { at: new Date().toISOString(), model, answer: parsed.answer || 'UNKNOWN', explanation: String(parsed.explanation || '').slice(0, 800) }].slice(-12);
     question.answer = String(parsed.explanation || parsed.answer || 'UNKNOWN').slice(0, 3000); question.resolutionType = 'canonical_evidence_resolution'; question.provenance = { ...(question.provenance || {}), lastRepair: 'explicit_sidecar_repair' };
-    await saveState(); renderSidecarConversation(world, sess); return parsed;
+    await ExperimentalWorldsHost.persist(); renderSidecarConversation(world, sess); return parsed;
 }
 
 function queueSidecarReconciliationQuestions(world, sess, audit) {
@@ -5628,7 +5628,7 @@ function queueSidecarReconciliationQuestions(world, sess, audit) {
 // Narrator can establish a useful visible first impression naturally.  The
 // stable ID prevents the same NPC from being re-prompted on every turn.
 function queueSidecarSceneOutfitQuestions(world, sess, turnRecord = null) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return [];
     const frame = buildWorldSceneFrame(world, sess);
     const sceneId = String(turnRecord?.sceneId || protocol.activeSceneId || 'scene');
@@ -5661,13 +5661,13 @@ function queueSidecarSceneOutfitQuestions(world, sess, turnRecord = null) {
 
 async function runSidecarReconciliation(world, sess, options = {}) {
     const requestOwner = captureExperimentalSidecarOwner(world, sess);
-    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
+    const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world) || {};
     const tracker = config.tracker || {};
-    const narratorModel = world.model || state.globalSettings.defaultModel;
+    const narratorModel = world.model || ExperimentalWorldsState.globalSettings.defaultModel;
     const model = tracker.inheritNarrator !== false || !tracker.model ? narratorModel : tracker.model;
-    const narratorProvider = normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter');
+    const narratorProvider = ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider || 'openrouter');
     const provider = tracker.inheritNarrator !== false || !tracker.provider
-        ? narratorProvider : normalizedProviderId(tracker.provider);
+        ? narratorProvider : ExperimentalWorldsHost.normalizedProviderId(tracker.provider);
     const sidecarWorld = {
         ...world,
         model,
@@ -5695,7 +5695,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const playerInput = String(authoredPlayerInput || '');
     const commitTool = safeJsonClone(options.commitTool);
     const priorPacket = buildSidecarScenePacket(world, sess);
-    const priorReconciliationEvidence = (window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess)?.turns || [])
+    const priorReconciliationEvidence = (window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess)?.turns || [])
         .filter(turn => ['reconciliation_pending', 'reconciliation_failed'].includes(turn.status))
         .slice(-4)
         .map(turn => ({
@@ -5713,12 +5713,12 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         }));
     const references = buildSidecarCanonicalReferenceManifest(world, sess,
         `${playerInput}\n${narration}\n${handoff}`);
-    const protocolBeforeReader = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocolBeforeReader = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const priorReaderSnapshot = protocolBeforeReader?.readerSnapshots?.filter(snapshot => snapshot.status === 'active').at(-1) || null;
     const priorReaderEnvelope = priorReaderSnapshot?.envelope || null;
     const readerProfile = effectiveSidecarReaderProfile(world, sess);
     const readerModel = readerProfile.model || model;
-    const readerProvider = readerProfile.provider ? normalizedProviderId(readerProfile.provider) : provider;
+    const readerProvider = readerProfile.provider ? ExperimentalWorldsHost.normalizedProviderId(readerProfile.provider) : provider;
     const readerIndex = (Number(protocolBeforeReader?.readerSnapshots?.length) || 0) + 1;
     const forceReaderFull = !priorReaderSnapshot || readerIndex === 1 || readerIndex % Math.max(1, Number(readerProfile.fullRefreshCadence) || 5) === 0;
     const existingTurnRecord = options.existingTurnRecord || null;
@@ -5970,7 +5970,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
             revisionId: attempt.turnRecord?.revisionId || options.revisionId || '',
             timelineId: sess.id
         };
-        const protocol = attempt.protocol || window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        const protocol = attempt.protocol || window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
         // Provisional promotion used to mutate the protocol before the native
         // receipt was accepted (and deleted fields from the receipt in-place).
         // Keep a post-commit-only draft instead: a failed/stale receipt must
@@ -6012,7 +6012,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
                 // already atomic scene publication.
                 try {
                     const activeProtocol = sess.sidecar;
-                    const traversalChanges = window.HordeSidecarTraversal?.reconcileVehicleEvents(activeProtocol, world, receipt, { playerLocationId: preFrame.player_location_id }) || [];
+                    const traversalChanges = window.ExperimentalWorldsSidecarTraversal?.reconcileVehicleEvents(activeProtocol, world, receipt, { playerLocationId: preFrame.player_location_id }) || [];
                     const activeTurn = activeProtocol?.turns?.find(item => item.id === turnRecord?.id);
                     if (activeTurn) activeTurn.traversalChanges = traversalChanges;
                 } catch (traversalError) {
@@ -6062,7 +6062,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
 // reuses the journaled receipt/audit and never calls the Narrator, Reader, or
 // canonical reducer a second time.
 function recoverSidecarDerivedSettlement(world, sess, turn) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol || !turn?.receipt || !turn?.audit) throw new Error('The committed receipt required for derived settlement recovery is unavailable.');
     const incomplete = sess.sidecarDerivedSettlementIncomplete;
     if (!incomplete || incomplete.turnId !== turn.id) throw new Error('No matching derived-settlement recovery record exists.');
@@ -6088,21 +6088,21 @@ function recoverSidecarDerivedSettlement(world, sess, turn) {
 // attempt records on that same turn and reuse a successful Reader envelope.
 async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
     if (sidecarRetryInProgress) return;
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const turn = protocol?.turns?.find(item => item.id === sidecarTurnId);
     if (!protocol || !turn) throw new Error('The authored Sidecar turn is no longer available.');
     if (turn.status === 'settlement_incomplete') {
         sidecarRetryInProgress = true;
         try {
             const result = recoverSidecarDerivedSettlement(world, sess, turn);
-            await saveState(); renderWorldPlayState();
+            await ExperimentalWorldsHost.persist(); renderWorldPlayState();
             runSidecarBackgroundMemoryJobs(world, sess, { force: true, source: 'sidecar_settlement_recovery' }).catch(error => console.warn('Sidecar settlement memory dispatch skipped —', error.message));
-            showToast('Scene Intelligence caught up without replaying the canonical receipt.', 'success');
+            ExperimentalWorldsHost.notify('Scene Intelligence caught up without replaying the canonical receipt.', 'success');
             return result;
         } finally { sidecarRetryInProgress = false; }
     }
     if (!sidecarTurnNeedsDownstreamRecovery(turn)) {
-        showToast('This authored beat is already settled.', 'info');
+        ExperimentalWorldsHost.notify('This authored beat is already settled.', 'info');
         return;
     }
     const currentCheckpoint = sidecarCanonicalCheckpointFingerprint(world, sess);
@@ -6112,9 +6112,9 @@ async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
         turn.failure = { code: stale.code, message: stale.message, failedAt: new Date().toISOString() };
         turn.reconciliationStatus = 'failed';
         turn.status = 'reconciliation_failed';
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
-        showToast(stale.message, 'warning');
+        ExperimentalWorldsHost.notify(stale.message, 'warning');
         return;
     }
     sidecarRetryInProgress = true;
@@ -6159,15 +6159,15 @@ async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
                 retryCount: turn.retryCount || 0
             };
         }
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
-        showToast('Scene update settled. The authored narration was preserved.', 'success');
+        ExperimentalWorldsHost.notify('Scene update settled. The authored narration was preserved.', 'success');
         runSidecarBackgroundMemoryJobs(world, sess, { force: true, source: 'sidecar_retry' }).catch(error => console.warn('Sidecar retry memory dispatch skipped —', error.message));
         return result;
     } catch (error) {
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
-        showToast(`Scene update still incomplete: ${error.message || error}`, 'warning');
+        ExperimentalWorldsHost.notify(`Scene update still incomplete: ${error.message || error}`, 'warning');
         throw error;
     } finally {
         sidecarRetryInProgress = false;
@@ -6179,7 +6179,7 @@ async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
 // reviewable derived snapshot, while the accepted Narrator Take and native
 // receipt remain immutable.
 async function refreshSidecarSceneIntelligence(world, sess, sidecarTurnId = '', options = {}) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const currentTurn = currentSidecarAuthoredTurn(protocol, sess);
     const turn = sidecarTurnId
         ? (protocol?.turns || []).find(item => item.id === sidecarTurnId)
@@ -6188,11 +6188,11 @@ async function refreshSidecarSceneIntelligence(world, sess, sidecarTurnId = '', 
     if (sidecarTurnNeedsDownstreamRecovery(turn)) {
         return retrySidecarSceneUpdate(world, sess, turn.id);
     }
-    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
+    const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world) || {};
     const tracker = config.tracker || {};
     const profile = effectiveSidecarReaderProfile(world, sess);
-    const provider = profile.provider ? normalizedProviderId(profile.provider) : normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter');
-    const model = profile.model || world.model || state.globalSettings.defaultModel;
+    const provider = profile.provider ? ExperimentalWorldsHost.normalizedProviderId(profile.provider) : ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider || 'openrouter');
+    const model = profile.model || world.model || ExperimentalWorldsState.globalSettings.defaultModel;
     const references = buildSidecarCanonicalReferenceManifest(world, sess, `${turn.playerInput || ''}\n${turn.narration || ''}\n${turn.handoff || ''}`);
     // Source /sp regen preserves ScenePulse's compact-delta cadence; /sp
     // refresh explicitly asks for one complete projection. Both reread this
@@ -6214,7 +6214,7 @@ async function refreshSidecarSceneIntelligence(world, sess, sidecarTurnId = '', 
         provenance: { source: 'scene_intelligence_refresh', provider, model, profileRevision: profile.revision, scenePulseFocus: options.scenePulseFocus || '', forceFull }
     });
     protocol.readerRefreshes = protocol.readerRefreshes.slice(-40);
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     // A native ScenePulse refresh accepts this review immediately below.
     // Do not remount the source panel between staging and acceptance: doing
     // so can detach the originating host action while its valid Reader
@@ -6233,7 +6233,7 @@ async function refreshScenePulseThoughts(world, sess, sidecarTurnId = '', option
     });
     if (refresh?.status !== 'review') return refresh;
     const accepted = acceptSidecarReaderRefresh(world, sess, refresh.id);
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     renderWorldPlayState();
     // This is a user-invoked derived refresh, not an authored turn. Dispatch
     // only the newly versioned cognition work in the background; it remains
@@ -6250,7 +6250,7 @@ async function refreshScenePulseThoughts(world, sess, sidecarTurnId = '', option
 // snapshot/projection; it never calls Narrator, invokes Sidecar's receipt, or
 // repeats canonical operations such as movement or time advancement.
 function acceptSidecarReaderRefresh(world, sess, refreshId) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const refresh = protocol?.readerRefreshes?.find(item => item.id === refreshId && item.status === 'review');
     if (!protocol || !refresh) throw new Error('That Reader refresh is no longer available for review.');
     const turn = (protocol.turns || []).find(item => item.id === refresh.sourceTurnId);
@@ -6313,7 +6313,7 @@ function acceptSidecarReaderRefresh(world, sess, refreshId) {
     // The memory graph remains source-pinned to this authored turn, but its
     // derived Reader evidence must follow the explicitly accepted refresh.
     // This is not a new world event and never touches the native receipt.
-    window.HordeSidecarMemoryGraph?.recordTurn?.(protocol, turn);
+    window.ExperimentalWorldsSidecarMemoryGraph?.recordTurn?.(protocol, turn);
     const refreshedCognitionJobIds = queueSidecarTurnCognitionJobs(world, sess, protocol, turn, projection);
     turn.turnCognitionJobIds = [...new Set([...(turn.turnCognitionJobIds || []), ...refreshedCognitionJobIds])];
     refresh.status = 'accepted'; refresh.acceptedAt = now; refresh.acceptedSnapshotId = snapshot.id;
@@ -6322,7 +6322,7 @@ function acceptSidecarReaderRefresh(world, sess, refreshId) {
 }
 
 function discardSidecarReaderRefresh(world, sess, refreshId) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const refresh = protocol?.readerRefreshes?.find(item => item.id === refreshId && item.status === 'review');
     if (!protocol || !refresh) return false;
     refresh.status = 'rejected'; refresh.rejectedAt = new Date().toISOString();
@@ -6435,8 +6435,8 @@ async function vectorizeSidecarMemoryRecords(records, options = {}) {
 }
 
 async function retrieveSidecarMemory(world, sess, query, limit = 8, options = {}) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-    const graph = window.HordeSidecarMemoryGraph?.graph(protocol);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph(protocol);
     const text = String(query || '').trim();
     if (!graph || !text || !HordeVectorMemory) return [];
     let queryEmbedding;
@@ -6477,7 +6477,7 @@ async function retrieveSidecarMemory(world, sess, query, limit = 8, options = {}
 }
 
 function effectiveSidecarMemoryConfig(world) {
-    const global = state.globalSettings || {};
+    const global = ExperimentalWorldsState.globalSettings || {};
     const local = world?.sidecarConfig?.memory && typeof world.sidecarConfig.memory === 'object'
         ? world.sidecarConfig.memory : {};
     const inherited = name => local.inheritGlobal === false ? local[name] : (global[name] ?? local[name]);
@@ -6496,7 +6496,7 @@ function effectiveSidecarMemoryConfig(world) {
         retrievalLimit: pick('retrievalLimit', 8, 1, 24),
         cognitionRecentLimit: pick('cognitionRecentLimit', 8, 1, 30),
         cognitionSemanticTopK: pick('cognitionSemanticTopK', 6, 1, 20),
-        consolidationModel: String(inherited('consolidationModel') || global.consolidationModel || world?.model || state.globalSettings?.defaultModel || '').trim(),
+        consolidationModel: String(inherited('consolidationModel') || global.consolidationModel || world?.model || ExperimentalWorldsState.globalSettings?.defaultModel || '').trim(),
         consolidationMaxTokens: Number(inherited('consolidationMaxTokens')) || 1400,
         consolidationTemperature: Number(inherited('consolidationTemperature')) || 0,
         consolidationReasoning: inherited('consolidationReasoning') === true
@@ -6504,20 +6504,20 @@ function effectiveSidecarMemoryConfig(world) {
 }
 
 function effectiveSidecarReaderProfile(world, sess = null) {
-    const globalProfile = window.HordeSidecarReader?.normalizeProfile?.(state.globalSettings?.sidecarReaderProfile || {}) || {};
-    const tracker = window.HordeSidecarMode?.normalizeWorldConfig?.(world)?.tracker || {};
-    const localProfile = window.HordeSidecarReader?.normalizeProfile?.(tracker.readerProfile || {}) || {};
+    const globalProfile = window.ExperimentalWorldsSidecarReader?.normalizeProfile?.(ExperimentalWorldsState.globalSettings?.sidecarReaderProfile || {}) || {};
+    const tracker = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world)?.tracker || {};
+    const localProfile = window.ExperimentalWorldsSidecarReader?.normalizeProfile?.(tracker.readerProfile || {}) || {};
     const profile = tracker.readerProfileInherit === false ? localProfile : globalProfile;
     // `timeline.sidecar.readerProfile` is a derived snapshot of the profile
     // used by a turn, not an override.  Treating the empty/default timeline
     // object as authoritative silently masked global and world settings.
     // World/timeline provenance is written when a reader turn starts; routing
     // always resolves from the explicit world inheritance choice here.
-    return window.HordeSidecarReader?.normalizeProfile?.(profile) || profile;
+    return window.ExperimentalWorldsSidecarReader?.normalizeProfile?.(profile) || profile;
 }
 
 function deriveSidecarReaderProfileRevision(profile) {
-    const normalized = window.HordeSidecarReader?.normalizeProfile?.(profile || {}) || profile || {};
+    const normalized = window.ExperimentalWorldsSidecarReader?.normalizeProfile?.(profile || {}) || profile || {};
     const fingerprint = { ...normalized, revision: '' };
     return { ...normalized, revision: `reader-${worldMediaHash(JSON.stringify(fingerprint))}` };
 }
@@ -6528,8 +6528,8 @@ function deriveSidecarReaderProfileRevision(profile) {
 // it. Progress is persisted after every item, allowing a failed run to resume
 // without repeating completed turns.
 async function backfillSidecarReaderSnapshots(world, sess, options = {}) {
-    if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) throw new Error('Reader backfill requires a Sidecar timeline.');
-    const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+    if (!world || !sess || !window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) throw new Error('Reader backfill requires a Sidecar timeline.');
+    const protocol = window.ExperimentalWorldsSidecarHooks.normalizeWorldTimeline(world, sess);
     const activeTurns = (protocol.turns || []).filter(turn => turn.status !== 'superseded');
     const turnIds = Array.isArray(options.turnIds) && options.turnIds.length ? new Set(options.turnIds.map(String)) : null;
     const startFound = options.startTurnId ? activeTurns.findIndex(turn => String(turn.id) === String(options.startTurnId)) : 0;
@@ -6543,12 +6543,12 @@ async function backfillSidecarReaderSnapshots(world, sess, options = {}) {
     const eligible = selectedTurns.filter(turn => (!turnIds || turnIds.has(String(turn.id)))
         && !protocol.readerSnapshots.some(snapshot => snapshot.turnId === turn.id && snapshot.settlementStatus === 'audit_only'));
     const profile = effectiveSidecarReaderProfile(world, sess);
-    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
+    const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world) || {};
     const tracker = config.tracker || {};
-    const model = profile.model || (tracker.inheritNarrator !== false && tracker.model ? tracker.model : (world.model || state.globalSettings.defaultModel));
-    const provider = profile.provider || (tracker.inheritNarrator !== false ? normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter') : normalizedProviderId(tracker.provider || state.globalSettings?.apiProvider || 'openrouter'));
+    const model = profile.model || (tracker.inheritNarrator !== false && tracker.model ? tracker.model : (world.model || ExperimentalWorldsState.globalSettings.defaultModel));
+    const provider = profile.provider || (tracker.inheritNarrator !== false ? ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider || 'openrouter') : ExperimentalWorldsHost.normalizedProviderId(tracker.provider || ExperimentalWorldsState.globalSettings?.apiProvider || 'openrouter'));
     protocol.readerBackfill = { ...(protocol.readerBackfill || {}), status: 'running', startedAt: protocol.readerBackfill?.startedAt || new Date().toISOString(), total: (protocol.readerBackfill?.total || 0) + eligible.length, completed: Number(protocol.readerBackfill?.completed) || 0, failed: Number(protocol.readerBackfill?.failed) || 0, lastError: '' };
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     for (const turn of eligible) {
         const refreshIndex = (Number(protocol.readerSnapshots.length) || 0) + 1;
         // Historical processing is evidence-only. A full envelope avoids
@@ -6586,33 +6586,33 @@ async function backfillSidecarReaderSnapshots(world, sess, options = {}) {
             turn.readerBackfillError = protocol.readerBackfill.lastError;
         }
         protocol.readerBackfill.updatedAt = new Date().toISOString();
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         options.onProgress?.(safeJsonClone(protocol.readerBackfill));
     }
     protocol.readerBackfill.status = protocol.readerBackfill.failed && !protocol.readerBackfill.completed ? 'failed' : 'completed';
     protocol.readerBackfill.completedAt = new Date().toISOString();
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     return safeJsonClone(protocol.readerBackfill);
 }
-window.HordeSidecarReaderBackfill = { run: backfillSidecarReaderSnapshots };
+window.ExperimentalWorldsSidecarReaderBackfill = { run: backfillSidecarReaderSnapshots };
 
 async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
-    if (!hasApiCredentials() || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return;
-    const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
-    const graph = window.HordeSidecarMemoryGraph?.graph(protocol);
+    if (!ExperimentalWorldsHost.hasApiCredentials() || !window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) return;
+    const protocol = window.ExperimentalWorldsSidecarHooks.normalizeWorldTimeline(world, sess);
+    const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph(protocol);
     if (!graph) return;
     // Sidecar migration retains visible history as evidence.  Materialise that
     // evidence before looking for an Episode so manual archive and ordinary
     // cadence have the same truthful source set.
-    window.HordeSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
+    window.ExperimentalWorldsSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
     const startMemoryEpoch = Number(sess._memEpoch) || 0;
     const memoryDefaults = effectiveSidecarMemoryConfig(world);
-    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
+    const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world) || {};
     const tracker = config.tracker || {};
     const model = tracker.inheritNarrator !== false || !tracker.model
-        ? (memoryDefaults.consolidationModel || world.model || state.globalSettings.defaultModel)
+        ? (memoryDefaults.consolidationModel || world.model || ExperimentalWorldsState.globalSettings.defaultModel)
         : tracker.model;
-    window.HordeSidecarMemoryGraph.queueEpisode(protocol, {
+    window.ExperimentalWorldsSidecarMemoryGraph.queueEpisode(protocol, {
         batchSize: memoryDefaults.episodeChunkTurns,
         cadenceTurns: memoryDefaults.episodeCadenceTurns,
         force: options.force === true,
@@ -6629,7 +6629,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
         if (deps.some(dep => !completedIds.has(dep) && !(protocol.jobs || []).some(candidate => candidate.id === dep && candidate.status === 'completed'))) {
             job.status = 'dependency_waiting'; job.waitingSince = job.waitingSince || new Date().toISOString();
         } else if (job.status === 'dependency_waiting') job.status = 'queued';
-        job.provider = job.provider || state.globalSettings?.apiProvider || 'openrouter';
+        job.provider = job.provider || ExperimentalWorldsState.globalSettings?.apiProvider || 'openrouter';
         job.model = job.model || memoryDefaults.consolidationModel || model;
     });
     const runnable = queuedJobs.filter(job => job.status === 'queued').slice(0, overallLimit);
@@ -6637,7 +6637,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
         // Dependency transitions and newly queued work are state too. Persist
         // them even when this wave has nothing runnable yet, otherwise a
         // browser refresh can make a dependency-waiting job appear to vanish.
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         return;
     }
     const providerCounts = {};
@@ -6651,7 +6651,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
     });
     await Promise.all(scheduled.map(async job => {
         job.status = 'running'; job.startedAt = new Date().toISOString();
-        const jobProvider = normalizedProviderId(job.provider || state.globalSettings?.apiProvider || 'openrouter');
+        const jobProvider = ExperimentalWorldsHost.normalizedProviderId(job.provider || ExperimentalWorldsState.globalSettings?.apiProvider || 'openrouter');
         const jobWorld = { ...world, model: job.model || model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting };
         if (job.type === 'cognition_consolidation' || job.type === 'turn_cognition') {
             const turnScoped = job.type === 'turn_cognition';
@@ -6666,12 +6666,12 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
                             : { id: job.subjectRef, name: job.provisionalIntelligence?.name || 'Scene character', persona: '', description: '', sceneCandidate: true };
                     })() : null));
             if ((!turnScoped && !episode) || !character) {
-                window.HordeSidecarMemoryGraph.failJob(protocol, job.id, !turnScoped && !episode ? 'Episode no longer exists.' : 'Character/candidate is no longer eligible for cognition.');
+                window.ExperimentalWorldsSidecarMemoryGraph.failJob(protocol, job.id, !turnScoped && !episode ? 'Episode no longer exists.' : 'Character/candidate is no longer eligible for cognition.');
                 return;
             }
             const activeSources = (job.sourceTurnIds || []).every(turnId => (protocol.turns || []).some(turn => turn.id === turnId && ['active', 'reconciled_late'].includes(turn.status) && ['committed', 'committed_late'].includes(turn.reconciliationStatus)));
             if (!activeSources) {
-                window.HordeSidecarMemoryGraph.failJob(protocol, job.id, 'The source Turn is no longer in accepted settled continuity.');
+                window.ExperimentalWorldsSidecarMemoryGraph.failJob(protocol, job.id, 'The source Turn is no longer in accepted settled continuity.');
                 return;
             }
             const prior = (graph.cognition || []).filter(record => record.characterId === character.id && record.status === 'active').slice(-memoryDefaults.cognitionRecentLimit)
@@ -6684,9 +6684,9 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
             const authorial = { ledger: String(sess.ledger || '').slice(-3000), scenePacket: protocol.packet || null };
             const prompt = `[SIDECAR CHARACTER COGNITION]\nWrite only experiential memories for ${character.name} [${character.id}]. This is private character cognition, never objective canon. Return JSON only: {"memories":[{"text":"first-person memory","epistemicStatus":"self_action|direct_observation|disclosure|interpretation|belief|influence","importance":0.0,"confidence":0.0,"sourceTurnIds":["turn id"]}]}.\nKeep witnessed actions distinct from self-actions; disclosures must identify who told them; interpretations and suspicions must remain uncertain. Do not create a memory merely because the character was present, and do not infer interiority beyond the available character grounding. Ordinary absence belongs in episode coverage, not as a durable memory. A Reader provisional impression is a character-scoped lead, not an objective fact: retain, revise, or reject it only according to this subject's perception.\n\nCHARACTER-SCOPED PERCEPTION EVIDENCE:\n${JSON.stringify({ characterId: character.id, access: job.access, evidence: job.perceptionEvidence || '', provisionalIntelligence: turnScoped ? job.provisionalIntelligence || null : null, episodeCoverage: (episode?.perceptionCoverage || []).filter(item => item.characterId === character.id) })}\n\nEXACT SOURCE RANGE (only what was authored):\n${JSON.stringify(sourceTurns)}\n\nCHARACTER GROUNDING:\n${JSON.stringify({ id: character.id, name: character.name, persona: character.persona || '', description: character.description || '', currentState: characterState, relationships, sceneCandidate: character.sceneCandidate === true })}\n\nOBJECTIVE EPISODE (context, not character knowledge by itself):\n${JSON.stringify(episode ? { id: episode.id, summary: episode.summary, objectiveHistory: episode.objectiveHistory } : { status: 'not yet consolidated', sourceTurnIds: sourceIds })}\n\nAUTHORIAL CONTEXT (explains stakes only; never grants knowledge):\n${JSON.stringify(authorial)}\n\nRELEVANT PRIOR COGNITION:\n${JSON.stringify(prior)}`;
             try {
-                const response = await fetch(providerApiBase(jobProvider) + '/chat/completions', {
-                    method: 'POST', headers: { ...providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...providerAttributionHeaders(jobProvider) },
-                    body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
+                const response = await fetch(ExperimentalWorldsHost.providerApiBase(jobProvider) + '/chat/completions', {
+                    method: 'POST', headers: { ...ExperimentalWorldsHost.providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.providerAttributionHeaders(jobProvider) },
+                    body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
                         ...(memoryDefaults.consolidationReasoning ? { reasoning_effort: 'low' } : {}),
                         messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Consolidate this character cognition.' }] },
                         jobWorld, { scope: 'sidecar' }))
@@ -6709,20 +6709,20 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
                 job.status = 'completed'; job.completedAt = new Date().toISOString();
                 protocol.packet = buildSidecarScenePacket(world, sess);
             } catch (error) {
-                window.HordeSidecarMemoryGraph.failJob(protocol, job.id, error.message || String(error));
+                window.ExperimentalWorldsSidecarMemoryGraph.failJob(protocol, job.id, error.message || String(error));
             }
             return;
         }
         if (job.type === 'scene_consolidation' || job.type === 'sequence_consolidation') {
             const targetId = job.type === 'scene_consolidation' ? job.sceneId : job.sequenceId;
             const episodes = (graph.episodes || []).filter(episode => (job.episodeIds || []).includes(episode.id) && episode.status === 'active');
-            if (!episodes.length) { window.HordeSidecarMemoryGraph.failJob(protocol, job.id, 'No active episode evidence remains.'); return; }
+            if (!episodes.length) { window.ExperimentalWorldsSidecarMemoryGraph.failJob(protocol, job.id, 'No active episode evidence remains.'); return; }
             const label = job.type === 'scene_consolidation' ? 'scene' : 'sequence';
         const prompt = `[SIDECAR ${label.toUpperCase()} CONSOLIDATION]\nCompress the supplied episode summaries into one durable ${label}-level memory. Preserve only supported facts and unresolved uncertainty; do not invent events, locations, character knowledge, or outcomes. Reader fields are derived evidence only: use them to understand scene topic/presence/temporal continuity and candidate structures, never as permission to grant a character knowledge or rewrite objective canon. Candidate structures may remain ephemeral and should only be mentioned as unresolved/scene-local unless independently supported for promotion. Return JSON only: {"summary":"compact event-based summary","keyFacts":"durable facts and open threads"}.\n\nEPISODES:\n${JSON.stringify(episodes.map(episode => ({ id: episode.id, summary: episode.summary, objectiveHistory: episode.objectiveHistory, sourceTurnIds: episode.sourceTurnIds, readerEvidence: (episode.sourceTurnIds || []).map(turnId => graph.worldHistory.find(record => record.turnId === turnId)?.readerEnvelope || null).filter(Boolean).map(envelope => ({ summary: envelope.summary, scene: envelope.scene, presence: envelope.presence, temporal: envelope.temporal, candidateStructures: envelope.candidateStructures || [] })) })))}\n\nTARGET ${label.toUpperCase()} ID: ${targetId}`;
             try {
-                const response = await fetch(providerApiBase(jobProvider) + '/chat/completions', {
-                    method: 'POST', headers: { ...providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...providerAttributionHeaders(jobProvider) },
-                    body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
+                const response = await fetch(ExperimentalWorldsHost.providerApiBase(jobProvider) + '/chat/completions', {
+                    method: 'POST', headers: { ...ExperimentalWorldsHost.providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.providerAttributionHeaders(jobProvider) },
+                    body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
                         ...(memoryDefaults.consolidationReasoning ? { reasoning_effort: 'low' } : {}), messages: [{ role: 'system', content: prompt }, { role: 'user', content: `Consolidate this ${label}.` }] },
                         jobWorld, { scope: 'sidecar' }))
                 });
@@ -6741,19 +6741,19 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
                     await vectorizeSidecarMemoryRecords([record]);
                 }
                 job.status = 'completed'; job.completedAt = new Date().toISOString(); job.outputId = record?.id || '';
-            } catch (error) { window.HordeSidecarMemoryGraph.failJob(protocol, job.id, error.message || String(error)); }
+            } catch (error) { window.ExperimentalWorldsSidecarMemoryGraph.failJob(protocol, job.id, error.message || String(error)); }
             return;
         }
         const source = graph.worldHistory.filter(record => job.sourceTurnIds.includes(record.turnId) && record.status === 'active');
         if (!source.length) {
-            window.HordeSidecarMemoryGraph.failJob(protocol, job.id, 'All source turns were superseded before consolidation.');
+            window.ExperimentalWorldsSidecarMemoryGraph.failJob(protocol, job.id, 'All source turns were superseded before consolidation.');
             return;
         }
         const prompt = `[SIDECAR EPISODE CONSOLIDATION]\nYou consolidate a committed group of roleplay turns. Do not invent facts, promote implied places, or grant character knowledge from authorial context. Return JSON only:\n{\n  "summary":"objective episode summary",\n  "objectiveHistory":"durable factual history only",\n  "perceptionCoverage":[{"characterId":"canonical ID when known","access":"visual|auditory|informational|absent","detail":"what this participant had access to"}],\n  "locationReferences":[{"name":"particular referenced place","locationId":"canonical ID or empty","status":"assigned|unresolved","evidence":"short contextual clue"}]\n}\nAn ordinary generic desire such as “somewhere quiet” is not a location reference. Only record a particular place if the full episode context identifies one or establishes that it is unresolved.\n\nCOMMITTED SOURCE TURNS (reader envelopes are derived evidence, not canon):\n${JSON.stringify(source.map(record => ({ turnId: record.turnId, sequenceId: record.sequenceId, sceneId: record.sceneId, narration: record.narration, handoff: record.sceneReading, readerEnvelope: record.readerEnvelope || null })))} `;
         try {
-            const response = await fetch(providerApiBase(jobProvider) + '/chat/completions', {
-                method: 'POST', headers: { ...providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...providerAttributionHeaders(jobProvider) },
-                body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
+            const response = await fetch(ExperimentalWorldsHost.providerApiBase(jobProvider) + '/chat/completions', {
+                method: 'POST', headers: { ...ExperimentalWorldsHost.providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.providerAttributionHeaders(jobProvider) },
+                body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
                     ...(memoryDefaults.consolidationReasoning ? { reasoning_effort: 'low' } : {}),
                     messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Consolidate this episode.' }] },
                     jobWorld, { scope: 'sidecar' }))
@@ -6762,7 +6762,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
             const output = parseSidecarEpisodeOutput((await response.json())?.choices?.[0]?.message?.content || '');
             if (!output) throw new Error('Episode consolidation returned no usable JSON.');
             if ((Number(sess._memEpoch) || 0) !== startMemoryEpoch) return;
-            window.HordeSidecarMemoryGraph.completeEpisode(protocol, job.id, output);
+            window.ExperimentalWorldsSidecarMemoryGraph.completeEpisode(protocol, job.id, output);
             const completedEpisode = (graph.episodes || []).find(record => record.jobId === job.id);
             const sourceForVectors = graph.worldHistory.filter(record => job.sourceTurnIds.includes(record.turnId) && record.status === 'active');
             sourceForVectors.forEach(record => { record.vectorText = record.text || record.narration; });
@@ -6772,10 +6772,10 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
             await vectorizeSidecarMemoryRecords([...sourceForVectors, ...(completedEpisode ? [completedEpisode] : [])]);
             protocol.packet = buildSidecarScenePacket(world, sess);
         } catch (error) {
-            window.HordeSidecarMemoryGraph.failJob(protocol, job.id, error.message || String(error));
+            window.ExperimentalWorldsSidecarMemoryGraph.failJob(protocol, job.id, error.message || String(error));
         }
     }));
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     // Episode completion creates dependent cognition and hierarchy jobs after
     // this wave was selected.  Yield once, then dispatch a fresh bounded wave;
     // this is deliberately background-only and never becomes a third turn call.
@@ -6790,15 +6790,15 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
 
 async function runSidecarConversation(world, sess, userText, options = {}) {
     const requestOwner = captureExperimentalSidecarOwner(world, sess);
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) throw new Error('Sidecar protocol is unavailable for this timeline.');
-    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
+    const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world) || {};
     const tracker = config.tracker || {};
-    const narratorModel = world.model || state.globalSettings.defaultModel;
+    const narratorModel = world.model || ExperimentalWorldsState.globalSettings.defaultModel;
     const model = tracker.inheritNarrator !== false || !tracker.model ? narratorModel : tracker.model;
-    const narratorProvider = normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter');
+    const narratorProvider = ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider || 'openrouter');
     const provider = tracker.inheritNarrator !== false || !tracker.provider
-        ? narratorProvider : normalizedProviderId(tracker.provider);
+        ? narratorProvider : ExperimentalWorldsHost.normalizedProviderId(tracker.provider);
     const packet = protocol.packet || buildSidecarScenePacket(world, sess);
     const openQuestions = (protocol.questions || []).filter(question => question.status === 'open').slice(-20);
     const incompleteCommit = sess?.sidecarIncompleteCommit || null;
@@ -6857,34 +6857,34 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
         updateSidecarQuestion(world, sess, question.id, { status: resolution.status, answer: resolution.answer || '', resolutionType: resolution.status === 'resolved' ? 'direct_user_answer' : 'direct_user_deferral', provenance: { source: 'direct_user_refinement', conversationId: authorEntry.id } });
     });
     if (result.workspaceAction === 'close_scene') {
-        const active = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess);
+        const active = window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(protocol, sess);
         if (active?.scene?.status === 'active') {
             const closedSceneId = active.scene.id;
             active.scene.status = 'closed'; active.scene.closedAt = new Date().toISOString();
             active.scene.endTurnId = (protocol.turns || []).filter(turn => turn.sceneId === closedSceneId).at(-1)?.id || '';
             active.scene.provisionalReview = { status: 'author_approved', reviewedAt: new Date().toISOString(), provenance: { source: 'sidecar_conversation', conversationId: authorEntry.id } };
             const memory = effectiveSidecarMemoryConfig(world);
-            window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'scene_transition', priority: 'scene_transition' });
+            window.ExperimentalWorldsSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'scene_transition', priority: 'scene_transition' });
             protocol.activeSceneId = '';
             // Closing a scene does not close its sequence. Open the next
             // scene immediately so normal narration remains available.
-            const next = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: true });
+            const next = window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: true });
             sidecarEntry.workspaceAction = {
                 type: 'close_scene', sceneId: closedSceneId, nextSceneId: next?.scene?.id || '',
                 source: 'explicit_author_approval'
             };
         }
     } else if (result.workspaceAction === 'begin_sequence_plan') {
-        const plan = window.HordeSidecarTimeline?.beginPlanning(protocol, sess, authorEntry.text);
+        const plan = window.ExperimentalWorldsSidecarTimeline?.beginPlanning(protocol, sess, authorEntry.text);
         if (plan) sidecarEntry.workspaceAction = { type: 'begin_sequence_plan', planId: plan.id, source: 'explicit_author_approval' };
     } else if (result.workspaceAction === 'approve_sequence_plan') {
-        const previous = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false });
+        const previous = window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false });
         const memory = effectiveSidecarMemoryConfig(world);
         // Queue the final evidence before close.  The closure itself is then
         // observed by Episode completion and fans out the Scene/Sequence jobs.
-        window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'sequence_transition', priority: 'closure' });
+        window.ExperimentalWorldsSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'sequence_transition', priority: 'closure' });
         const transitionMode = /(?:cut|skip|later|tomorrow|following|new scene)/i.test(authorEntry.text) ? 'discontinuous' : 'continuous';
-        const approved = window.HordeSidecarTimeline?.approvePlanning(protocol, sess, {
+        const approved = window.ExperimentalWorldsSidecarTimeline?.approvePlanning(protocol, sess, {
             title: protocol.sequencePlanning?.title || 'New sequence',
             sceneTitle: protocol.sequencePlanning?.sceneTitle || '',
             transitionMode,
@@ -6893,7 +6893,7 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
         if (approved) sidecarEntry.workspaceAction = { type: 'approve_sequence_plan', sequenceId: approved.sequence.id, sceneId: approved.scene.id, source: 'explicit_author_approval', priorSceneId: previous?.scene?.id || '' };
     } else if (result.workspaceAction === 'context_refresh') {
         const memory = effectiveSidecarMemoryConfig(world);
-        window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'context_refresh', priority: 'context_refresh' });
+        window.ExperimentalWorldsSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'context_refresh', priority: 'context_refresh' });
         sidecarEntry.workspaceAction = { type: 'context_refresh', source: 'explicit_author_approval' };
     }
     protocol.conversations.push(authorEntry, sidecarEntry);
@@ -6911,26 +6911,26 @@ function returnToWorldNarrator() {
     // The Sidecar panel can be redrawn while background work heals a session.
     // Resolve the active timeline at click time, never through a stale panel
     // closure, so Return always changes the composer that is actually shown.
-    const activeWorld = state.worlds.find(item => item.id === state.activeWorldId);
+    const activeWorld = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const activeSession = getCurrentWorldSession();
     const activeProtocol = activeWorld && activeSession
-        ? window.HordeSidecarHooks?.normalizeWorldTimeline?.(activeWorld, activeSession)
+        ? window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(activeWorld, activeSession)
         : null;
     if (!activeProtocol) return;
     activeProtocol.inputMode = 'narrator';
     activeProtocol.workspace = {};
     renderWorldPlayState();
     document.getElementById('world-user-input')?.focus();
-    saveState().catch(error => console.warn('Could not persist narrator mode:', error));
+    ExperimentalWorldsHost.persist().catch(error => console.warn('Could not persist narrator mode:', error));
 }
 
 function renderSidecarConversation(world, sess) {
     const panel = document.getElementById('world-sidecar-conversation');
     const log = document.getElementById('world-sidecar-conversation-log');
     if (!panel || !log) return;
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const enabled = protocol?.inputMode === 'sidecar'
-        && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+        && window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     panel.classList.toggle('hidden', !enabled);
     if (!enabled) return;
     const closeSidecarConversation = document.getElementById('world-close-sidecar-conversation');
@@ -6963,13 +6963,13 @@ function renderSidecarConversation(world, sess) {
         const proposal = protocol.backgroundProposals.find(item => item.id === button.dataset.proposalId);
         if (!proposal) return;
         proposal.status = 'author_approved'; proposal.reviewedAt = new Date().toISOString(); proposal.reviewProvenance = 'direct_user_refinement';
-        protocol.packet = buildSidecarScenePacket(world, sess); await saveState(); renderSidecarConversation(world, sess);
+        protocol.packet = buildSidecarScenePacket(world, sess); await ExperimentalWorldsHost.persist(); renderSidecarConversation(world, sess);
     });
     log.querySelectorAll('.sidecar-proposal-dismiss').forEach(button => button.onclick = async () => {
         const proposal = protocol.backgroundProposals.find(item => item.id === button.dataset.proposalId);
         if (!proposal) return;
         proposal.status = 'dismissed'; proposal.reviewedAt = new Date().toISOString(); proposal.reviewProvenance = 'direct_user_refinement';
-        protocol.packet = buildSidecarScenePacket(world, sess); await saveState(); renderSidecarConversation(world, sess);
+        protocol.packet = buildSidecarScenePacket(world, sess); await ExperimentalWorldsHost.persist(); renderSidecarConversation(world, sess);
     });
     log.querySelectorAll('.sidecar-proposal-revise').forEach(button => button.onclick = async () => {
         const proposal = protocol.backgroundProposals.find(item => item.id === button.dataset.proposalId);
@@ -6979,17 +6979,17 @@ function renderSidecarConversation(world, sess) {
         button.disabled = true;
         try {
             const revised = await reviseWorldAgentProposal(world, sess, proposal, guidance);
-            if (revised) showToast('World Agent proposal revised for Sidecar review.', 'success');
+            if (revised) ExperimentalWorldsHost.notify('World Agent proposal revised for Sidecar review.', 'success');
         } catch (error) {
-            showToast(`Proposal revision failed: ${error.message || error}`, 'error');
+            ExperimentalWorldsHost.notify(`Proposal revision failed: ${error.message || error}`, 'error');
         } finally {
             renderSidecarConversation(world, sess);
         }
     });
     log.querySelectorAll('.sidecar-question-repair').forEach(button => button.onclick = async () => {
         button.disabled = true;
-        try { await runSidecarQuestionRepair(world, sess, button.dataset.questionId); showToast('Question repair recorded.', 'success'); }
-        catch (error) { showToast(`Question repair failed: ${error.message || error}`, 'error'); }
+        try { await runSidecarQuestionRepair(world, sess, button.dataset.questionId); ExperimentalWorldsHost.notify('Question repair recorded.', 'success'); }
+        catch (error) { ExperimentalWorldsHost.notify(`Question repair failed: ${error.message || error}`, 'error'); }
         finally { renderSidecarConversation(world, sess); }
     });
     log.scrollTop = log.scrollHeight;
@@ -7009,11 +7009,11 @@ function sidecarInspectorJson(value, fallback = 'Nothing has been recorded yet.'
 }
 
 function openWorldSidecarLine(workspace = {}) {
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
     if (!world || !sess) return;
-    if (window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) !== true) return openWorldSidecarInspector('migration');
-    const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+    if (window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) !== true) return openWorldSidecarInspector('migration');
+    const protocol = window.ExperimentalWorldsSidecarHooks.normalizeWorldTimeline(world, sess);
     protocol.workspace = {
         kind: ['sequence_planning', 'context_refresh', 'sequence_closure'].includes(workspace.kind) ? workspace.kind : 'world_gm',
         title: String(workspace.title || 'World GM').slice(0, 160),
@@ -7029,7 +7029,7 @@ function openWorldSidecarLine(workspace = {}) {
         input.focus();
     }
     protocol.packet = buildSidecarScenePacket(world, sess);
-    saveState().catch(() => {});
+    ExperimentalWorldsHost.persist().catch(() => {});
     renderSidecarConversation(world, sess);
 }
 
@@ -7090,7 +7090,7 @@ function sidecarSceneProjectionMarkup(world, sess) {
 function buildSidecarWorkspaceModel(world, sess, options = {}) {
     const protocol = protocolForSidecarTimeline(world, sess);
     if (!protocol) return null;
-    const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false }) || {};
+    const hierarchy = window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false }) || {};
     const rawUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
     const workspaceUi = {
         view: ['scene', 'relationships', 'characters', 'history', 'thoughts', 'all-known'].includes(options.view || rawUi.view) ? (options.view || rawUi.view) : 'scene',
@@ -7647,7 +7647,7 @@ async function stageScenePulseCandidateForWorldReview(world, sess, candidateId) 
     const sourceTurnIds = scenePulseCandidateSourceTurnIds(candidate);
     const sourceTurn = [...(protocol.turns || [])].reverse()
         .find(turn => sourceTurnIds.includes(String(turn?.id || ''))) || null;
-    const staged = window.HordeSidecarPromotion?.stage?.(protocol, draft.kind, draft.raw, {
+    const staged = window.ExperimentalWorldsSidecarPromotion?.stage?.(protocol, draft.kind, draft.raw, {
         source: 'scenepulse_reader_candidate', turnId: sourceTurnIds.at(-1) || '',
         narration: String(sourceTurn?.narration || ''), handoff: String(sourceTurn?.handoff || '')
     });
@@ -7671,7 +7671,7 @@ async function stageScenePulseCandidateForWorldReview(world, sess, candidateId) 
     candidate.provisionalId = staged.id;
     candidate.promotionDisposition = staged.scenePulseDisposition;
     protocol.packet = buildSidecarScenePacket(world, sess);
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     renderWorldPlayState();
     return { status: staged.scenePulseDisposition, provisionalId: staged.id, eligibility };
 }
@@ -7800,7 +7800,7 @@ async function linkScenePulseCandidateToCanonical(world, sess, candidateId) {
     if (!candidate || !eligibility.reviewable) throw new Error(eligibility.reason || 'That ScenePulse candidate cannot be linked.');
     if (!canonical) throw new Error('The Reader did not provide a verified canonical identity to link.');
     const staged = scenePulsePromotionRecordForCandidate(protocol, candidateId);
-    showConfirmModal(`Link ${candidate.label || candidate.name}`, `Link this settled ScenePulse candidate to Horde’s existing ${canonical.type === 'npc' ? 'character' : 'location'} “${canonical.name}”? This preserves both evidence trails and creates no new record.`, async () => {
+    ExperimentalWorldsHost.confirmModal(`Link ${candidate.label || candidate.name}`, `Link this settled ScenePulse candidate to Horde’s existing ${canonical.type === 'npc' ? 'character' : 'location'} “${canonical.name}”? This preserves both evidence trails and creates no new record.`, async () => {
         if (staged) {
             staged.status = 'resolved'; staged.resolvedCanonicalId = canonical.id;
             staged.scenePulseDisposition = 'canonical_identity_linked';
@@ -7813,9 +7813,9 @@ async function linkScenePulseCandidateToCanonical(world, sess, candidateId) {
         });
         protocol.refinements = protocol.refinements.slice(-200);
         protocol.packet = buildSidecarScenePacket(world, sess);
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
-        showToast(`${candidate.label || candidate.name} is now linked to ${canonical.name}.`, 'success');
+        ExperimentalWorldsHost.notify(`${candidate.label || candidate.name} is now linked to ${canonical.name}.`, 'success');
     });
     return { status: 'confirmation_required', canonicalId: canonical.id };
 }
@@ -7841,7 +7841,7 @@ async function resolveScenePulseCandidateDuplicate(world, sess, candidateId, can
     if (choice === 'create') {
         return promoteImpliedWorldRecord({ provisionalId: staged.id, candidateId, allowDuplicate: true });
     }
-    showConfirmModal(`Link ${candidate.label || candidate.name}`, `Use the existing ${kind === 'location' ? 'location' : 'character'} “${canonical.name}” for this ScenePulse candidate? This is an explicit author decision; it does not change the visible scene.`, async () => {
+    ExperimentalWorldsHost.confirmModal(`Link ${candidate.label || candidate.name}`, `Use the existing ${kind === 'location' ? 'location' : 'character'} “${canonical.name}” for this ScenePulse candidate? This is an explicit author decision; it does not change the visible scene.`, async () => {
         staged.status = 'resolved';
         staged.resolvedCanonicalId = canonical.id;
         staged.scenePulseDisposition = 'canonical_identity_linked_author_choice';
@@ -7854,9 +7854,9 @@ async function resolveScenePulseCandidateDuplicate(world, sess, candidateId, can
         });
         protocol.refinements = protocol.refinements.slice(-200);
         protocol.packet = buildSidecarScenePacket(world, sess);
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
-        showToast(`${candidate.label || candidate.name} is now linked to ${canonical.name}.`, 'success');
+        ExperimentalWorldsHost.notify(`${candidate.label || candidate.name} is now linked to ${canonical.name}.`, 'success');
     });
     return { status: 'confirmation_required', canonicalId: canonical.id, choice: 'link' };
 }
@@ -7876,7 +7876,7 @@ async function keepScenePulseCandidateSceneOnly(world, sess, candidateId) {
         staged.status = 'scene_only';
     }
     protocol.packet = buildSidecarScenePacket(world, sess);
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     renderWorldPlayState();
     return { status: 'scene_only' };
 }
@@ -8061,7 +8061,7 @@ async function refreshAcceptedScenePulseProjection(world, sess, options = {}) {
         if (section === 'thoughts') {
             const refreshedThoughts = await refreshScenePulseThoughts(world, sess, latestTurn.id, { signal: controller.signal });
             if (controller.signal.aborted) return { status: 'stopped' };
-            showToast('ScenePulse thoughts refreshed for the current scene.', 'success');
+            ExperimentalWorldsHost.notify('ScenePulse thoughts refreshed for the current scene.', 'success');
             return refreshedThoughts;
         }
         const refresh = await refreshSidecarSceneIntelligence(world, sess, latestTurn.id, {
@@ -8076,24 +8076,24 @@ async function refreshAcceptedScenePulseProjection(world, sess, options = {}) {
         if (controller.signal.aborted) return { status: 'stopped' };
         if (refresh?.status === 'review') {
             const accepted = acceptSidecarReaderRefresh(world, sess, refresh.id);
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             renderWorldPlayState();
             if (accepted?.cognitionJobIds?.length) {
                 runSidecarBackgroundMemoryJobs(world, sess, { source: 'scenepulse_reader_refresh' })
                     .catch(error => console.warn('ScenePulse refresh cognition dispatch skipped —', error.message));
             }
-            showToast(section ? `ScenePulse ${section} refresh accepted from the authored beat.` : 'ScenePulse refresh accepted from the authored beat.', 'success');
+            ExperimentalWorldsHost.notify(section ? `ScenePulse ${section} refresh accepted from the authored beat.` : 'ScenePulse refresh accepted from the authored beat.', 'success');
             return accepted;
         }
         // Recovery can return a settled retry rather than a review packet.
         // The caller still receives a truthful completion without issuing Narrator.
-        showToast('ScenePulse refreshed for the current scene.', 'success');
+        ExperimentalWorldsHost.notify('ScenePulse refreshed for the current scene.', 'success');
         return refresh;
     } catch (error) {
         if (controller.signal.aborted) {
             // Keep the accepted tracker exactly as it was.  The native source
             // UI can offer Retry; this is not a failed or new World turn.
-            showToast('ScenePulse update stopped. The current scene was left unchanged.', 'info');
+            ExperimentalWorldsHost.notify('ScenePulse update stopped. The current scene was left unchanged.', 'info');
             return { status: 'stopped' };
         }
         throw error;
@@ -8134,13 +8134,13 @@ function stageScenePulseStoryIdea({ direction = '', inject = false } = {}) {
     resizeWorldMessageInput(input);
     input.focus();
     if (!inject) {
-        showToast('Story direction pasted into the World draft — edit and send when ready.', 'success');
+        ExperimentalWorldsHost.notify('Story direction pasted into the World draft — edit and send when ready.', 'success');
         return;
     }
     const send = document.getElementById('world-send-btn');
     if (!send) throw new Error('The World send control is unavailable.');
     send.click();
-    showToast('Story direction injected as a new World turn.', 'success');
+    ExperimentalWorldsHost.notify('Story direction injected as a new World turn.', 'success');
 }
 
 // A source preset is a Reader-prompt selection, not a provider/sampler
@@ -8151,22 +8151,22 @@ async function applyScenePulseReaderPreset(world, sess, rawPreset = {}) {
     const existing = world?.sidecarConfig?.tracker?.readerProfile || {};
     if (!isPlainObject(rawPreset) || !Object.keys(rawPreset).length) {
         const { scenePulsePreset, ...withoutScenePulsePreset } = existing;
-        world.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.({
+        world.sidecarConfig = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.({
             ...world,
             sidecarConfig: { ...(world.sidecarConfig || {}), tracker: { ...(world.sidecarConfig?.tracker || {}), readerProfileInherit: false, readerProfile: withoutScenePulsePreset } }
         }) || world.sidecarConfig;
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
         return null;
     }
-    const profile = window.HordeSidecarReader?.normalizeProfile?.({ scenePulsePreset: rawPreset }) || {};
+    const profile = window.ExperimentalWorldsSidecarReader?.normalizeProfile?.({ scenePulsePreset: rawPreset }) || {};
     if (!profile.scenePulsePreset?.id) throw new Error('The ScenePulse preset is incomplete.');
-    world.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.({
+    world.sidecarConfig = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.({
         ...world,
         sidecarConfig: { ...(world.sidecarConfig || {}), tracker: { ...(world.sidecarConfig?.tracker || {}), readerProfileInherit: false, readerProfile: { ...existing, scenePulsePreset: profile.scenePulsePreset } } }
     }) || world.sidecarConfig;
     if (!world?.sidecarConfig?.tracker?.readerProfile?.scenePulsePreset?.id) throw new Error('Horde could not persist the ScenePulse preset selection.');
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     renderWorldPlayState();
     return world.sidecarConfig.tracker.readerProfile.scenePulsePreset;
 }
@@ -8222,7 +8222,7 @@ async function clearScenePulseReaderHistory(world, sess) {
         turn.reader = null;
     });
     protocol.packet = buildSidecarScenePacket(world, sess, '');
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     renderWorldPlayState();
     return { count, message: `Cleared ${count} ScenePulse scene snapshot${count === 1 ? '' : 's'}; the story and World state were preserved.` };
 }
@@ -8321,7 +8321,7 @@ async function persistScenePulseWorldsPreferences(world, sess, rawPreferences = 
     if (!protocol) throw new Error('No World timeline is available for ScenePulse preferences.');
     protocol.workspaceUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
     protocol.workspaceUi.scenePulseWorlds = normalizeScenePulseWorldsPreferences(rawPreferences);
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     return protocol.workspaceUi.scenePulseWorlds;
 }
 
@@ -8368,7 +8368,7 @@ async function persistScenePulseSourceRuntimePreferences(world, sess, sourcePref
         sourceProfiles: incoming.sourceProfiles,
         sourceActiveProfileId: incoming.sourceActiveProfileId
     });
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     return protocol.workspaceUi.scenePulseWorlds;
 }
 
@@ -8748,7 +8748,7 @@ async function resolveScenePulseQuestTranslation(world, sess, translationId, cho
     translation.resolvedQuestId = outcome.questId || '';
     protocol.scenePulseQuestTranslations.push(outcome);
     if (protocol.scenePulseQuestTranslations.length > 320) protocol.scenePulseQuestTranslations = protocol.scenePulseQuestTranslations.slice(-320);
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     renderWorldPlayState();
     return outcome;
 }
@@ -9192,7 +9192,7 @@ async function commitScenePulseSourceEdit(world, sess, payload = {}) {
     // make a successfully saved ScenePulse action disappear after reload.
     edit.questReview = safeJsonClone(questTranslations);
     edit.relationshipReview = safeJsonClone(relationshipTranslations);
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     return {
         saved: true, id: edit.id, edit,
         questTranslations: safeJsonClone(questTranslations),
@@ -9352,7 +9352,7 @@ async function saveScenePulsePortraitOverride(world, sess, payload = {}) {
     const preferences = normalizeScenePulseWorldsPreferences(protocol.workspaceUi.scenePulseWorlds || {});
     preferences.portraitAssetIds[identity] = assetId;
     protocol.workspaceUi.scenePulseWorlds = normalizeScenePulseWorldsPreferences(preferences);
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     return { assetId, source: worldMediaSource(world, assetId) };
 }
 
@@ -9367,7 +9367,7 @@ async function clearScenePulsePortraitOverride(world, sess, payload = {}) {
     // Retain the shared/reusable media asset. Clearing an override changes
     // only this ScenePulse association and cannot unexpectedly delete media.
     protocol.workspaceUi.scenePulseWorlds = normalizeScenePulseWorldsPreferences(preferences);
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     return { identity };
 }
 
@@ -9689,7 +9689,7 @@ function scenePulseThoughtPanel(data, ui, persist, onRegenerate = null) {
             const nextData = await onRegenerate();
             if (nextData) scenePulseThoughtPanel(nextData, ui, persist, onRegenerate);
         } catch (error) {
-            showToast(`Could not regenerate thoughts: ${error?.message || error}`, 'error');
+            ExperimentalWorldsHost.notify(`Could not regenerate thoughts: ${error?.message || error}`, 'error');
             event.currentTarget.disabled = false;
         }
     });
@@ -9712,14 +9712,14 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     // The upstream panel has a document-level weather/effects layer.  A late
     // Sidecar redraw must never remount it over the library or another Horde
     // route simply because a World remains selected in workspace state.
-    if (state.view !== 'worldPlay') {
+    if (ExperimentalWorldsState.view !== 'worldPlay') {
         unbindScenePulseWorldsHostActions(host);
         window.HordeScenePulseSourceRuntime?.unmount?.(host);
         window.HordeScenePulseWorlds?.unmount?.(host);
         host.replaceChildren();
         return;
     }
-    const sidecar = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    const sidecar = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     column.classList.toggle('is-sidecar', sidecar); host.classList.toggle('hidden', !sidecar);
     if (sidecar) restoreScenePulseStatusColumnWidth(column);
     else clearScenePulseStatusColumnWidth(column);
@@ -9757,7 +9757,7 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     const protocol = model.protocol;
     protocol.workspaceUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
     const ui = protocol.workspaceUi.scenePulse = { demo: protocol.workspaceUi.scenePulse?.demo !== false, view: protocol.workspaceUi.scenePulse?.view || 'scene', open: protocol.workspaceUi.scenePulse?.open || {}, panels: protocol.workspaceUi.scenePulse?.panels || {}, features: { thoughts: protocol.workspaceUi.scenePulse?.features?.thoughts !== false, weather: protocol.workspaceUi.scenePulse?.features?.weather !== false, timeTint: protocol.workspaceUi.scenePulse?.features?.timeTint !== false, transitions: protocol.workspaceUi.scenePulse?.features?.transitions !== false }, panelsOpen: protocol.workspaceUi.scenePulse?.panelsOpen === true, compact: protocol.workspaceUi.scenePulse?.compact === true, edit: protocol.workspaceUi.scenePulse?.edit === true, showEmpty: protocol.workspaceUi.scenePulse?.showEmpty === true, fontScale: Math.max(0.7, Math.min(1.5, Number(protocol.workspaceUi.scenePulse?.fontScale) || 1)), theme: protocol.workspaceUi.scenePulse?.theme || 'default', reduceEffects: protocol.workspaceUi.scenePulse?.reduceEffects === true, thoughtGhost: protocol.workspaceUi.scenePulse?.thoughtGhost === true, thoughtLeft: protocol.workspaceUi.scenePulse?.thoughtLeft || 12, thoughtTop: protocol.workspaceUi.scenePulse?.thoughtTop || 88, thoughtWidth: protocol.workspaceUi.scenePulse?.thoughtWidth || 360, liveLocation: protocol.workspaceUi.scenePulse?.liveLocation || '', dossierId: protocol.workspaceUi.scenePulse?.dossierId || '' };
-    const persist = () => { sess.sidecar = protocol; saveState().catch(error => console.warn('ScenePulse UI setting save failed:', error)); };
+    const persist = () => { sess.sidecar = protocol; ExperimentalWorldsHost.persist().catch(error => console.warn('ScenePulse UI setting save failed:', error)); };
     const tour = ui.demo ? scenePulseTourState() : null;
     const data = tour ? tour.data : scenePulseWorldsAdapter(world, sess, model, false);
     const dossiers = tour ? scenePulseTourDossiers(data) : scenePulseDossiers(world, model, data);
@@ -9822,36 +9822,36 @@ function renderScenePulseWorldsWorkspace(world, sess) {
         const query = String(event.target.value || '').trim().toLowerCase();
         host.querySelectorAll('[data-sp-dossier-name]').forEach(row => { row.hidden = !!query && !String(row.dataset.spDossierName || '').includes(query); });
     });
-    host.querySelectorAll('[data-sp-action]').forEach(button => button.addEventListener('click', async () => { const action = button.dataset.spAction; if (action === 'demo') { ui.demo = !ui.demo; ui.view = 'scene'; persist(); renderScenePulseWorldsWorkspace(world, sess); return; } if (action === 'thoughts') { scenePulseThoughtPanel(data, ui, persist, async () => { if (ui.demo) { showToast('The tour fixture has no live Reader to regenerate.', 'info'); return null; } await refreshScenePulseThoughts(world, sess, model.latestTurn?.id || ''); const nextModel = buildSidecarWorkspaceModel(world, sess); const nextData = nextModel ? scenePulseWorldsAdapter(world, sess, nextModel, false) : null; renderScenePulseWorldsWorkspace(world, sess); showToast('Inner Thoughts regenerated from the settled turn.', 'success'); return nextData; }); return; } if (action === 'refresh') { if (ui.demo) { showToast('Switch to Live scene before refreshing.', 'info'); return; } button.disabled = true; try { await refreshSidecarSceneIntelligence(world, sess, model.latestTurn?.id || ''); showToast('ScenePulse refreshed for review.', 'success'); } catch (error) { showToast(`Could not refresh ScenePulse: ${error?.message || error}`, 'error'); } renderScenePulseWorldsWorkspace(world, sess); } }));
+    host.querySelectorAll('[data-sp-action]').forEach(button => button.addEventListener('click', async () => { const action = button.dataset.spAction; if (action === 'demo') { ui.demo = !ui.demo; ui.view = 'scene'; persist(); renderScenePulseWorldsWorkspace(world, sess); return; } if (action === 'thoughts') { scenePulseThoughtPanel(data, ui, persist, async () => { if (ui.demo) { ExperimentalWorldsHost.notify('The tour fixture has no live Reader to regenerate.', 'info'); return null; } await refreshScenePulseThoughts(world, sess, model.latestTurn?.id || ''); const nextModel = buildSidecarWorkspaceModel(world, sess); const nextData = nextModel ? scenePulseWorldsAdapter(world, sess, nextModel, false) : null; renderScenePulseWorldsWorkspace(world, sess); ExperimentalWorldsHost.notify('Inner Thoughts regenerated from the settled turn.', 'success'); return nextData; }); return; } if (action === 'refresh') { if (ui.demo) { ExperimentalWorldsHost.notify('Switch to Live scene before refreshing.', 'info'); return; } button.disabled = true; try { await refreshSidecarSceneIntelligence(world, sess, model.latestTurn?.id || ''); ExperimentalWorldsHost.notify('ScenePulse refreshed for review.', 'success'); } catch (error) { ExperimentalWorldsHost.notify(`Could not refresh ScenePulse: ${error?.message || error}`, 'error'); } renderScenePulseWorldsWorkspace(world, sess); } }));
     host.querySelector('[data-sp-theme]')?.addEventListener('change', event => { ui.theme = event.target.value; persist(); renderScenePulseWorldsWorkspace(world, sess); });
     host.querySelector('[data-sp-effects]')?.addEventListener('change', event => { ui.reduceEffects = !event.target.checked; persist(); host.classList.toggle('spw-reduce-effects', ui.reduceEffects); });
-    host.querySelectorAll('[data-sp-idea]').forEach(button => button.addEventListener('click', () => { const idea = data.plotBranches[Number(button.dataset.spIdea)]; const input = document.getElementById('world-user-input'); if (!idea || !input) return; input.value = idea.hook || idea.name || ''; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); showToast('Story direction added to the draft.', 'success'); }));
+    host.querySelectorAll('[data-sp-idea]').forEach(button => button.addEventListener('click', () => { const idea = data.plotBranches[Number(button.dataset.spIdea)]; const input = document.getElementById('world-user-input'); if (!idea || !input) return; input.value = idea.hook || idea.name || ''; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); ExperimentalWorldsHost.notify('Story direction added to the draft.', 'success'); }));
     host.querySelectorAll('[data-sp-quest-action]').forEach(button => button.addEventListener('click', () => {
-        if (ui.demo) { showToast('The tour fixture is read-only. Switch to Live scene to change this timeline.', 'info'); return; }
+        if (ui.demo) { ExperimentalWorldsHost.notify('The tour fixture is read-only. Switch to Live scene to change this timeline.', 'info'); return; }
         const action = button.dataset.spQuestAction;
         const questId = String(button.dataset.spQuestId || '');
         const quest = questId ? findSessionQuest(sess, questId) : null;
         if (action === 'add') { openWorldQuestManager(); return; }
-        if (!quest) { showToast('That quest is no longer available in this timeline.', 'warning'); return; }
+        if (!quest) { ExperimentalWorldsHost.notify('That quest is no longer available in this timeline.', 'warning'); return; }
         if (action === 'edit') { openWorldQuestManager(quest.id); return; }
         if (action === 'complete' || action === 'restore') {
             const nextStatus = action === 'complete' ? 'completed' : 'active';
             const verb = action === 'complete' ? 'Complete' : 'Restore';
-            showConfirmModal(`${verb} quest`, `${verb} “${quest.title}” in this timeline?`, async () => {
+            ExperimentalWorldsHost.confirmModal(`${verb} quest`, `${verb} “${quest.title}” in this timeline?`, async () => {
                 applyQuestUpdates(world, sess, [{ id: quest.id, status: nextStatus }]);
-                await saveState();
+                await ExperimentalWorldsHost.persist();
                 renderWorldPlayState();
-                showToast(action === 'complete' ? 'Quest completed.' : 'Quest restored.', 'success');
+                ExperimentalWorldsHost.notify(action === 'complete' ? 'Quest completed.' : 'Quest restored.', 'success');
             });
             return;
         }
         if (action === 'remove') {
-            showConfirmModal('Delete Quest', `Delete “${quest.title}” from this timeline?`, async () => {
+            ExperimentalWorldsHost.confirmModal('Delete Quest', `Delete “${quest.title}” from this timeline?`, async () => {
                 const index = (sess.quests || []).findIndex(item => item.id === quest.id);
                 if (index !== -1) sess.quests.splice(index, 1);
-                await saveState();
+                await ExperimentalWorldsHost.persist();
                 renderWorldPlayState();
-                showToast('Quest deleted.', 'info');
+                ExperimentalWorldsHost.notify('Quest deleted.', 'info');
             });
         }
     }));
@@ -9863,7 +9863,7 @@ function renderSidecarWorkspace(world, sess) {
     const host = document.getElementById('world-sidecar-workspace');
     const column = document.querySelector('#world-play-view .world-status-col');
     if (!host || !column) return;
-    const sidecar = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    const sidecar = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     column.classList.toggle('is-sidecar', sidecar);
     host.classList.toggle('hidden', !sidecar);
     if (!sidecar) { host.replaceChildren(); return; }
@@ -9959,7 +9959,7 @@ function renderSidecarWorkspace(world, sess) {
         protocol.workspaceUi = workspaceUi;
         sess.sidecar = protocol;
         rerender();
-        saveState().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
+        ExperimentalWorldsHost.persist().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
     };
     if (!window.__hordeSceneWorkspaceDocumentListener) {
         document.addEventListener('click', event => {
@@ -9987,7 +9987,7 @@ function renderSidecarWorkspace(world, sess) {
         protocol.workspaceUi = workspaceUi;
         sess.sidecar = protocol;
         rerender();
-        saveState().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
+        ExperimentalWorldsHost.persist().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
     }));
     host.querySelectorAll('[data-si-section-toggle]').forEach(header => header.addEventListener('click', event => {
         if (event.target.closest('[data-si-section-refresh]')) return;
@@ -9995,7 +9995,7 @@ function renderSidecarWorkspace(world, sess) {
         if (!sectionEl) return;
         const isOpen = sectionEl.classList.toggle('sp-open');
         workspaceUi.open[header.dataset.siSectionToggle] = isOpen;
-        saveState().catch(() => {});
+        ExperimentalWorldsHost.persist().catch(() => {});
     }));
     host.querySelectorAll('[data-si-toggle="character"]').forEach(header => header.addEventListener('click', () => header.closest('.si-character-card')?.classList.toggle('sp-card-open')));
     host.querySelectorAll('.sp-rel-header').forEach(header => header.addEventListener('click', () => header.closest('.si-rel-block')?.classList.toggle('sp-card-open')));
@@ -10005,7 +10005,7 @@ function renderSidecarWorkspace(world, sess) {
         protocol.workspaceUi = workspaceUi;
         sess.sidecar = protocol;
         rerender();
-        saveState().catch(error => console.warn('Scene Intelligence history selection persistence failed:', error));
+        ExperimentalWorldsHost.persist().catch(error => console.warn('Scene Intelligence history selection persistence failed:', error));
     }));
     host.querySelectorAll('[data-si-action]').forEach(buttonEl => buttonEl.addEventListener('click', async () => {
         const action = buttonEl.dataset.siAction || '';
@@ -10014,7 +10014,7 @@ function renderSidecarWorkspace(world, sess) {
             workspaceUi.selectedSnapshotId = '';
             protocol.workspaceUi = workspaceUi;
             sess.sidecar = protocol;
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             rerender(); return;
         }
         if (action === 'collapse-all') {
@@ -10027,20 +10027,20 @@ function renderSidecarWorkspace(world, sess) {
             });
             protocol.workspaceUi = workspaceUi;
             sess.sidecar = protocol;
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             return;
         }
         if (action === 'backstage') return openWorldSidecarInspector('backstage');
         if (action === 'gm') return openWorldSidecarLine({ kind: 'world_gm', title: 'World GM · Scene Intelligence', guidance: 'Resolve the current Sidecar failure or authorial ambiguity without regenerating the visible Narrator turn.' });
         if (action === 'enable-reader') {
-            world.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.({ ...world, sidecarConfig: { ...(world.sidecarConfig || {}), tracker: { ...(world.sidecarConfig?.tracker || {}), readerEnabled: true } } }) || world.sidecarConfig;
+            world.sidecarConfig = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.({ ...world, sidecarConfig: { ...(world.sidecarConfig || {}), tracker: { ...(world.sidecarConfig?.tracker || {}), readerEnabled: true } } }) || world.sidecarConfig;
             if (world.sidecarConfig?.tracker) world.sidecarConfig.tracker.readerEnabled = true;
-            await saveState();
-            showToast('Sidecar Reader enabled for this world.', 'success');
+            await ExperimentalWorldsHost.persist();
+            ExperimentalWorldsHost.notify('Sidecar Reader enabled for this world.', 'success');
             rerender(); return;
         }
         if (model.historical && ['process', 'retry', 'refresh'].includes(action)) {
-            showToast('Historical Scene Intelligence is read-only. Return to the current scene to process it.', 'info');
+            ExperimentalWorldsHost.notify('Historical Scene Intelligence is read-only. Return to the current scene to process it.', 'info');
             return;
         }
         if (action === 'process') {
@@ -10049,33 +10049,33 @@ function renderSidecarWorkspace(world, sess) {
                 if (model.failedTurn) await retrySidecarSceneUpdate(world, sess, model.failedTurn.id);
                 else if (model.latestTurn?.id) await refreshSidecarSceneIntelligence(world, sess, model.latestTurn.id);
                 else throw new Error('There is no authored turn to process yet.');
-                showToast('Scene Intelligence processed.', 'success');
-            } catch (error) { showToast(`Scene processing failed: ${error?.message || error}`, 'error'); }
+                ExperimentalWorldsHost.notify('Scene Intelligence processed.', 'success');
+            } catch (error) { ExperimentalWorldsHost.notify(`Scene processing failed: ${error?.message || error}`, 'error'); }
             rerender(); return;
         }
         if (action === 'retry') {
             buttonEl.disabled = true; buttonEl.textContent = 'Retrying…';
-            try { await retrySidecarSceneUpdate(world, sess, model.failedTurn?.id); } catch (error) { showToast(`Scene update retry failed: ${error?.message || error}`, 'error'); }
+            try { await retrySidecarSceneUpdate(world, sess, model.failedTurn?.id); } catch (error) { ExperimentalWorldsHost.notify(`Scene update retry failed: ${error?.message || error}`, 'error'); }
             rerender(); return;
         }
         if (action === 'refresh') {
             buttonEl.disabled = true; buttonEl.textContent = '…';
-            try { await refreshSidecarSceneIntelligence(world, sess, model.latestTurn?.id || ''); showToast('Scene Intelligence refreshed for review.', 'success'); } catch (error) { showToast(`Scene refresh failed: ${error?.message || error}`, 'error'); }
+            try { await refreshSidecarSceneIntelligence(world, sess, model.latestTurn?.id || ''); ExperimentalWorldsHost.notify('Scene Intelligence refreshed for review.', 'success'); } catch (error) { ExperimentalWorldsHost.notify(`Scene refresh failed: ${error?.message || error}`, 'error'); }
             rerender(); return;
         }
         if (action.startsWith('accept-refresh:')) {
             buttonEl.disabled = true; buttonEl.textContent = 'Applying…';
             try {
                 acceptSidecarReaderRefresh(world, sess, action.slice(15));
-                await saveState();
-                showToast('Scene Intelligence updated from the reviewed reading. Narration and canon were untouched.', 'success');
-            } catch (error) { showToast(`Could not apply that Reader refresh: ${error?.message || error}`, 'error'); }
+                await ExperimentalWorldsHost.persist();
+                ExperimentalWorldsHost.notify('Scene Intelligence updated from the reviewed reading. Narration and canon were untouched.', 'success');
+            } catch (error) { ExperimentalWorldsHost.notify(`Could not apply that Reader refresh: ${error?.message || error}`, 'error'); }
             rerender(); return;
         }
         if (action.startsWith('discard-refresh:')) {
             discardSidecarReaderRefresh(world, sess, action.slice(16));
-            await saveState();
-            showToast('Reader refresh discarded. The last settled scene view remains unchanged.', 'info');
+            await ExperimentalWorldsHost.persist();
+            ExperimentalWorldsHost.notify('Reader refresh discarded. The last settled scene view remains unchanged.', 'info');
             rerender(); return;
         }
         if (action.startsWith('candidate-gm:')) {
@@ -10099,10 +10099,10 @@ function renderSidecarWorkspace(world, sess) {
 
 function openWorldSidecarInspector(view = 'scene') {
     closeWorldSidecarInspector();
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
     if (!world || !sess) return;
-    const isSidecar = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    const isSidecar = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     // Scene State and Backstage are part of the transcript.  The user should
     // inspect the handoff beside the turn it explains, not in a second generic
     // JSON window. Keep the modal only for legacy migration and true actions.
@@ -10114,10 +10114,10 @@ function openWorldSidecarInspector(view = 'scene') {
             card.scrollIntoView({ behavior: 'smooth', block: 'center' });
             return;
         }
-        showToast('No committed Sidecar handoff exists yet for this timeline.', 'info');
+        ExperimentalWorldsHost.notify('No committed Sidecar handoff exists yet for this timeline.', 'info');
         return;
     }
-    const protocol = isSidecar ? window.HordeSidecarHooks.normalizeWorldTimeline(world, sess) : null;
+    const protocol = isSidecar ? window.ExperimentalWorldsSidecarHooks.normalizeWorldTimeline(world, sess) : null;
     const packet = isSidecar ? (protocol.packet || buildSidecarScenePacket(world, sess)) : null;
     const latestTurn = isSidecar ? (protocol.turns || []).at(-1) : null;
     const failedTurn = isSidecar
@@ -10196,7 +10196,7 @@ function openWorldSidecarInspector(view = 'scene') {
             await retrySidecarSceneUpdate(world, sess, button.dataset.sidecarTurnId);
             closeWorldSidecarInspector();
         } catch (error) {
-            showToast(`Retry Scene Update failed: ${error?.message || error}`, 'error');
+            ExperimentalWorldsHost.notify(`Retry Scene Update failed: ${error?.message || error}`, 'error');
             button.disabled = false;
             button.textContent = 'Retry Scene Update';
         }
@@ -10217,11 +10217,11 @@ function openWorldSidecarInspector(view = 'scene') {
         button.textContent = '…';
         try {
             const refreshed = await refreshSidecarSceneIntelligence(world, sess, latestTurn?.id || '');
-            showToast(refreshed?.status === 'review' ? 'Scene Intelligence refreshed for review; canon was unchanged.' : 'Scene update retry started.', 'success');
+            ExperimentalWorldsHost.notify(refreshed?.status === 'review' ? 'Scene Intelligence refreshed for review; canon was unchanged.' : 'Scene update retry started.', 'success');
             closeWorldSidecarInspector();
             openWorldSidecarInspector('scene');
         } catch (error) {
-            showToast(`Scene Intelligence refresh failed: ${error?.message || error}`, 'error');
+            ExperimentalWorldsHost.notify(`Scene Intelligence refresh failed: ${error?.message || error}`, 'error');
             button.disabled = false;
             button.textContent = '↻';
         }
@@ -10230,22 +10230,22 @@ function openWorldSidecarInspector(view = 'scene') {
     document.getElementById('world-sidecar-reader-backfill')?.addEventListener('click', async event => {
         const button = event.currentTarget; button.disabled = true; button.textContent = 'Backfilling…';
         try {
-            const result = await window.HordeSidecarReaderBackfill?.run(world, sess, {
+            const result = await window.ExperimentalWorldsSidecarReaderBackfill?.run(world, sess, {
                 startTurnId: document.getElementById('world-sidecar-reader-backfill-start')?.value || '',
                 endTurnId: document.getElementById('world-sidecar-reader-backfill-end')?.value || '',
                 onProgress: progress => { button.textContent = `Backfilling… ${progress.completed || 0}/${progress.total || 0}`; }
             });
-            showToast(`Reader backfill ${result?.status || 'completed'}: ${result?.completed || 0} completed, ${result?.failed || 0} failed.`, result?.failed ? 'warning' : 'success');
+            ExperimentalWorldsHost.notify(`Reader backfill ${result?.status || 'completed'}: ${result?.completed || 0} completed, ${result?.failed || 0} failed.`, result?.failed ? 'warning' : 'success');
             closeWorldSidecarInspector(); openWorldSidecarInspector('memory');
-        } catch (error) { showToast(`Reader backfill failed: ${error.message || error}`, 'error'); button.disabled = false; button.textContent = 'Backfill semantic reader'; }
+        } catch (error) { ExperimentalWorldsHost.notify(`Reader backfill failed: ${error.message || error}`, 'error'); button.disabled = false; button.textContent = 'Backfill semantic reader'; }
     });
 }
 
 async function reviseWorldAgentProposal(world, sess, proposal, guidance) {
     const config = normalizeWorldAgentConfig(world);
-    const response = await fetch(apiBase() + '/chat/completions', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(applyOpenRouterRouting({
+    const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...ExperimentalWorldsHost.authHeaders() },
+        body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({
             model: config.model || structuredModelFor(world), max_tokens: 1400,
             messages: [
                 { role: 'system', content: 'You revise a background World Agent proposal. Return ONLY JSON with the same proposal shape. Keep it grounded in the supplied digest, never affect the player, never create unsupported entities, and do not narrate prose.' },
@@ -10268,12 +10268,12 @@ async function reviseWorldAgentProposal(world, sess, proposal, guidance) {
     proposal.revisionGuidance = String(guidance).slice(0, 1000);
     proposal.revisionProvenance = { source: 'world_agent_revision', model: config.model || structuredModelFor(world) };
     target.packet = buildSidecarScenePacket(world, sess);
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     return proposal;
 }
 
 function protocolForSidecarTimeline(world, sess) {
-    return window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess) || null;
+    return window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess) || null;
 }
 
 function extractInlineWorldTurnReceipt(text) {
@@ -10633,15 +10633,15 @@ function shouldRepairMissingWorldReceipt(world, command, userInput, narrative) {
 async function recoverWorldLedgerEntry(world, modelId, userInput, narrative, signal) {
     if (!narrative || !String(narrative).trim()) return '';
     try {
-        const response = await fetch(apiBase() + '/chat/completions', {
+        const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
             method: 'POST',
             signal,
             headers: {
-                ...authHeaders(),
+                ...ExperimentalWorldsHost.authHeaders(),
                 'Content-Type': 'application/json',
-                ...attributionHeaders()
+                ...ExperimentalWorldsHost.attributionHeaders()
             },
-            body: JSON.stringify(applyOpenRouterRouting({
+            body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({
                 model: modelId,
                 stream: false,
                 temperature: 0,
@@ -10649,7 +10649,7 @@ async function recoverWorldLedgerEntry(world, modelId, userInput, narrative, sig
                 // emitting a single visible token. At 120 they return empty
                 // content every time, which silently killed the chronicle.
                 max_tokens: 900,
-                messages: sanitizeMessagesForProvider([
+                messages: ExperimentalWorldsHost.sanitizeMessagesForProvider([
                     {
                         role: 'system',
                         content: 'You maintain a fictional world chronicle. Return exactly NO_MEMORY for description, repetition, small talk, or ordinary movement between known places. Otherwise return one concise factual sentence (max 35 words) only when canon permanently changed: a major choice, new discovery, promise, relationship shift, item gained/lost, quest change, lasting world condition, or death/departure. Never invent details.'

@@ -6,9 +6,9 @@ function worldVisualProvider(world, pipeline = 'new') {
         return worldVisualProvider(world, 'new');
     }
     const requested = requestedValue === 'inherit'
-        ? normalizedProviderId(ExperimentalWorldsVisualMediaHost.globalSettings().apiProvider) : requestedValue;
+        ? ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsVisualMediaHost.globalSettings().apiProvider) : requestedValue;
     if (requested === 'fal') return 'fal';
-    const provider = normalizedProviderId(requested);
+    const provider = ExperimentalWorldsHost.normalizedProviderId(requested);
     return ['openrouter', 'gptproto', 'nanogpt', 'local'].includes(provider) ? provider : 'openrouter';
 }
 

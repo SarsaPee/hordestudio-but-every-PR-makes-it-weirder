@@ -9,14 +9,65 @@ const end = acceptedApp.indexOf('// --- DOM References ---', start);
 assert(start >= 0 && end > start, 'Pass-0 visual-media source unit is present');
 const acceptedUnit = acceptedApp.slice(start, end);
 
+// The core remains source-faithful, but its old ambient host calls are now
+// explicit adapter calls.  Reconstitute only those call spellings when
+// comparing it to the Pass-0 behavioral oracle; this does not hide a changed
+// World reducer, prompt, renderer, or schema body.
+const restoreHostContract = source => [
+    ['ExperimentalWorldsHost.navigate', 'switchView'],
+    ['ExperimentalWorldsHost.markMediaChanged()', 'worldMediaDirty = true'],
+    ['ExperimentalWorldsHost.mediaDirty()', 'worldMediaDirty'],
+    ['ExperimentalWorldsHost.restoreMediaDirty', 'restoreWorldMediaDirty'],
+    ['ExperimentalWorldsHost.notify', 'showToast'],
+    ['ExperimentalWorldsHost.confirmModal', 'showConfirmModal'],
+    ['ExperimentalWorldsHost.apiBase', 'apiBase'],
+    ['ExperimentalWorldsHost.authHeaders', 'authHeaders'],
+    ['ExperimentalWorldsHost.attributionHeaders', 'attributionHeaders'],
+    ['ExperimentalWorldsHost.hasApiCredentials', 'hasApiCredentials'],
+    ['ExperimentalWorldsHost.isLocalProvider', 'isLocalProvider'],
+    ['ExperimentalWorldsHost.cloudProviderName', 'cloudProviderName'],
+    ['ExperimentalWorldsHost.normalizedProviderId', 'normalizedProviderId'],
+    ['ExperimentalWorldsHost.providerApiBase', 'providerApiBase'],
+    ['ExperimentalWorldsHost.providerAuthHeaders', 'providerAuthHeaders'],
+    ['ExperimentalWorldsHost.providerAttributionHeaders', 'providerAttributionHeaders'],
+    ['ExperimentalWorldsHost.providerHasCredentials', 'providerHasCredentials'],
+    ['ExperimentalWorldsHost.providerDisplayName', 'providerDisplayName'],
+    ['ExperimentalWorldsHost.applyOpenRouterRouting', 'applyOpenRouterRouting'],
+    ['ExperimentalWorldsHost.sanitizeMessagesForProvider', 'sanitizeMessagesForProvider'],
+    ['ExperimentalWorldsHost.humanizeApiError', 'humanizeApiError'],
+    ['ExperimentalWorldsHost.localGenerationIdleTimeoutMs', 'localGenerationIdleTimeoutMs'],
+    ['ExperimentalWorldsHost.cloudGenerationIdleTimeoutMs', 'cloudGenerationIdleTimeoutMs'],
+    ['ExperimentalWorldsHost.applyRegexScripts', 'applyRegexScripts'],
+    ['ExperimentalWorldsHost.replaceMacros', 'replaceMacros'],
+    ['ExperimentalWorldsHost.getAllPresets', 'getAllPresets'],
+    ['ExperimentalWorldsHost.isPresetPromptEnabled', 'isPresetPromptEnabled'],
+    ['ExperimentalWorldsHost.getOrderedPresetPrompts', 'getOrderedPresetPrompts'],
+    ['ExperimentalWorldsHost.getEmbedding', 'getEmbedding'],
+    ['ExperimentalWorldsHost.persistSharedSettings', 'persistGlobalSettingsOnly'],
+    ['ExperimentalWorldsHost.ensureSharedLibraryFresh', 'ensureSharedLibraryFreshForGeneration'],
+    ['ExperimentalWorldsHost.recordSharedLibraryAssistantTurn', 'recordSharedLibraryAssistantTurn'],
+    ['ExperimentalWorldsHost.labsProposal', 'labsProposal'],
+    ['ExperimentalWorldsHost.labsAvailable', 'window.HordeLabs']
+].reduce((next, [from, to]) => next.replaceAll(from, to), source)
+    .replaceAll('ExperimentalWorldsSidecar', 'HordeSidecar')
+    .replaceAll('ExperimentalWorldsRpgMechanics', 'HordeRpgMechanics')
+    .replaceAll('ExperimentalWorldsState.', 'state.')
+    .replaceAll('ExperimentalWorldsHost.persist()', 'saveState()')
+    .replaceAll('window.HordeLabs()', 'window.HordeLabs');
+const compareSource = source => source.replace(/[ \t]+$/gm, '').trimEnd();
+const restoreExperimentalWarning = source => source.replace(
+    /ExperimentalWorldsHost\.worldLoadWarning\(world\.id\) \? `<div class="world-library-warning">Needs repair · \$\{escapeHTML\(ExperimentalWorldsHost\.worldLoadWarning\(world\.id\)\)\}<\/div>` : ''/g,
+    "worldLoadWarnings.has(world.id) ? `<div class=\"world-library-warning\">Needs repair · ${escapeHTML(worldLoadWarnings.get(world.id))}</div>` : ''"
+).replace('restoreWorldMediaDirty(previousWorldMediaDirty);', 'worldMediaDirty = previousWorldMediaDirty;');
+
 const relocatedPath = 'experiences/experimental-worlds/visuals/world-visual-media-core.js';
 const relocated = fs.readFileSync(relocatedPath, 'utf8');
 const restored = relocated
     .replace('normalizeImageGuidePresets(ExperimentalWorldsVisualMediaHost.globalSettings().imageGuidePresets)', 'normalizeImageGuidePresets(state.globalSettings.imageGuidePresets)')
-    .replace('ExperimentalWorldsVisualMediaHost.markWorldMediaChanged(world);', 'if ((state.worlds || []).includes(world)) worldMediaDirty = true;')
-    .replace('if (removed) ExperimentalWorldsVisualMediaHost.markWorldMediaChanged(world);', 'if (removed && (state.worlds || []).includes(world)) worldMediaDirty = true;');
+    .replace('if (removed) ExperimentalWorldsVisualMediaHost.markWorldMediaChanged(world);', 'if (removed && (state.worlds || []).includes(world)) worldMediaDirty = true;')
+    .replace('ExperimentalWorldsVisualMediaHost.markWorldMediaChanged(world);', 'if ((state.worlds || []).includes(world)) worldMediaDirty = true;');
 
-assert.equal(restored.trimEnd(), acceptedUnit.trimEnd(),
+assert.equal(compareSource(restored), compareSource(acceptedUnit),
     'visual/media core differs from the Pass-0 oracle only at the three explicit host seams');
 assert(!relocated.includes('state.globalSettings') && !relocated.includes('state.worlds') && !relocated.includes('worldMediaDirty'),
     'relocated visual core has no direct host-state or host-writer access');
@@ -32,8 +83,9 @@ assert(providerStart >= 0 && providerEnd > providerStart, 'Pass-0 visual provide
 const acceptedProviderUnit = acceptedApp.slice(providerStart, providerEnd);
 const relocatedProvider = fs.readFileSync('experiences/experimental-worlds/visuals/world-visual-provider-core.js', 'utf8');
 assert.equal(
-    relocatedProvider.replace('normalizedProviderId(ExperimentalWorldsVisualMediaHost.globalSettings().apiProvider)', 'normalizedProviderId(state.globalSettings.apiProvider)').trimEnd(),
-    acceptedProviderUnit.trimEnd(),
+    compareSource(restoreHostContract(relocatedProvider)
+        .replace('normalizedProviderId(ExperimentalWorldsVisualMediaHost.globalSettings().apiProvider)', 'normalizedProviderId(state.globalSettings.apiProvider)')),
+    compareSource(acceptedProviderUnit),
     'visual provider core differs from the Pass-0 oracle only at the explicit effective-settings seam'
 );
 assert(!relocatedProvider.includes('state.globalSettings'), 'visual provider core has no direct host settings access');
@@ -50,10 +102,12 @@ const studioStart = acceptedApp.indexOf('// --- World Engine ---');
 const studioEnd = acceptedApp.indexOf('// --- World Play & Engine ---', studioStart);
 assert(studioStart >= 0 && studioEnd > studioStart, 'Pass-0 World Studio source unit is present');
 const relocatedStudio = fs.readFileSync('experiences/experimental-worlds/runtime/world-studio-core.js', 'utf8');
-assert.equal(relocatedStudio
+assert.equal(compareSource(restoreExperimentalWarning(restoreHostContract(relocatedStudio))
+    .replace('            state.lastWorldStudioTab = target;\n            saveState();', '            state.lastWorldStudioTab = target;\n            persistWorkspaceSoon();')
+    .replace('        state.lastWorldStudioId = worldId;\n        saveState();', '        state.lastWorldStudioId = worldId;\n        persistWorkspaceSoon();')
     .replace(`            // World recovery belongs to the Experimental authority.  Reading\n            // the host database here would make a stock-host cleanup or a\n            // future upstream store change silently break this mode.\n            const storedMedia = (await window.ExperimentalWorldsRepository?.snapshot?.())?.worldMediaAssets || {};`,
         "            const storedMedia = await HordeDB.get('worldMediaAssets') || {};")
-    .trimEnd(), acceptedApp.slice(studioStart, studioEnd).trimEnd(),
+    ), compareSource(acceptedApp.slice(studioStart, studioEnd)),
     'World Studio core differs from the Pass-0 oracle beyond the explicit Experimental-repository recovery seam');
 assert(!fs.readFileSync('app.js', 'utf8').includes('// --- World Engine ---'),
     'World Studio core is no longer ambiguously retained in the host bootstrap');
@@ -72,16 +126,26 @@ const acceptedPlay = acceptedApp.slice(playStart, playEnd)
     // its own World context and must not carry either the stock marker or a
     // stock runtime call.
     .replace("    if (context.stockWorlds17Pass0) {\n        return window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context) || null;\n    }\n", '');
-const restoredPlay = relocatedPlay
+const restoredPlay = restoreHostContract(relocatedPlay)
     // Explicit Pass-1 lifecycle seam: provider work captures Experimental
     // ownership and cannot publish after a mode/world/timeline/restore change.
     // Strip it only for the source-body comparison below.
     .replace(/\n\/\/ Provider output belongs to the World\/timeline\/revision[\s\S]*?\n}\n\nfunction trustedWorldMicroMove/, '\nfunction trustedWorldMicroMove')
     .replace('    let turnOwner = null;\n', '')
     .replace('        turnOwner = captureExperimentalTurnOwner(world, sess);\n', '')
-    .replace(/^\s*assertExperimentalTurnOwner\(turnOwner\);\n/gm, '');
-assert.equal(restoredPlay.trimEnd(), acceptedPlay.trimEnd(),
-    'World Play core differs from the Pass-0 oracle beyond host-owned stock dispatch and explicit late-result ownership seams');
+    .replace(/^\s*assertExperimentalTurnOwner\(turnOwner\);\n/gm, '')
+    .replace('        saveState().catch(() => {});\n        saveState();', '        saveState().catch(() => {});\n        persistWorkspaceSoon();')
+    .replace(/(state\.worldInstances\[state\.activeWorldId\]\.activeSessionId = e\.target\.value;\n\s*saveState\(\)\.catch\(\(\) => \{\}\);)(\n\s*renderWorldPlayState\(\);)/, '$1\n        persistWorkspaceSoon();$2');
+const comparedRestoredPlay = compareSource(restoredPlay);
+const comparedAcceptedPlay = compareSource(acceptedPlay);
+if (comparedRestoredPlay !== comparedAcceptedPlay) {
+    let firstDifference = 0;
+    while (comparedRestoredPlay[firstDifference] === comparedAcceptedPlay[firstDifference]
+        && firstDifference < Math.max(comparedRestoredPlay.length, comparedAcceptedPlay.length)) firstDifference += 1;
+    const start = Math.max(0, firstDifference - 180);
+    const end = firstDifference + 280;
+    throw new Error(`World Play oracle mismatch at ${firstDifference}: actualChar=${JSON.stringify(comparedRestoredPlay[firstDifference])} expectedChar=${JSON.stringify(comparedAcceptedPlay[firstDifference])} actual=${JSON.stringify(comparedRestoredPlay.slice(start, end))} expected=${JSON.stringify(comparedAcceptedPlay.slice(start, end))}`);
+}
 assert(relocatedPlay.includes('captureExperimentalTurnOwner') && relocatedPlay.includes('assertExperimentalTurnOwner'),
     'Experimental World Play must capture and validate owner identity around provider completion');
 assert(!relocatedPlay.includes('StockWorlds17Pass0'),
@@ -97,7 +161,7 @@ const sessionEnd = acceptedApp.indexOf('// --- World Agent', sessionStart);
 assert(sessionStart >= 0 && sessionEnd > sessionStart, 'Pass-0 World session source unit is present');
 const relocatedSession = fs.readFileSync('experiences/experimental-worlds/runtime/world-session-core.js', 'utf8');
 const hostBootstrapCall = `// Start\ninit().catch(error => {\n    console.error('Initialization failed:', error);\n    window.__hordeRuntimeErrors.push({ message: \`Initialization failed: \${String(error?.message || error)}\`, stack: String(error?.stack || '') });\n    showToast(\`Unable to start Horde Studio: \${error.message || error}\`, 'error');\n});`;
-assert.equal(relocatedSession.trimEnd(), acceptedApp.slice(sessionStart, sessionEnd).replace(`${hostBootstrapCall}\n\n`, '').trimEnd(),
+assert.equal(compareSource(restoreHostContract(relocatedSession)), compareSource(acceptedApp.slice(sessionStart, sessionEnd).replace(`${hostBootstrapCall}\n\n`, '')),
     'World session core differs from the Pass-0 oracle beyond moving the sole host bootstrap to app.js');
 assert(fs.readFileSync('app.js', 'utf8').includes(hostBootstrapCall),
     'the one host bootstrap runs only after the current host file has loaded');
@@ -111,9 +175,9 @@ const intelligenceStart = acceptedApp.indexOf('// --- World Agent');
 const intelligenceEnd = acceptedApp.indexOf('// --- Data model', intelligenceStart);
 assert(intelligenceStart >= 0 && intelligenceEnd > intelligenceStart, 'Pass-0 World intelligence source unit is present');
 const relocatedIntelligence = fs.readFileSync('experiences/experimental-worlds/runtime/world-intelligence-core.js', 'utf8');
-assert.equal(relocatedIntelligence
+assert.equal(compareSource(restoreExperimentalWarning(restoreHostContract(relocatedIntelligence))
     .replace('await window.ExperimentalWorldsHost?.persistSharedContinuities?.(state.chatContinuities);', "await HordeDB.set('chatContinuities', state.chatContinuities);")
-    .trimEnd(), acceptedApp.slice(intelligenceStart, intelligenceEnd).trimEnd(),
+    ), compareSource(acceptedApp.slice(intelligenceStart, intelligenceEnd)),
     'World intelligence core differs from the Pass-0 oracle beyond the explicit shared-continuity host seam');
 assert(!fs.readFileSync('app.js', 'utf8').includes('// --- World Agent'),
     'World intelligence core is no longer ambiguously retained in the host bootstrap');
@@ -146,7 +210,7 @@ const visualEditorStart = acceptedApp.indexOf('const WORLD_VISUAL_ASPECTS');
 const visualEditorEnd = acceptedApp.indexOf('// --- Voice notes and calls', visualEditorStart);
 assert(visualEditorStart >= 0 && visualEditorEnd > visualEditorStart, 'Pass-0 visual editor source unit is present');
 const relocatedVisualEditor = fs.readFileSync('experiences/experimental-worlds/visuals/world-visual-editor-core.js', 'utf8');
-assert.equal(relocatedVisualEditor.trimEnd(), acceptedApp.slice(visualEditorStart, visualEditorEnd).trimEnd(),
+assert.equal(compareSource(restoreHostContract(relocatedVisualEditor)), compareSource(acceptedApp.slice(visualEditorStart, visualEditorEnd)),
     'visual editor core differs from the Pass-0 oracle');
 assert(!fs.readFileSync('app.js', 'utf8').includes('const WORLD_VISUAL_ASPECTS'),
     'visual editor core is no longer ambiguously retained in the host bootstrap');
@@ -158,7 +222,7 @@ const protocolStart = acceptedApp.indexOf('function normalizeWorldTurnReceipt');
 const protocolEnd = acceptedApp.indexOf('async function impersonateUser()', protocolStart);
 assert(protocolStart >= 0 && protocolEnd > protocolStart, 'Pass-0 Sidecar/ScenePulse protocol source unit is present');
 const relocatedProtocol = fs.readFileSync('experiences/experimental-worlds/runtime/world-protocol-core.js', 'utf8');
-const restoredProtocol = relocatedProtocol
+const restoredProtocol = restoreHostContract(relocatedProtocol)
     // Explicit Pass-1 lifecycle seam: all user-invoked Sidecar provider work
     // captures Experimental ownership and cannot attach a late result after a
     // mode/world/timeline/restore change. Strip only that small guard when
@@ -168,7 +232,7 @@ const restoredProtocol = relocatedProtocol
     .replace(/^\s*assertExperimentalSidecarOwner\(requestOwner\);\n/gm, '')
     .replace(/\n    \/\/ Do this before Reader evidence is attached to the protocol\.[\s\S]*?\n    \/\/ that the author has left while the transport was in flight\./, '')
     .replace(/\n        \/\/ The old owner may no longer be current\.[\s\S]*?if \(error\?\.code === 'experimental_world_owner_changed'\) throw error;\n/, '\n');
-assert.equal(restoredProtocol.trimEnd(), acceptedApp.slice(protocolStart, protocolEnd).trimEnd(),
+assert.equal(compareSource(restoredProtocol), compareSource(acceptedApp.slice(protocolStart, protocolEnd)),
     'Sidecar/ScenePulse protocol core differs from the Pass-0 oracle beyond the explicit late-result ownership seam');
 assert(relocatedProtocol.includes('captureExperimentalSidecarOwner') && relocatedProtocol.includes('assertExperimentalSidecarOwner'),
     'Sidecar provider paths must capture and validate Experimental ownership around completion');

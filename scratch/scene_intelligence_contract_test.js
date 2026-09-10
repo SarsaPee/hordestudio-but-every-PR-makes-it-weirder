@@ -264,7 +264,8 @@ vm.runInNewContext(`${stageStoryIdea}; stageScenePulseStoryIdea({ direction: { t
     isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
     document: { getElementById: id => id === 'world-user-input' ? stagedStoryIdeaComposer : null },
     Event: class Event { constructor(type, options) { this.type = type; this.options = options; } },
-    resizeWorldMessageInput() {}, showToast() {}
+    resizeWorldMessageInput() {},
+    ExperimentalWorldsHost: { notify() {} }
 });
 assert.match(stagedStoryIdeaComposer.value, /^\[OOC: Take the story in an exploratory direction — "Line check"\. Test the repaired cider line\.\]$/, 'the native Exploratory card must produce grammatical OOC text before it reaches the World composer');
 assert.match(readerPass, /Do not derive an ID from a display name/, 'Reader identity must never be inferred from a mutable source label');
@@ -312,7 +313,7 @@ assert.match(panelMount, /HordeScenePulseSourceRuntime\.mount\(host, handoff\)/,
 assert.match(panelMount, /if \(sidecar\) restoreScenePulseStatusColumnWidth\(column\);/, 'ScenePulse must restore its own compact sidebar width rather than inherit an oversized HUD column');
 assert.doesNotMatch(panelMount.slice(0, panelMount.indexOf('// Gate B adapter below')), /HordeScenePulseWorlds\.mount\(host, handoff\)/, 'native source failure must not silently fall back to the hand-drawn adapter');
 assert.match(panelMount, /intentionally not substituted with a host lookalike/, 'failure state must remain truthful');
-assert.match(panelMount, /if \(state\.view !== 'worldPlay'\)[\s\S]*?HordeScenePulseSourceRuntime\?\.unmount/, 'a late World redraw may not mount ScenePulse over a library route');
+assert.match(panelMount, /if \((?:ExperimentalWorldsState|state)\.view !== 'worldPlay'\)[\s\S]*?HordeScenePulseSourceRuntime\?\.unmount/, 'a late World redraw may not mount ScenePulse over a library route');
 assert.match(switchViewFunction, /state\.view === 'worldPlay' && viewName !== 'worldPlay'[\s\S]*?HordeScenePulseSourceRuntime\?\.unmount/, 'leaving World Play must remove the source runtime and its document-level effects');
 assert.ok(enterWorldFunction.indexOf("switchView('worldPlay');") < enterWorldFunction.indexOf('renderWorldPlayState();'), 'entering a World must activate the World route before mounting the ScenePulse runtime');
 
@@ -726,7 +727,7 @@ assert.match(bridgeSave, /hasChatPanels: sourcePanels\.hasChatPanels/,
 const persistedExplicitEmptySchema = vm.runInNewContext(`${sourcePreferenceNormalizer}\n${sourcePrefs}\n(() => {\n    const protocol = { workspaceUi: { scenePulseWorlds: { customPanels: [{ name: 'Prior panel', fields: [{ key: 'prior' }] }] } } };\n    void persistScenePulseSourceRuntimePreferences(protocol, {}, { customPanels: [{ name: 'Stale default', fields: [{ key: 'stale' }] }] }, [], true);\n    return protocol.workspaceUi.scenePulseWorlds.customPanels;\n})()`, {
     isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
     protocolForSidecarTimeline: world => world,
-    saveState: async () => {}
+    ExperimentalWorldsHost: { persist: async () => {} }
 });
 assert.deepEqual(JSON.parse(JSON.stringify(persistedExplicitEmptySchema)), [], 'an explicitly empty native custom schema must not resurrect stale source defaults');
 assert.match(app, /detail\.action === 'stage-story-idea'/, 'Horde must claim source Story Idea actions');
@@ -735,7 +736,7 @@ assert.match(app, /detail\.action === 'stop-scene-pulse-refresh'/, 'Horde must c
 assert.match(app, /if \(!workspaceEntityExists\(state\.worlds, state\.activeWorldId\)\s*&& workspaceEntityExists\(state\.worlds, storedActiveWorldId\)\)/, 'a newer valid workspace World selection must survive reload instead of being overwritten by a legacy activeWorldId');
 assert.match(app, /activeWorldSessionId: workspaceString\(state\.activeWorldId/, 'workspace state must retain the selected World timeline as well as the World');
 assert.match(app, /enterWorld\(state\.activeWorldId, lastWorldSessionId\)/, 'World restore must request the exact saved timeline');
-assert.match(app, /activeSessionId = e\.target\.value;\s*saveState\(\)\.catch\(\(\) => \{\}\);\s*persistWorkspaceSoon\(\);/s, 'changing the World timeline must update the workspace restore snapshot');
+assert.match(app, /activeSessionId = e\.target\.value;\s*ExperimentalWorldsHost\.persist\(\)\.catch\(\(\) => \{\}\);/s, 'changing the World timeline must persist through the Experimental-owned workspace snapshot');
 assert.match(acceptedRefresh, /scenePulseReaderRefreshController/, 'a ScenePulse stop must use a separate Reader controller');
 assert.match(acceptedRefresh, /The current scene was left unchanged/, 'stopping a reread must preserve the accepted scene');
 assert.match(readerRefresh, /signal: options\.signal/, 'the Sidecar Reader fetch must receive the native stop signal');
@@ -1212,7 +1213,7 @@ const cognitionQueueSource = [
 const cardThoughtCognitionJob = vm.runInNewContext(`${cognitionQueueSource}\n(() => {\n    const protocol = { readerCandidates: [{ candidateId: 'cand_nia', candidateType: 'character', settlementStatus: 'settled' }] };\n    const turn = { id: 'turn_card', readerSnapshotId: 'snapshot_card', readerEnvelope: ${JSON.stringify(scenePulseCognitionEnvelope.cardOnly)}, sceneId: 'scene_card', sequenceId: 'sequence_card' };\n    const ids = queueSidecarTurnCognitionJobs({ entities: [] }, {}, protocol, turn);\n    return { ids, job: protocol.jobs[0] };\n})()`, {
     isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
     safeJsonClone: value => JSON.parse(JSON.stringify(value)),
-    window: { HordeSidecarMemoryGraph: { ensureJobs: protocol => { protocol.jobs = protocol.jobs || []; return protocol.jobs; } } }
+    window: { ExperimentalWorldsSidecarMemoryGraph: { ensureJobs: protocol => { protocol.jobs = protocol.jobs || []; return protocol.jobs; } } }
 });
 assert.deepEqual(JSON.parse(JSON.stringify(cardThoughtCognitionJob.ids)), ['turn_cognition:turn_card:cand_nia'], 'a same-packet ScenePulse card thought must queue exactly one existing turn-cognition job');
 assert.equal(cardThoughtCognitionJob.job.candidateId, 'cand_nia', 'the cognition job must retain the ScenePulse stable candidate ID');
@@ -1227,7 +1228,7 @@ const inPersonCognitionJob = vm.runInNewContext(`${cognitionQueueSource}\n(() =>
 })()`, {
     isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
     safeJsonClone: value => JSON.parse(JSON.stringify(value)),
-    window: { HordeSidecarMemoryGraph: { ensureJobs: protocol => { protocol.jobs = protocol.jobs || []; return protocol.jobs; } } }
+    window: { ExperimentalWorldsSidecarMemoryGraph: { ensureJobs: protocol => { protocol.jobs = protocol.jobs || []; return protocol.jobs; } } }
 });
 assert.deepEqual(JSON.parse(JSON.stringify(inPersonCognitionJob.ids)), ['turn_cognition:turn_live_presence:npc_charlotte'], 'a declared in-person live Reader participant must enter the existing cognition queue');
 assert.equal(inPersonCognitionJob.job.access, 'visual', 'a normalized in-person participant receives visual cognition access');
@@ -1249,7 +1250,7 @@ assert.deepEqual(JSON.parse(JSON.stringify(acceptedThoughtFallback[0].sourceTurn
 const refreshedThoughtCognitionJob = vm.runInNewContext(`${cognitionQueueSource}\n(() => {\n    const original = ${JSON.stringify(scenePulseCognitionEnvelope.cardOnly)};\n    const refreshed = JSON.parse(JSON.stringify(original));\n    refreshed.characterIntelligence[0].sceneLocalImpression.text = 'The argument has turned dangerous; keep clear of the door.';\n    const protocol = {\n        readerCandidates: [{ candidateId: 'cand_nia', candidateType: 'character', settlementStatus: 'settled' }],\n        jobs: [{ id: 'turn_cognition:turn_card:cand_nia', type: 'turn_cognition', status: 'completed', turnId: 'turn_card', subjectRef: 'cand_nia', readerSnapshotId: 'snapshot_card' }],\n        memoryGraph: { cognition: [{ id: 'cognition_old', status: 'active', turnCognitionJobId: 'turn_cognition:turn_card:cand_nia', provenance: { readerSnapshotId: 'snapshot_card' } }] }\n    };\n    const turn = { id: 'turn_card', readerSnapshotId: 'snapshot_thought_refresh', readerEnvelope: refreshed, sceneId: 'scene_card', sequenceId: 'sequence_card' };\n    const ids = queueSidecarTurnCognitionJobs({ entities: [] }, {}, protocol, turn);\n    return { ids, oldJob: protocol.jobs[0], newJob: protocol.jobs[1], oldCognition: protocol.memoryGraph.cognition[0] };\n})()`, {
     isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
     safeJsonClone: value => JSON.parse(JSON.stringify(value)),
-    window: { HordeSidecarMemoryGraph: {
+    window: { ExperimentalWorldsSidecarMemoryGraph: {
         ensureJobs: protocol => { protocol.jobs = protocol.jobs || []; return protocol.jobs; },
         graph: protocol => protocol.memoryGraph
     } }

@@ -59,6 +59,7 @@
             activeWorldId: await get('activeWorldId') || null,
             worldRecoverySnapshots: await get('worldRecoverySnapshots') || {},
             worldMediaAssets: await get('worldMediaAssets') || {},
+            workspace: await get('workspace') || {},
             generation: Number(await get('generation')) || 0
         };
     }
@@ -70,6 +71,7 @@
             activeWorldId: value.activeWorldId || null,
             worldRecoverySnapshots: value.worldRecoverySnapshots || {},
             worldMediaAssets: value.worldMediaAssets || {},
+            workspace: value.workspace || {},
             generation: prior.generation + 1,
             lastWrite: { reason, at: new Date().toISOString() }
         };
@@ -99,7 +101,8 @@
             worldInstances: clone(value?.worldInstances || {}),
             activeWorldId: value?.activeWorldId || null,
             worldRecoverySnapshots: clone(value?.worldRecoverySnapshots || {}),
-            worldMediaAssets: clone(value?.worldMediaAssets || {})
+            worldMediaAssets: clone(value?.worldMediaAssets || {}),
+            workspace: clone(value?.workspace || {})
         };
     }
     async function verifiedSnapshot(expected, label) {

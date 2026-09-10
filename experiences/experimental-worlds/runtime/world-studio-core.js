@@ -4,7 +4,7 @@ function setupWorldsLogic() {
     if (createBtn) {
         createBtn.onclick = () => {
             createNewWorld();
-            // switchView('world-studio'); // To be implemented
+            // ExperimentalWorldsHost.navigate('world-studio'); // To be implemented
         };
     }
     
@@ -15,7 +15,7 @@ function setupWorldsLogic() {
 }
 
 function createNewWorld() {
-    state.editingWorld = {
+    ExperimentalWorldsState.editingWorld = {
         id: 'world_' + Date.now(),
         name: 'New World',
         description: 'A new persistent realm...',
@@ -71,18 +71,18 @@ function createNewWorld() {
             currencyName: 'gold'
         }
     };
-    applyWorldRuleProfile(state.editingWorld, 'adventure');
+    applyWorldRuleProfile(ExperimentalWorldsState.editingWorld, 'adventure');
     openWorldStudio();
     document.querySelector('.world-studio-tab[data-tab="w-overview"]')?.click();
 }
 
 const SIDECAR_PIPELINE_DISABLED_MESSAGE = "disabled because the current state pipeline doesn't utilise this feature";
 
-function worldUsesSidecarPipeline(world = state.editingWorld) {
-    return window.HordeSidecarMode?.normalizeWorldConfig?.(world)?.mode === 'sidecar';
+function worldUsesSidecarPipeline(world = ExperimentalWorldsState.editingWorld) {
+    return window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world)?.mode === 'sidecar';
 }
 
-function renderStatePipelineConfig(world = state.editingWorld) {
+function renderStatePipelineConfig(world = ExperimentalWorldsState.editingWorld) {
     const mode = worldUsesSidecarPipeline(world) ? 'sidecar' : 'inline_legacy';
     document.querySelectorAll('[data-pipeline-settings]').forEach(section => {
         const visible = section.dataset.pipelineSettings === mode;
@@ -99,7 +99,7 @@ function renderStatePipelineConfig(world = state.editingWorld) {
 // be able to discover what the new pipeline unlocks.  It must not, however,
 // look editable while Inline Legacy still owns state, otherwise a world can be
 // configured with mechanics that its active turn pipeline will never consume.
-function setSidecarStudioFeatureAvailability(world = state.editingWorld) {
+function setSidecarStudioFeatureAvailability(world = ExperimentalWorldsState.editingWorld) {
     const sidecarActive = worldUsesSidecarPipeline(world);
     renderStatePipelineConfig(world);
     document.querySelectorAll('[data-sidecar-feature]').forEach(feature => {
@@ -118,7 +118,7 @@ function setSidecarStudioFeatureAvailability(world = state.editingWorld) {
     if (legacyPresetSection) legacyPresetSection.classList.toggle('hidden', sidecarActive);
 }
 
-function renderWorldOverviewSidecarMigration(world = state.editingWorld) {
+function renderWorldOverviewSidecarMigration(world = ExperimentalWorldsState.editingWorld) {
     const host = document.getElementById('w-overview-sidecar-migration');
     if (!host) return;
     const inlineLegacy = !!world && !worldUsesSidecarPipeline(world);
@@ -127,7 +127,7 @@ function renderWorldOverviewSidecarMigration(world = state.editingWorld) {
         host.innerHTML = '';
         return;
     }
-    const sessions = state.worldInstances?.[world.id]?.sessions || [];
+    const sessions = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
     const timelineLabel = sessions.length
         ? `${sessions.length} existing timeline${sessions.length === 1 ? '' : 's'} will be reviewed before migration.`
         : 'This world has no timeline yet, so the wizard will simply enable Sidecar for its first session.';
@@ -150,7 +150,7 @@ function setupWorldStudioTabs() {
     tabs.forEach(tab => {
         tab.onclick = () => {
             if (tab.classList.contains('sidecar-feature-disabled')) {
-                showToast('This feature is available after the world is migrated to the Sidecar state pipeline.', 'info');
+                ExperimentalWorldsHost.notify('This feature is available after the world is migrated to the Sidecar state pipeline.', 'info');
                 return;
             }
             tabs.forEach(t => t.classList.remove('active'));
@@ -168,8 +168,8 @@ function setupWorldStudioTabs() {
             // makes a perfectly editable starter look read-only. Build only the
             // panel the author actually opens.
             renderWorldStudioPanel(target);
-            state.lastWorldStudioTab = target;
-            persistWorkspaceSoon();
+            ExperimentalWorldsState.lastWorldStudioTab = target;
+            ExperimentalWorldsHost.persist();
         };
     });
     document.querySelectorAll('[data-world-studio-target]').forEach(button => {
@@ -178,9 +178,9 @@ function setupWorldStudioTabs() {
 }
 
 function renderWorldStudioPanel(target) {
-    if (!state.editingWorld) return;
+    if (!ExperimentalWorldsState.editingWorld) return;
     const renderers = {
-        'w-overview': () => renderWorldOverviewSidecarMigration(state.editingWorld),
+        'w-overview': () => renderWorldOverviewSidecarMigration(ExperimentalWorldsState.editingWorld),
         'w-visuals': renderWorldVisuals,
         'w-locations': renderWorldLocations,
         'w-entities': renderWorldEntities,
@@ -190,10 +190,10 @@ function renderWorldStudioPanel(target) {
         'w-sandbox': renderWorldSandboxStudio,
         'w-lore': renderWorldLore,
         'w-visual-map': renderWorldArchitectMap,
-        'w-ai': () => renderWorldSidecarConfigEditor(state.editingWorld)
+        'w-ai': () => renderWorldSidecarConfigEditor(ExperimentalWorldsState.editingWorld)
     };
     if (renderers[target]) renderers[target]();
-    setSidecarStudioFeatureAvailability(state.editingWorld);
+    setSidecarStudioFeatureAvailability(ExperimentalWorldsState.editingWorld);
 }
 
 function setupWorldStudioLogic() {
@@ -210,7 +210,7 @@ function setupWorldStudioLogic() {
             if (!feature) return;
             event.preventDefault();
             event.stopImmediatePropagation();
-            if (event.type === 'click') showToast('This feature is available after the world is migrated to the Sidecar state pipeline.', 'info');
+            if (event.type === 'click') ExperimentalWorldsHost.notify('This feature is available after the world is migrated to the Sidecar state pipeline.', 'info');
         };
         document.addEventListener('click', blockUnavailableSidecarFeature, true);
         document.addEventListener('pointerdown', blockUnavailableSidecarFeature, true);
@@ -223,11 +223,11 @@ function setupWorldStudioLogic() {
     document.getElementById('world-record-done').onclick = closeWorldRecordInspector;
     recordOverlay.onclick = event => { if (event.target === recordOverlay) closeWorldRecordInspector(); };
 
-    document.getElementById('close-world-studio-btn').onclick = () => switchView('worlds');
+    document.getElementById('close-world-studio-btn').onclick = () => ExperimentalWorldsHost.navigate('worlds');
     document.getElementById('save-world-btn').onclick = saveWorld;
     document.getElementById('save-play-world-btn').onclick = async () => {
         await saveWorld();
-        if (state.editingWorld?.id) enterWorld(state.editingWorld.id);
+        if (ExperimentalWorldsState.editingWorld?.id) enterWorld(ExperimentalWorldsState.editingWorld.id);
     };
     document.getElementById('delete-world-btn').onclick = deleteWorld;
     
@@ -238,15 +238,15 @@ function setupWorldStudioLogic() {
     document.getElementById('close-scheduler-btn').onclick = () => document.getElementById('world-scheduler-overlay').classList.add('hidden');
     document.getElementById('save-scheduler-btn').onclick = () => {
         document.getElementById('world-scheduler-overlay').classList.add('hidden');
-        showToast('Schedules saved to world configuration.', 'success');
+        ExperimentalWorldsHost.notify('Schedules saved to world configuration.', 'success');
     };
 
     document.getElementById('gen-all-schedules-btn').onclick = async (e) => {
         const btn = e.target;
-        const world = state.editingWorld;
+        const world = ExperimentalWorldsState.editingWorld;
         if (!world) return;
         const missing = world.entities.filter(n => n.type === 'npc' && (!n.schedule || n.schedule.length === 0));
-        if (missing.length === 0) return showToast('Every NPC already has a schedule. Use per-NPC ✨ to regenerate one.', 'info');
+        if (missing.length === 0) return ExperimentalWorldsHost.notify('Every NPC already has a schedule. Use per-NPC ✨ to regenerate one.', 'info');
 
         btn.disabled = true;
         let done = 0;
@@ -261,7 +261,7 @@ function setupWorldStudioLogic() {
                     console.warn(`Schedule generation failed for ${npc.name}:`, err.message);
                 }
             }
-            showToast(`Generated schedules for ${done}/${missing.length} NPCs`, done > 0 ? 'success' : 'error');
+            ExperimentalWorldsHost.notify(`Generated schedules for ${done}/${missing.length} NPCs`, done > 0 ? 'success' : 'error');
         } finally {
             btn.disabled = false;
             btn.textContent = '✨ Auto-Generate All Missing Schedules (AI)';
@@ -275,10 +275,10 @@ function setupWorldStudioLogic() {
     document.getElementById('close-audit-btn').onclick = () => document.getElementById('world-audit-overlay').classList.add('hidden');
     
     document.getElementById('export-world-btn').onclick = () => {
-        if (!state.editingWorld) return;
+        if (!ExperimentalWorldsState.editingWorld) return;
         // Never hand someone a world carrying references to things that are gone.
-        normalizeAuthoredWorld(state.editingWorld);
-        const exportedWorld = safeJsonClone(state.editingWorld);
+        normalizeAuthoredWorld(ExperimentalWorldsState.editingWorld);
+        const exportedWorld = safeJsonClone(ExperimentalWorldsState.editingWorld);
         pruneWorldMediaAssets(exportedWorld);
         const media = worldMediaSummary(exportedWorld);
         exportedWorld._format = 'horde-world';
@@ -293,10 +293,10 @@ function setupWorldStudioLogic() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${state.editingWorld.name.replace(/\s+/g, '_')}.horde_world`;
+        a.download = `${ExperimentalWorldsState.editingWorld.name.replace(/\s+/g, '_')}.horde_world`;
         a.click();
         URL.revokeObjectURL(url);
-        showToast(`World exported with ${media.count} embedded media asset${media.count === 1 ? '' : 's'} (${formatByteSize(media.bytes)}).`, 'success');
+        ExperimentalWorldsHost.notify(`World exported with ${media.count} embedded media asset${media.count === 1 ? '' : 's'} (${formatByteSize(media.bytes)}).`, 'success');
     };
     document.getElementById('add-location-btn')?.addEventListener('click', () => addWorldLocation('top'));
     document.getElementById('add-location-btn-bottom')?.addEventListener('click', () => addWorldLocation('bottom'));
@@ -317,54 +317,54 @@ function setupWorldStudioLogic() {
     document.getElementById('add-world-stat-btn').onclick = addWorldStat;
     document.getElementById('w-fetch-model-btn').onclick = fetchWorldModelSettings;
     document.getElementById('w-sidecar-mode').onchange = event => {
-        if (!state.editingWorld) return;
-        const config = window.HordeSidecarMode?.normalizeWorldConfig?.(state.editingWorld);
+        if (!ExperimentalWorldsState.editingWorld) return;
+        const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
         if (!config) return;
         config.mode = event.target.value === 'sidecar' ? 'sidecar' : 'inline_legacy';
-        renderWorldSidecarConfigEditor(state.editingWorld);
-        renderWorldOverviewSidecarMigration(state.editingWorld);
-        setSidecarStudioFeatureAvailability(state.editingWorld);
+        renderWorldSidecarConfigEditor(ExperimentalWorldsState.editingWorld);
+        renderWorldOverviewSidecarMigration(ExperimentalWorldsState.editingWorld);
+        setSidecarStudioFeatureAvailability(ExperimentalWorldsState.editingWorld);
     };
     document.getElementById('w-inline-legacy-migrate-btn').onclick = () => {
-        if (state.editingWorld?.id) openSidecarMigrationWizard(state.editingWorld.id);
+        if (ExperimentalWorldsState.editingWorld?.id) openSidecarMigrationWizard(ExperimentalWorldsState.editingWorld.id);
     };
     document.getElementById('w-sidecar-inherit-narrator').onchange = event => {
-        if (!state.editingWorld) return;
-        const config = window.HordeSidecarMode?.normalizeWorldConfig?.(state.editingWorld);
+        if (!ExperimentalWorldsState.editingWorld) return;
+        const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
         if (!config) return;
         config.tracker.inheritNarrator = event.target.checked;
-        renderWorldSidecarConfigEditor(state.editingWorld);
+        renderWorldSidecarConfigEditor(ExperimentalWorldsState.editingWorld);
     };
     document.getElementById('w-sidecar-reader-enabled').onchange = event => {
-        if (!state.editingWorld) return;
-        const config = window.HordeSidecarMode?.normalizeWorldConfig?.(state.editingWorld);
+        if (!ExperimentalWorldsState.editingWorld) return;
+        const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
         if (!config) return;
         config.tracker.readerEnabled = event.target.checked;
-        renderWorldSidecarConfigEditor(state.editingWorld);
+        renderWorldSidecarConfigEditor(ExperimentalWorldsState.editingWorld);
     };
     document.getElementById('w-sidecar-reader-profile-inherit').onchange = event => {
-        if (!state.editingWorld) return;
-        const config = window.HordeSidecarMode?.normalizeWorldConfig?.(state.editingWorld);
+        if (!ExperimentalWorldsState.editingWorld) return;
+        const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
         if (!config) return;
         config.tracker.readerProfileInherit = event.target.checked;
-        renderWorldSidecarConfigEditor(state.editingWorld);
+        renderWorldSidecarConfigEditor(ExperimentalWorldsState.editingWorld);
     };
     document.getElementById('w-sidecar-reasoning-mode').onchange = event => {
         document.getElementById('w-sidecar-reasoning-effort-row')?.classList.toggle('hidden', event.target.value === 'disabled');
     };
     document.getElementById('w-sidecar-provider').onchange = () => {
-        renderSidecarModelOptions(normalizedProviderId(document.getElementById('w-sidecar-provider').value));
+        renderSidecarModelOptions(ExperimentalWorldsHost.normalizedProviderId(document.getElementById('w-sidecar-provider').value));
         updateSidecarOverrideVisibility();
     };
     document.getElementById('w-sidecar-fetch-model-btn').onclick = fetchSidecarModelSettings;
     setupSidecarModelSearch();
     setupRoleplayOSConfigHandlers();
     document.getElementById('w-sidecar-memory-inherit').onchange = event => {
-        if (!state.editingWorld) return;
-        const config = window.HordeSidecarMode?.normalizeWorldConfig?.(state.editingWorld);
+        if (!ExperimentalWorldsState.editingWorld) return;
+        const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
         if (!config) return;
         config.memory.inheritGlobal = event.target.checked;
-        renderWorldSidecarConfigEditor(state.editingWorld);
+        renderWorldSidecarConfigEditor(ExperimentalWorldsState.editingWorld);
     };
 
     const sandboxBindings = {
@@ -383,7 +383,7 @@ function setupWorldStudioLogic() {
         const input = document.getElementById(id);
         if (!input) return;
         const handler = event => {
-            const world = state.editingWorld;
+            const world = ExperimentalWorldsState.editingWorld;
             if (!world) return;
             const config = normalizeWorldSandboxConfig(world);
             config[field] = property === 'checked' ? event.target.checked : event.target.value;
@@ -407,17 +407,17 @@ function setupWorldStudioLogic() {
     if (wUnlockBtn) {
         wUnlockBtn.onclick = () => {
             updateReasoningVisibility([], '', true, 'w-');
-            showToast('All parameters unlocked for this world session.', 'success');
+            ExperimentalWorldsHost.notify('All parameters unlocked for this world session.', 'success');
         };
     }
 
     // HUD Config Hooks
-    document.getElementById('w-hud-show-clock').onchange = (e) => state.editingWorld.hudConfig.showClock = e.target.checked;
-    document.getElementById('w-hud-show-quests').onchange = (e) => state.editingWorld.hudConfig.showQuests = e.target.checked;
-    document.getElementById('w-hud-show-ledger').onchange = (e) => state.editingWorld.hudConfig.showLedger = e.target.checked;
-    document.getElementById('w-hud-show-inventory').onchange = (e) => state.editingWorld.hudConfig.showInventory = e.target.checked;
+    document.getElementById('w-hud-show-clock').onchange = (e) => ExperimentalWorldsState.editingWorld.hudConfig.showClock = e.target.checked;
+    document.getElementById('w-hud-show-quests').onchange = (e) => ExperimentalWorldsState.editingWorld.hudConfig.showQuests = e.target.checked;
+    document.getElementById('w-hud-show-ledger').onchange = (e) => ExperimentalWorldsState.editingWorld.hudConfig.showLedger = e.target.checked;
+    document.getElementById('w-hud-show-inventory').onchange = (e) => ExperimentalWorldsState.editingWorld.hudConfig.showInventory = e.target.checked;
     document.getElementById('w-hud-enable-schedules').onchange = (e) => {
-        const world = state.editingWorld;
+        const world = ExperimentalWorldsState.editingWorld;
         if (!world) return;
         const rules = normalizeWorldGameRules(world);
         rules.profileId = 'custom';
@@ -426,7 +426,7 @@ function setupWorldStudioLogic() {
         loadWorldGameRuleControls(world);
     };
     document.getElementById('w-rules-profile').onchange = (e) => {
-        const world = state.editingWorld;
+        const world = ExperimentalWorldsState.editingWorld;
         if (!world) return;
         if (e.target.value === 'custom') {
             normalizeWorldGameRules(world).profileId = 'custom';
@@ -439,7 +439,7 @@ function setupWorldStudioLogic() {
     };
     document.querySelectorAll('#w-rules-modules-grid [data-rule-module]').forEach(input => {
         input.onchange = () => {
-            const world = state.editingWorld;
+            const world = ExperimentalWorldsState.editingWorld;
             if (!world) return;
             const rules = normalizeWorldGameRules(world);
             rules.profileId = 'custom';
@@ -465,26 +465,26 @@ function setupWorldStudioLogic() {
         };
     });
     document.getElementById('w-hud-start-time').oninput = (e) => {
-        if (!state.editingWorld.hudConfig) state.editingWorld.hudConfig = {};
+        if (!ExperimentalWorldsState.editingWorld.hudConfig) ExperimentalWorldsState.editingWorld.hudConfig = {};
         const parsed = parseInt(e.target.value, 10);
-        state.editingWorld.hudConfig.startTimeHours = Number.isFinite(parsed) ? Math.max(0, Math.min(23, parsed)) : 8;
+        ExperimentalWorldsState.editingWorld.hudConfig.startTimeHours = Number.isFinite(parsed) ? Math.max(0, Math.min(23, parsed)) : 8;
     };
     document.getElementById('w-hud-start-minute').oninput = (e) => {
-        if (!state.editingWorld.hudConfig) state.editingWorld.hudConfig = {};
+        if (!ExperimentalWorldsState.editingWorld.hudConfig) ExperimentalWorldsState.editingWorld.hudConfig = {};
         const parsed = parseInt(e.target.value, 10);
-        state.editingWorld.hudConfig.startTimeMinutes = Number.isFinite(parsed) ? Math.max(0, Math.min(59, parsed)) : 0;
+        ExperimentalWorldsState.editingWorld.hudConfig.startTimeMinutes = Number.isFinite(parsed) ? Math.max(0, Math.min(59, parsed)) : 0;
     };
     document.getElementById('w-hud-time-step').oninput = (e) => {
-        if (!state.editingWorld.hudConfig) state.editingWorld.hudConfig = {};
-        state.editingWorld.hudConfig.timeStep = isNaN(parseInt(e.target.value)) ? 5 : parseInt(e.target.value);
+        if (!ExperimentalWorldsState.editingWorld.hudConfig) ExperimentalWorldsState.editingWorld.hudConfig = {};
+        ExperimentalWorldsState.editingWorld.hudConfig.timeStep = isNaN(parseInt(e.target.value)) ? 5 : parseInt(e.target.value);
     };
     document.getElementById('w-hud-start-weekday').onchange = (e) => {
-        if (!state.editingWorld.hudConfig) state.editingWorld.hudConfig = {};
-        state.editingWorld.hudConfig.startWeekday = WORLD_WEEKDAYS.includes(e.target.value) ? e.target.value : 'Monday';
+        if (!ExperimentalWorldsState.editingWorld.hudConfig) ExperimentalWorldsState.editingWorld.hudConfig = {};
+        ExperimentalWorldsState.editingWorld.hudConfig.startWeekday = WORLD_WEEKDAYS.includes(e.target.value) ? e.target.value : 'Monday';
     };
     document.getElementById('w-hud-show-days').onchange = (e) => {
-        if (!state.editingWorld.hudConfig) state.editingWorld.hudConfig = {};
-        state.editingWorld.hudConfig.showDays = e.target.checked;
+        if (!ExperimentalWorldsState.editingWorld.hudConfig) ExperimentalWorldsState.editingWorld.hudConfig = {};
+        ExperimentalWorldsState.editingWorld.hudConfig.showDays = e.target.checked;
     };
 
     // World Banner Uploader
@@ -499,14 +499,14 @@ function setupWorldStudioLogic() {
                 // Optimize like character images do — banners are used full-bleed
                 // as the chat background, so 1280px wide at 0.7 quality is plenty.
                 const optimized = await normalizeUploadedImage(file, 1280, 0.7);
-                state.editingWorld.banner = optimized;
+                ExperimentalWorldsState.editingWorld.banner = optimized;
                 const preview = document.getElementById('w-banner-preview');
                 preview.style.backgroundImage = `url('${optimized}')`;
                 preview.innerHTML = '';
                 renderWorlds(); // Update the card in library
-                showToast('World banner normalized and ready.', 'success');
+                ExperimentalWorldsHost.notify('World banner normalized and ready.', 'success');
             } catch (error) {
-                showToast(`Image upload failed: ${error.message}`, 'error');
+                ExperimentalWorldsHost.notify(`Image upload failed: ${error.message}`, 'error');
             } finally { e.target.value = ''; }
         };
     }
@@ -518,10 +518,10 @@ function setupWorldStudioLogic() {
             const val = e.target.value;
             const ftBtn = document.getElementById('w-fine-tune-preset-btn');
             if (ftBtn) ftBtn.style.display = val ? 'block' : 'none';
-            if (state.editingWorld) {
-                if (state.editingWorld.activePresetId !== val) state.editingWorld.presetOverrides = {};
-                state.editingWorld.activePresetId = val;
-                state.editingWorld.presetOverridesFor = val;
+            if (ExperimentalWorldsState.editingWorld) {
+                if (ExperimentalWorldsState.editingWorld.activePresetId !== val) ExperimentalWorldsState.editingWorld.presetOverrides = {};
+                ExperimentalWorldsState.editingWorld.activePresetId = val;
+                ExperimentalWorldsState.editingWorld.presetOverridesFor = val;
             }
         };
     }
@@ -538,12 +538,12 @@ function setupWorldStudioLogic() {
                 try {
                     const json = validatePresetData(JSON.parse(event.target.result));
                     const preset = { id: 'preset_' + Date.now(), name: json.name || file.name.replace('.json', ''), data: json };
-                    state.systemPresets.push(preset);
-                    await saveState();
-                    showToast('World Preset Imported!', 'success');
-                    if (state.view === 'worldStudio') populateWorldPresetDropdown();
+                    ExperimentalWorldsState.systemPresets.push(preset);
+                    await ExperimentalWorldsHost.persist();
+                    ExperimentalWorldsHost.notify('World Preset Imported!', 'success');
+                    if (ExperimentalWorldsState.view === 'worldStudio') populateWorldPresetDropdown();
                 } catch (err) {
-                    showToast('Import failed: ' + err.message, 'error');
+                    ExperimentalWorldsHost.notify('Import failed: ' + err.message, 'error');
                 }
             };
             reader.readAsText(file);
@@ -558,7 +558,7 @@ function populateWorldPresetDropdown(activePresetId) {
     if (!presetSelect) return;
     const keep = activePresetId !== undefined ? activePresetId : presetSelect.value;
     presetSelect.innerHTML = '<option value="">None (Custom DM Persona Only)</option>';
-    getAllPresets().forEach(p => {
+    ExperimentalWorldsHost.getAllPresets().forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.id;
         opt.textContent = p.name;
@@ -581,7 +581,7 @@ function setupWorldImport() {
             const file = e.target.files[0];
             if (!file) return;
             if (file.size > 512 * 1024 * 1024) {
-                showToast('Import failed: the portable world is larger than 512 MB.', 'error');
+                ExperimentalWorldsHost.notify('Import failed: the portable world is larger than 512 MB.', 'error');
                 return;
             }
             const reader = new FileReader();
@@ -612,10 +612,10 @@ function setupWorldImport() {
                     // state and media reconnect. Ordinary imports still get a
                     // fresh ID to avoid collisions.
                     const originalId = world.id;
-                    const hasVisibleCollision = state.worlds.some(item => item.id === originalId);
-                    const hasOrphanedRuntime = !!(originalId && (state.worldInstances?.[originalId]
-                        || state.activeWorldId === originalId
-                        || state.worldRecoverySnapshots?.[originalId]));
+                    const hasVisibleCollision = ExperimentalWorldsState.worlds.some(item => item.id === originalId);
+                    const hasOrphanedRuntime = !!(originalId && (ExperimentalWorldsState.worldInstances?.[originalId]
+                        || ExperimentalWorldsState.activeWorldId === originalId
+                        || ExperimentalWorldsState.worldRecoverySnapshots?.[originalId]));
                     world.id = hasOrphanedRuntime && !hasVisibleCollision
                         ? originalId : 'world_' + Date.now();
                     world.locations.forEach((location, index) => {
@@ -634,15 +634,15 @@ function setupWorldImport() {
                     // still the author's, only the shape is wrong.
                     normalizeAuthoredWorld(world);
                     const importedMedia = worldMediaSummary(world);
-                    state.worlds.push(world);
-                    if (state.worldRecoverySnapshots?.[world.id]) delete state.worldRecoverySnapshots[world.id];
-                    worldMediaDirty = true;
-                    await saveState();
+                    ExperimentalWorldsState.worlds.push(world);
+                    if (ExperimentalWorldsState.worldRecoverySnapshots?.[world.id]) delete ExperimentalWorldsState.worldRecoverySnapshots[world.id];
+                    ExperimentalWorldsHost.markMediaChanged();
+                    await ExperimentalWorldsHost.persist();
                     renderWorlds();
                     const recovered = world.id === originalId && hasOrphanedRuntime;
-                    showToast(`${recovered ? 'Recovered' : 'Imported'} "${world.name}"${recovered ? ' and reconnected its existing sessions' : ''} with ${importedMedia.count} media asset${importedMedia.count === 1 ? '' : 's'}.`, 'success');
+                    ExperimentalWorldsHost.notify(`${recovered ? 'Recovered' : 'Imported'} "${world.name}"${recovered ? ' and reconnected its existing sessions' : ''} with ${importedMedia.count} media asset${importedMedia.count === 1 ? '' : 's'}.`, 'success');
                 } catch (err) {
-                    showToast('Failed to import world: ' + err.message, 'error');
+                    ExperimentalWorldsHost.notify('Failed to import world: ' + err.message, 'error');
                 }
             };
             reader.readAsText(file);
@@ -653,7 +653,7 @@ function setupWorldImport() {
 
 async function fetchWorldModelSettings() {
     const modelInput = document.getElementById('w-studio-model').value.trim();
-    await fetchModelData(modelInput, 'w-', state.editingWorld);
+    await fetchModelData(modelInput, 'w-', ExperimentalWorldsState.editingWorld);
 }
 
 const sidecarProviderModelCatalogs = new Map();
@@ -661,9 +661,9 @@ const sidecarProviderModelCatalogs = new Map();
 function updateSidecarProviderConnectionHint(providerId) {
     const hint = document.getElementById('w-sidecar-provider-connection-hint');
     if (!hint) return;
-    const provider = normalizedProviderId(providerId);
-    const configured = providerHasCredentials(provider);
-    hint.textContent = `${providerDisplayName(provider)} uses its global Settings connection: endpoint, credentials, and provider-specific headers. ${configured ? 'Connection settings are configured.' : 'Configure this provider in Settings before fetching models or running Sidecar.'}`;
+    const provider = ExperimentalWorldsHost.normalizedProviderId(providerId);
+    const configured = ExperimentalWorldsHost.providerHasCredentials(provider);
+    hint.textContent = `${ExperimentalWorldsHost.providerDisplayName(provider)} uses its global Settings connection: endpoint, credentials, and provider-specific headers. ${configured ? 'Connection settings are configured.' : 'Configure this provider in Settings before fetching models or running Sidecar.'}`;
     hint.classList.toggle('form-warning', !configured);
 }
 
@@ -681,7 +681,7 @@ function renderSidecarModelSearchResults() {
     const input = document.getElementById('w-sidecar-model');
     const results = document.getElementById('w-sidecar-model-results');
     if (!input || !results) return;
-    const provider = normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
+    const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
     const query = input.value.trim().toLowerCase();
     const models = (sidecarProviderModelCatalogs.get(provider) || []).filter(model =>
         !query || `${model.name || ''} ${model.id || ''}`.toLowerCase().includes(query)
@@ -737,11 +737,11 @@ function setupSidecarModelSearch() {
 }
 
 function applySidecarSelectedModelMetadata() {
-    const world = state.editingWorld;
-    const provider = normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
+    const world = ExperimentalWorldsState.editingWorld;
+    const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
     const model = document.getElementById('w-sidecar-model')?.value || '';
     const match = (sidecarProviderModelCatalogs.get(provider) || []).find(item => item.id === model);
-    const config = world && window.HordeSidecarMode?.normalizeWorldConfig?.(world);
+    const config = world && window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world);
     if (config && match) config.tracker.supportedParams = Array.isArray(match.supported_parameters)
         ? match.supported_parameters : [];
     else if (config && model !== String(config.tracker.model || '').trim()) config.tracker.supportedParams = [];
@@ -752,16 +752,16 @@ function applySidecarSelectedModelMetadata() {
 }
 
 async function fetchSidecarModelSettings() {
-    const world = state.editingWorld;
-    const provider = normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
+    const world = ExperimentalWorldsState.editingWorld;
+    const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
     const status = document.getElementById('w-sidecar-model-status');
     const button = document.getElementById('w-sidecar-fetch-model-btn');
     if (!world) return;
     if (status) status.textContent = `Fetching ${provider} model metadata…`;
     if (button) { button.disabled = true; button.textContent = 'Fetching…'; }
     try {
-        const response = await fetch(`${providerApiBase(provider)}/models`, {
-            headers: { ...providerAuthHeaders(provider), ...providerAttributionHeaders(provider) }
+        const response = await fetch(`${ExperimentalWorldsHost.providerApiBase(provider)}/models`, {
+            headers: { ...ExperimentalWorldsHost.providerAuthHeaders(provider), ...ExperimentalWorldsHost.providerAttributionHeaders(provider) }
         });
         if (!response.ok) throw new Error(`Model catalog request failed (${response.status})`);
         const data = await response.json();
@@ -775,10 +775,10 @@ async function fetchSidecarModelSettings() {
         applySidecarSelectedModelMetadata();
         if (document.activeElement === document.getElementById('w-sidecar-model')) renderSidecarModelSearchResults();
         if (status) status.textContent = `${models.length} ${provider} models available. Choose one to use it for Sidecar.`;
-        showToast(`${models.length} Sidecar models loaded from ${provider}.`, 'success');
+        ExperimentalWorldsHost.notify(`${models.length} Sidecar models loaded from ${provider}.`, 'success');
     } catch (error) {
         if (status) status.textContent = `Could not fetch metadata: ${error.message}`;
-        showToast(`Sidecar model metadata failed: ${error.message}`, 'error');
+        ExperimentalWorldsHost.notify(`Sidecar model metadata failed: ${error.message}`, 'error');
     } finally {
         if (button) { button.disabled = false; button.textContent = 'Fetch models'; }
     }
@@ -788,9 +788,9 @@ function updateSidecarOverrideVisibility() {
     const inheriting = document.getElementById('w-sidecar-inherit-narrator')?.checked !== false;
     document.getElementById('w-sidecar-override-config')?.classList.toggle('hidden', inheriting);
     document.getElementById('world-sidecar-openrouter-routing')?.classList.toggle('hidden',
-        inheriting || normalizedProviderId(document.getElementById('w-sidecar-provider')?.value) !== 'openrouter');
+        inheriting || ExperimentalWorldsHost.normalizedProviderId(document.getElementById('w-sidecar-provider')?.value) !== 'openrouter');
     if (!inheriting) {
-        const provider = normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
+        const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
         renderSidecarModelOptions(provider, document.getElementById('w-sidecar-model')?.value || '');
         updateSidecarProviderConnectionHint(provider);
         initializeOpenRouterRoutingPanel('sidecar', { force: false });
@@ -1043,9 +1043,9 @@ async function pinRoleplayOSSource(world, sourceId) {
         // built-in sections, and a future repoint reconciles them.
         draft.sourceId = 'builtin';
     }
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     renderRoleplayOSConfigEditor(world);
-    showToast(entry
+    ExperimentalWorldsHost.notify(entry
         ? 'World pinned to Roleplay OS source "' + entry.presetName + '".' + (draft.lastMigration ? ' Selections reconciled; see the migration notes.' : '')
         : 'World pinned to the built-in adapted Roleplay OS registry.', 'info');
 }
@@ -1053,13 +1053,13 @@ async function pinRoleplayOSSource(world, sourceId) {
 async function importRoleplayOSourcePreset(raw) {
     const entry = installRoleplayOSSource(raw);
     if (!entry) {
-        showToast('Roleplay OS import failed: no sections found in that file (expected a Marinara or SillyTavern preset export).', 'error');
+        ExperimentalWorldsHost.notify('Roleplay OS import failed: no sections found in that file (expected a Marinara or SillyTavern preset export).', 'error');
         return;
     }
-    await saveState();
-    const world = state.editingWorld;
+    await ExperimentalWorldsHost.persist();
+    const world = ExperimentalWorldsState.editingWorld;
     if (world) await pinRoleplayOSSource(world, entry.id);
-    showToast('Installed Roleplay OS source "' + entry.presetName + '" (' + entry.sections.length + ' sections' + (entry.choiceBlocks.length ? ', ' + entry.choiceBlocks.length + ' choice blocks' : '') + ').', 'success');
+    ExperimentalWorldsHost.notify('Installed Roleplay OS source "' + entry.presetName + '" (' + entry.sections.length + ' sections' + (entry.choiceBlocks.length ? ', ' + entry.choiceBlocks.length + ' choice blocks' : '') + ').', 'success');
 }
 
 function setupRoleplayOSConfigHandlers() {
@@ -1067,10 +1067,10 @@ function setupRoleplayOSConfigHandlers() {
     if (host) host.onclick = event => {
         const chip = event.target.closest('[data-os-variable]');
         if (!chip || chip.disabled) return;
-        setRoleplayOSChoice(state.editingWorld, chip.dataset.osVariable, chip.dataset.osValue);
+        setRoleplayOSChoice(ExperimentalWorldsState.editingWorld, chip.dataset.osVariable, chip.dataset.osValue);
     };
     const sourceSelect = document.getElementById('w-roleplay-os-source');
-    if (sourceSelect) sourceSelect.onchange = event => pinRoleplayOSSource(state.editingWorld, event.target.value);
+    if (sourceSelect) sourceSelect.onchange = event => pinRoleplayOSSource(ExperimentalWorldsState.editingWorld, event.target.value);
     const importBtn = document.getElementById('w-roleplay-os-import-btn');
     const fileInput = document.getElementById('w-roleplay-os-file-input');
     if (importBtn && fileInput) {
@@ -1083,7 +1083,7 @@ function setupRoleplayOSConfigHandlers() {
                 try {
                     await importRoleplayOSourcePreset(JSON.parse(event.target.result));
                 } catch (err) {
-                    showToast('Roleplay OS import failed: ' + err.message, 'error');
+                    ExperimentalWorldsHost.notify('Roleplay OS import failed: ' + err.message, 'error');
                 } finally {
                     e.target.value = '';
                 }
@@ -1094,17 +1094,17 @@ function setupRoleplayOSConfigHandlers() {
     const migrationHost = document.getElementById('w-roleplay-os-migration');
     if (migrationHost) migrationHost.onclick = async event => {
         if (!event.target.closest('#w-roleplay-os-migration-dismiss')) return;
-        const world = state.editingWorld;
+        const world = ExperimentalWorldsState.editingWorld;
         if (!world) return;
         delete roleplayOSDraft(world).lastMigration;
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         renderRoleplayOSConfigEditor(world);
     };
 }
 
 function renderWorldSidecarConfigEditor(world) {
     if (!world) return;
-    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world);
+    const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world);
     if (!config) return;
     renderStatePipelineConfig(world);
     const tracker = config.tracker || {};
@@ -1127,7 +1127,7 @@ function renderWorldSidecarConfigEditor(world) {
     document.getElementById('w-sidecar-reader-retry').value = readerProfile.retryPolicy || 'bounded';
     document.querySelectorAll('#w-sidecar-reader-timeout, #w-sidecar-reader-refresh, #w-sidecar-reader-tools, #w-sidecar-reader-provider, #w-sidecar-reader-model, #w-sidecar-reader-profile-max-tokens, #w-sidecar-reader-context-budget, #w-sidecar-reader-lookup-budget, #w-sidecar-reader-reasoning, #w-sidecar-reader-reasoning-effort, #w-sidecar-reader-retry').forEach(input => input.disabled = tracker.readerProfileInherit !== false);
     document.getElementById('w-sidecar-provider').value = tracker.provider || '';
-    renderSidecarModelOptions(normalizedProviderId(tracker.provider), tracker.model || '');
+    renderSidecarModelOptions(ExperimentalWorldsHost.normalizedProviderId(tracker.provider), tracker.model || '');
     document.getElementById('w-sidecar-reasoning-mode').value = tracker.reasoningMode || (tracker.reasoning === true ? 'enabled' : 'inherit');
     document.getElementById('w-sidecar-reasoning-effort').value = tracker.reasoningEffort || 'auto';
     document.getElementById('w-sidecar-reasoning-effort-row').classList.toggle('hidden',
@@ -1173,18 +1173,18 @@ function renderWorldSidecarConfigEditor(world) {
             const backup = backups.at(-1);
             if (!backup?.world || !confirm('Restore this selected world and its saved runtime to the pre-Sidecar Inline backup? Current Sidecar-only derived data will be replaced.')) return;
             const restored = safeJsonClone(backup.world);
-            const index = state.worlds.findIndex(item => item.id === world.id);
-            if (index >= 0) state.worlds[index] = restored;
-            state.editingWorld = safeJsonClone(restored);
-            if (backup.runtime) state.worldInstances[restored.id] = safeJsonClone(backup.runtime);
-            await saveState();
+            const index = ExperimentalWorldsState.worlds.findIndex(item => item.id === world.id);
+            if (index >= 0) ExperimentalWorldsState.worlds[index] = restored;
+            ExperimentalWorldsState.editingWorld = safeJsonClone(restored);
+            if (backup.runtime) ExperimentalWorldsState.worldInstances[restored.id] = safeJsonClone(backup.runtime);
+            await ExperimentalWorldsHost.persist();
             openWorldStudio(restored.id);
-            showToast('Restored the selected pre-Sidecar migration backup.', 'success');
+            ExperimentalWorldsHost.notify('Restored the selected pre-Sidecar migration backup.', 'success');
         };
     }
     if (migrate) {
-        const sessions = state.worldInstances?.[world.id]?.sessions || [];
-        const inlineSessions = sessions.filter(session => window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, session)?.mode !== 'sidecar');
+        const sessions = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
+        const inlineSessions = sessions.filter(session => window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, session)?.mode !== 'sidecar');
         migrate.classList.remove('hidden');
         migrate.disabled = false;
         if (!sessions.length && config.mode !== 'sidecar') migrate.textContent = 'Enable Sidecar for this world';
@@ -1194,8 +1194,8 @@ function renderWorldSidecarConfigEditor(world) {
     }
     const report = document.getElementById('w-sidecar-migration-report');
     if (report) {
-        const sessions = state.worldInstances?.[world.id]?.sessions || [];
-        const inlineSessions = sessions.filter(session => window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, session)?.mode !== 'sidecar');
+        const sessions = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
+        const inlineSessions = sessions.filter(session => window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, session)?.mode !== 'sidecar');
         const migrations = sessions.map(session => session.sidecar?.migration).filter(Boolean);
         const warnings = migrations.flatMap(migration => migration.warnings || []);
         if (migrations.length) {
@@ -1218,16 +1218,16 @@ function renderWorldSidecarConfigEditor(world) {
 
 function openWorldStudio(worldId = null, options = {}) {
     if (worldId) {
-        const world = state.worlds.find(w => w.id === worldId);
+        const world = ExperimentalWorldsState.worlds.find(w => w.id === worldId);
         if (!world) return;
         // Proposals belong to the world they were generated for.
         if (calibrationPassState && calibrationPassState.worldId !== worldId) calibrationPassState = null;
-        state.editingWorld = JSON.parse(JSON.stringify(world));
-        state.lastWorldStudioId = worldId;
-        persistWorkspaceSoon();
+        ExperimentalWorldsState.editingWorld = JSON.parse(JSON.stringify(world));
+        ExperimentalWorldsState.lastWorldStudioId = worldId;
+        ExperimentalWorldsHost.persist();
     }
 
-    const w = state.editingWorld;
+    const w = ExperimentalWorldsState.editingWorld;
     document.getElementById('w-studio-name').value = w.name || '';
     document.getElementById('w-studio-desc').value = w.description || '';
     document.getElementById('w-studio-dm-prompt').value = w.dmPrompt || '';
@@ -1250,7 +1250,7 @@ function openWorldStudio(worldId = null, options = {}) {
     worldModelInput.value = w.model || '';
     worldModelInput.placeholder = w.model
         ? 'Search provider models…'
-        : `Use Settings default · ${state.globalSettings.defaultModel || 'choose a model in Settings'}`;
+        : `Use Settings default · ${ExperimentalWorldsState.globalSettings.defaultModel || 'choose a model in Settings'}`;
 
     const agentConfig = normalizeWorldAgentConfig(w);
     document.getElementById('w-agent-enabled').checked = agentConfig.enabled;
@@ -1278,7 +1278,7 @@ function openWorldStudio(worldId = null, options = {}) {
     
     const contextSizeInput = document.getElementById('w-studio-context-size');
     if (contextSizeInput) {
-        configureContextSliderForModel('w-studio-context-size', w.model || state.globalSettings.defaultModel);
+        configureContextSliderForModel('w-studio-context-size', w.model || ExperimentalWorldsState.globalSettings.defaultModel);
         contextSizeInput.value = w.contextSize ?? 8192;
         updateContextSliderUI('w-studio-context-size', 'w-studio-context-size-val', 'w-studio-context-size-badge');
     }
@@ -1304,10 +1304,10 @@ function openWorldStudio(worldId = null, options = {}) {
     loadWorldGameRuleControls(w);
 
     updateWorldTokenCount();
-    switchView('worldStudio');
+    ExperimentalWorldsHost.navigate('worldStudio');
 
     const preferredTab = options.tab
-        || (workspaceRestoring ? state.lastWorldStudioTab : null)
+        || (workspaceRestoring ? ExperimentalWorldsState.lastWorldStudioTab : null)
         || (worldId ? 'w-overview' : null);
     if (preferredTab) document.querySelector(`.world-studio-tab[data-tab="${preferredTab}"]`)?.click();
 
@@ -1324,13 +1324,13 @@ function openWorldStudio(worldId = null, options = {}) {
 }
 
 function migrateWorldTimelinesToSidecar(world, legacyConfig = null, options = {}) {
-    const instance = state.worldInstances?.[world?.id];
+    const instance = ExperimentalWorldsState.worldInstances?.[world?.id];
     const sessions = Array.isArray(instance?.sessions) ? instance.sessions : [];
     const selected = Array.isArray(options.selectedSessionIds) ? new Set(options.selectedSessionIds.map(String)) : null;
     const reports = [];
     sessions.forEach(sess => {
         if (selected && !selected.has(String(sess.id))) return;
-        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
         if (!protocol || protocol.mode === 'sidecar') return;
         const warnings = [];
         if ((sess.pendingChecks || []).length) warnings.push('pending checks require narration before their outcome can commit');
@@ -1355,27 +1355,27 @@ function migrateWorldTimelinesToSidecar(world, legacyConfig = null, options = {}
         // Migration does not retroactively fabricate Sidecar handoffs for
         // Legacy turns. It does make existing raw history available as pinned
         // evidence and prepares a real Sidecar packet for the next turn.
-        window.HordeSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
+        window.ExperimentalWorldsSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
         protocol.packet = buildSidecarScenePacket(world, sess);
         reports.push({ id: sess.id, warnings });
     });
     return reports;
 }
 
-function openSidecarMigrationWizard(worldId = state.editingWorld?.id) {
-    const world = state.worlds.find(item => item.id === worldId) || state.editingWorld;
+function openSidecarMigrationWizard(worldId = ExperimentalWorldsState.editingWorld?.id) {
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === worldId) || ExperimentalWorldsState.editingWorld;
     const overlay = document.getElementById('sidecar-migration-wizard-overlay');
     const list = document.getElementById('sidecar-migration-wizard-list');
     const status = document.getElementById('sidecar-migration-wizard-status');
     if (!world || !overlay || !list) return;
-    const sessions = state.worldInstances?.[world.id]?.sessions || [];
+    const sessions = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
     const inline = sessions.filter(sess => {
-        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
         return protocol?.mode !== 'sidecar';
     });
     const alreadySidecar = world.sidecarConfig?.mode === 'sidecar';
     list.innerHTML = inline.length ? inline.map(sess => {
-        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
         const warnings = [
             (sess.pendingChecks || []).length ? 'pending checks' : '',
             sess.unresolvedDestination ? 'unresolved destination' : '',
@@ -1404,35 +1404,35 @@ function openSidecarMigrationWizard(worldId = state.editingWorld?.id) {
     };
     document.getElementById('run-sidecar-migration-btn').onclick = async () => {
         const selectedIds = [...list.querySelectorAll('.sidecar-migration-session:checked')].map(box => box.dataset.sessionId);
-        if (inline.length && !selectedIds.length) return showToast('Select at least one Inline timeline to migrate.', 'info');
-        if (!inline.length && world.sidecarConfig?.mode === 'sidecar') return showToast('This world is already on Sidecar.', 'info');
+        if (inline.length && !selectedIds.length) return ExperimentalWorldsHost.notify('Select at least one Inline timeline to migrate.', 'info');
+        if (!inline.length && world.sidecarConfig?.mode === 'sidecar') return ExperimentalWorldsHost.notify('This world is already on Sidecar.', 'info');
         const backupList = Array.isArray(world.sidecarMigrationBackups) ? world.sidecarMigrationBackups : [];
-        backupList.push({ id: `sidecar_migration_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), from: 'inline_legacy', to: 'sidecar', selectedSessionIds: selectedIds.slice(), world: cloneSidecarMigrationRollbackWorld(world), runtime: safeJsonClone(state.worldInstances?.[world.id] || null), note: inline.length ? 'Selected-timeline migration backup.' : 'World-level Sidecar enablement backup.' });
+        backupList.push({ id: `sidecar_migration_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), from: 'inline_legacy', to: 'sidecar', selectedSessionIds: selectedIds.slice(), world: cloneSidecarMigrationRollbackWorld(world), runtime: safeJsonClone(ExperimentalWorldsState.worldInstances?.[world.id] || null), note: inline.length ? 'Selected-timeline migration backup.' : 'World-level Sidecar enablement backup.' });
         world.sidecarMigrationBackups = backupList.slice(-5);
-        world.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.({ ...world, sidecarConfig: { ...(world.sidecarConfig || {}), mode: 'sidecar' } }) || { ...(world.sidecarConfig || {}), mode: 'sidecar' };
+        world.sidecarConfig = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.({ ...world, sidecarConfig: { ...(world.sidecarConfig || {}), mode: 'sidecar' } }) || { ...(world.sidecarConfig || {}), mode: 'sidecar' };
         const reports = inline.length ? migrateWorldTimelinesToSidecar(world, world.sidecarConfig, { selectedSessionIds: selectedIds }) : [];
-        const index = state.worlds.findIndex(item => item.id === world.id);
-        if (index >= 0) state.worlds[index] = safeJsonClone(world);
-        if (state.editingWorld?.id === world.id) {
-            state.editingWorld = safeJsonClone(world);
+        const index = ExperimentalWorldsState.worlds.findIndex(item => item.id === world.id);
+        if (index >= 0) ExperimentalWorldsState.worlds[index] = safeJsonClone(world);
+        if (ExperimentalWorldsState.editingWorld?.id === world.id) {
+            ExperimentalWorldsState.editingWorld = safeJsonClone(world);
             const modeSelect = document.getElementById('w-sidecar-mode');
             if (modeSelect) modeSelect.value = 'sidecar';
         }
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         close();
         renderWorlds();
-        if (state.activeWorldId === world.id) renderWorldPlayState();
-        if (state.editingWorld?.id === world.id) { renderWorldSidecarConfigEditor(state.editingWorld); }
-        showToast(reports.length
+        if (ExperimentalWorldsState.activeWorldId === world.id) renderWorldPlayState();
+        if (ExperimentalWorldsState.editingWorld?.id === world.id) { renderWorldSidecarConfigEditor(ExperimentalWorldsState.editingWorld); }
+        ExperimentalWorldsHost.notify(reports.length
             ? `Migrated ${reports.length} timeline${reports.length === 1 ? '' : 's'} to Sidecar.`
             : 'Sidecar enabled for this world.', 'success');
     };
 }
 
 async function saveWorld() {
-    const w = state.editingWorld;
+    const w = ExperimentalWorldsState.editingWorld;
     if (!w) return;
-    const storedBeforeSave = state.worlds.find(world => world.id === w.id);
+    const storedBeforeSave = ExperimentalWorldsState.worlds.find(world => world.id === w.id);
     const wasSidecar = storedBeforeSave?.sidecarConfig?.mode === 'sidecar';
 
     w.name = document.getElementById('w-studio-name').value.trim();
@@ -1458,7 +1458,7 @@ async function saveWorld() {
         repairMode: document.getElementById('w-kernel-repair-mode').value,
         compactTools: document.getElementById('w-kernel-compact-tools').checked
     } });
-    const priorSidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.(w) || {};
+    const priorSidecarConfig = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(w) || {};
     const sidecarDraftWorld = {
         ...w,
         sidecarConfig: {
@@ -1509,7 +1509,7 @@ async function saveWorld() {
             }
         }
     };
-    w.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.(sidecarDraftWorld) || priorSidecarConfig;
+    w.sidecarConfig = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(sidecarDraftWorld) || priorSidecarConfig;
     const switchingToSidecar = !!storedBeforeSave && w.sidecarConfig?.mode === 'sidecar' && !wasSidecar;
     if (switchingToSidecar && !confirm(
         'Enable Sidecar for this world? Existing timelines remain Inline Legacy until you choose them in the migration wizard. Horde Studio will preserve raw roleplay and canonical receipts and create a local backup.'
@@ -1524,7 +1524,7 @@ async function saveWorld() {
             createdAt: new Date().toISOString(),
             from: 'inline_legacy', to: 'sidecar',
             world: cloneSidecarMigrationRollbackWorld(storedBeforeSave),
-            runtime: safeJsonClone(state.worldInstances?.[w.id] || null),
+            runtime: safeJsonClone(ExperimentalWorldsState.worldInstances?.[w.id] || null),
             note: 'Raw history and canonical receipts are preserved in the migrated runtime; this backup exists for explicit rollback/re-import.'
         });
         w.sidecarMigrationBackups = backups.slice(-3);
@@ -1564,56 +1564,56 @@ async function saveWorld() {
     // and an export taken before then carries the damage to whoever opens it.
     normalizeAuthoredWorld(w);
 
-    const idx = state.worlds.findIndex(world => world.id === w.id);
+    const idx = ExperimentalWorldsState.worlds.findIndex(world => world.id === w.id);
     if (idx !== -1) {
-        state.worlds[idx] = JSON.parse(JSON.stringify(w));
+        ExperimentalWorldsState.worlds[idx] = JSON.parse(JSON.stringify(w));
     } else {
-        state.worlds.push(JSON.parse(JSON.stringify(w)));
+        ExperimentalWorldsState.worlds.push(JSON.parse(JSON.stringify(w)));
     }
 
-    const savedWorld = state.worlds[idx !== -1 ? idx : state.worlds.length - 1];
+    const savedWorld = ExperimentalWorldsState.worlds[idx !== -1 ? idx : ExperimentalWorldsState.worlds.length - 1];
     // Changing the world-level mode never silently migrates established
     // timelines. The migration wizard performs the explicit per-timeline
     // selection, backup, and import step instead.
     const migrationReports = [];
 
-    worldMediaDirty = true;
-    await saveState();
+    ExperimentalWorldsHost.markMediaChanged();
+    await ExperimentalWorldsHost.persist();
     renderWorlds();
     // Never leave a world-looking Sidecar-enabled while its existing play
     // timelines silently remain on the Legacy path. The wizard still owns
     // selection, backup and the actual migration; opening it makes that
     // required next action visible at the moment the setting changes.
-    const inlineTimelines = (state.worldInstances?.[savedWorld.id]?.sessions || []).filter(session =>
-        window.HordeSidecarHooks?.normalizeWorldTimeline?.(savedWorld, session)?.mode !== 'sidecar');
+    const inlineTimelines = (ExperimentalWorldsState.worldInstances?.[savedWorld.id]?.sessions || []).filter(session =>
+        window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(savedWorld, session)?.mode !== 'sidecar');
     if (switchingToSidecar && inlineTimelines.length) {
-        showToast('Sidecar is configured. Select the existing timeline(s) to migrate before generating another turn.', 'info');
+        ExperimentalWorldsHost.notify('Sidecar is configured. Select the existing timeline(s) to migrate before generating another turn.', 'info');
         openSidecarMigrationWizard(savedWorld.id);
     } else {
-        showToast(migrationReports.length
+        ExperimentalWorldsHost.notify(migrationReports.length
             ? `World saved; ${migrationReports.length} timeline${migrationReports.length === 1 ? '' : 's'} prepared for Sidecar.`
             : 'World Saved!', 'success');
     }
 }
 
 async function deleteWorld() {
-    if (!state.editingWorld) return;
-    if (!confirm(`Are you sure you want to delete "${state.editingWorld.name}"? This cannot be undone.`)) return;
+    if (!ExperimentalWorldsState.editingWorld) return;
+    if (!confirm(`Are you sure you want to delete "${ExperimentalWorldsState.editingWorld.name}"? This cannot be undone.`)) return;
 
-    state.worlds = state.worlds.filter(w => w.id !== state.editingWorld.id);
-    worldMediaDirty = true;
-    if (state.worldInstances[state.editingWorld.id]) {
-        delete state.worldInstances[state.editingWorld.id];
+    ExperimentalWorldsState.worlds = ExperimentalWorldsState.worlds.filter(w => w.id !== ExperimentalWorldsState.editingWorld.id);
+    ExperimentalWorldsHost.markMediaChanged();
+    if (ExperimentalWorldsState.worldInstances[ExperimentalWorldsState.editingWorld.id]) {
+        delete ExperimentalWorldsState.worldInstances[ExperimentalWorldsState.editingWorld.id];
     }
     
-    await saveState();
-    showToast('World Deleted', 'success');
+    await ExperimentalWorldsHost.persist();
+    ExperimentalWorldsHost.notify('World Deleted', 'success');
     renderWorlds();
-    switchView('worlds');
+    ExperimentalWorldsHost.navigate('worlds');
 }
 
 function addWorldLocation(position = 'bottom', regionId = '', parentLocationId = '', mapType = '') {
-    const region = (state.editingWorld?.regions || []).find(item => item.id === regionId);
+    const region = (ExperimentalWorldsState.editingWorld?.regions || []).find(item => item.id === regionId);
     const loc = {
         id: 'loc_' + Date.now(),
         name: '',
@@ -1628,25 +1628,25 @@ function addWorldLocation(position = 'bottom', regionId = '', parentLocationId =
         secrets: []
     };
     if (position === 'top') {
-        state.editingWorld.locations.unshift(loc);
+        ExperimentalWorldsState.editingWorld.locations.unshift(loc);
     } else {
-        state.editingWorld.locations.push(loc);
+        ExperimentalWorldsState.editingWorld.locations.push(loc);
     }
     worldStudioListState.locations.query = '';
     worldStudioListState.locations.page = 0;
     openWorldRecordInspector('location', loc.id);
-    showToast('New location ready to define.', 'success');
+    ExperimentalWorldsHost.notify('New location ready to define.', 'success');
 }
 
 function addWorldRegion() {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     if (!world) return;
     normalizeWorldDirectoryData(world);
     let id = `reg_${Date.now()}`;
     while (world.regions.some(region => region.id === id)) id = `reg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     world.regions.push({ id, name: 'New region', description: '', tags: [] });
     openWorldRecordInspector('region', id);
-    showToast('New region ready. Add its first location when you are ready.', 'success');
+    ExperimentalWorldsHost.notify('New region ready. Add its first location when you are ready.', 'success');
 }
 
 function isExitFormat(val) {
@@ -1655,10 +1655,10 @@ function isExitFormat(val) {
 }
 
 function validateLocationRef(val) {
-    if (!state.editingWorld) return false;
+    if (!ExperimentalWorldsState.editingWorld) return false;
     const v = (val || "").trim().toLowerCase();
     if (!v) return false;
-    return state.editingWorld.locations.some(l => {
+    return ExperimentalWorldsState.editingWorld.locations.some(l => {
         const id = (l.id || "").trim().toLowerCase();
         const name = (l.name || "").trim().toLowerCase();
         return id === v || name === v;
@@ -2071,7 +2071,7 @@ function checkExitTarget(exitStr) {
     const target = getExitTargetName(exitStr);
     if (!target) return false;
     const cleanTarget = target.trim().toLowerCase();
-    return state.editingWorld.locations.some(l => {
+    return ExperimentalWorldsState.editingWorld.locations.some(l => {
         const id = (l.id || "").trim().toLowerCase();
         const name = (l.name || "").trim().toLowerCase();
         return id === cleanTarget || name === cleanTarget;
@@ -2125,7 +2125,7 @@ function updateExitAutocomplete(inputEl, loc) {
         }
     }
     
-    const locations = (state.editingWorld && state.editingWorld.locations) || [];
+    const locations = (ExperimentalWorldsState.editingWorld && ExperimentalWorldsState.editingWorld.locations) || [];
     const searchLower = searchTerm.toLowerCase();
     
     // Filter matching locations
@@ -2222,7 +2222,7 @@ function getOppositeDirection(dir) {
 }
 
 function syncExitConnection(sourceLoc, exitText, isOneWay, travelTime, isDeleted = false) {
-    if (!state.editingWorld || !sourceLoc) return;
+    if (!ExperimentalWorldsState.editingWorld || !sourceLoc) return;
     
     const direction = getExitDirection(exitText);
     const targetName = getExitTargetName(exitText);
@@ -2230,13 +2230,13 @@ function syncExitConnection(sourceLoc, exitText, isOneWay, travelTime, isDeleted
     if (!targetName) return;
     const cleanTargetName = targetName.toLowerCase();
     
-    const targetLoc = state.editingWorld.locations.find(l => 
+    const targetLoc = ExperimentalWorldsState.editingWorld.locations.find(l =>
         (l.id && l.id.toLowerCase() === cleanTargetName) || 
         (l.name && l.name.toLowerCase() === cleanTargetName)
     );
     if (!targetLoc) return;
     const sourceExit = (sourceLoc.exits || []).find(exit => {
-        const linked = getLocationRef(state.editingWorld, exit?.targetLocationId || getExitTargetName(exit));
+        const linked = getLocationRef(ExperimentalWorldsState.editingWorld, exit?.targetLocationId || getExitTargetName(exit));
         return linked?.id === targetLoc.id;
     });
     
@@ -2291,7 +2291,7 @@ function syncExitConnection(sourceLoc, exitText, isOneWay, travelTime, isDeleted
 function renderWorldStudio() {
     // Refresh the visible data panel after an audit fix. Hidden panels hydrate
     // when opened; eagerly rebuilding all of them defeats the large-world fix.
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     if (!world) return;
     const activeTab = document.querySelector('.world-studio-tab.active')?.dataset.tab || 'w-basics';
     renderWorldStudioPanel(activeTab);
@@ -2329,7 +2329,7 @@ async function renderWorldVisualModelSearch(world, pipeline = 'new', force = fal
         setCompanionSearchOpen(input, results, true);
         return;
     }
-    status.textContent = `Loading ${pipeline === 'revision' ? 'reference-capable ' : ''}image models from ${providerDisplayName(provider)}…`;
+    status.textContent = `Loading ${pipeline === 'revision' ? 'reference-capable ' : ''}image models from ${ExperimentalWorldsHost.providerDisplayName(provider)}…`;
     // The live fal catalog can take a few seconds on first load. Open the
     // results box with a loading placeholder immediately so the dropdown is
     // visibly working instead of silently absent — clicks during the gap
@@ -2343,7 +2343,7 @@ async function renderWorldVisualModelSearch(world, pipeline = 'new', force = fal
     } catch (error) {
         console.warn('Could not load the World Visuals image catalog:', error);
     }
-    if (renderId !== worldVisualModelSearchRenderId[pipeline] || state.editingWorld?.id !== world.id) return;
+    if (renderId !== worldVisualModelSearchRenderId[pipeline] || ExperimentalWorldsState.editingWorld?.id !== world.id) return;
     // A render that completes after the user picked an option (or clicked
     // away) must not rebuild and force the closed list back open.
     if (document.activeElement !== input && results.classList.contains('hidden')) return;
@@ -2363,22 +2363,22 @@ async function renderWorldVisualModelSearch(world, pipeline = 'new', force = fal
             .filter(Boolean).join(' · ')
     }));
     renderCompanionSearchResults(results, options, option => {
-        const liveWorld = state.editingWorld;
+        const liveWorld = ExperimentalWorldsState.editingWorld;
         if (!liveWorld) return;
         const presentation = normalizeWorldPresentation(liveWorld);
         presentation[ui.modelField] = option.value;
         if (pipeline === 'new') presentation.imageModel = option.value;
         input.value = option.value;
         setCompanionSearchOpen(input, results, false);
-        status.textContent = `${option.label} selected · ${providerDisplayName(provider)}`;
+        status.textContent = `${option.label} selected · ${ExperimentalWorldsHost.providerDisplayName(provider)}`;
     }, models.length
         ? 'No compatible model matches. Keep typing to use an exact custom model ID.'
-        : `No ${pipeline === 'revision' ? 'reference-capable ' : ''}image models were returned by ${providerDisplayName(provider)}. You may still enter an exact model ID.`);
+        : `No ${pipeline === 'revision' ? 'reference-capable ' : ''}image models were returned by ${ExperimentalWorldsHost.providerDisplayName(provider)}. You may still enter an exact model ID.`);
     input.setAttribute('aria-expanded', 'true');
     const selected = models.find(model => model.id === input.value.trim());
     status.textContent = selected
-        ? `${selected.name || selected.id} · ${selected.supportsReference === true ? 'reference capable' : 'reference support not advertised'} · ${providerDisplayName(provider)}`
-        : `${models.length} ${pipeline === 'revision' ? 'reference-capable ' : ''}image model${models.length === 1 ? '' : 's'} available from ${providerDisplayName(provider)}${input.value.trim() ? ' · custom ID entered' : (pipeline === 'revision' ? ' · blank uses the new-image model when it supports revision' : '')}.`;
+        ? `${selected.name || selected.id} · ${selected.supportsReference === true ? 'reference capable' : 'reference support not advertised'} · ${ExperimentalWorldsHost.providerDisplayName(provider)}`
+        : `${models.length} ${pipeline === 'revision' ? 'reference-capable ' : ''}image model${models.length === 1 ? '' : 's'} available from ${ExperimentalWorldsHost.providerDisplayName(provider)}${input.value.trim() ? ' · custom ID entered' : (pipeline === 'revision' ? ' · blank uses the new-image model when it supports revision' : '')}.`;
 }
 
 const AI_FIELD_DESCRIPTORS = Object.freeze({
@@ -2512,9 +2512,9 @@ async function completeFieldWithAI(fieldKey, currentValue, entity, world, mode, 
         : mode === 'embellish'
             ? 'Enrich the existing text. Keep every fact already written and add specificity. Never contradict it.'
             : 'This field is empty. Write it from scratch using only what is established below.';
-    const model = String(state.globalSettings?.structuredModel || '').trim()
-        || world?.model || state.globalSettings?.defaultModel;
-    const body = applyOpenRouterRouting({
+    const model = String(ExperimentalWorldsState.globalSettings?.structuredModel || '').trim()
+        || world?.model || ExperimentalWorldsState.globalSettings?.defaultModel;
+    const body = ExperimentalWorldsHost.applyOpenRouterRouting({
         model,
         max_tokens: 700,
         messages: [
@@ -2533,9 +2533,9 @@ async function completeFieldWithAI(fieldKey, currentValue, entity, world, mode, 
             }
         ]
     }, world, { scope: 'utility' });
-    const response = await fetch(apiBase() + '/chat/completions', {
+    const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
         method: 'POST',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        headers: { ...ExperimentalWorldsHost.authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
     });
     if (!response.ok) throw new Error(`${response.status}: ${(await response.text()).slice(0, 160)}`);
@@ -2577,7 +2577,7 @@ function bindAiFieldButtons(root, getEntity, world, getInstruction = null) {
                 ? document.getElementById(btn.dataset.aiTarget)
                 : (wrap?.querySelector(`.${btn.dataset.aiField}`)
                     || document.getElementById(btn.dataset.aiField));
-            if (!input) return showToast('Could not find the field to fill.', 'error');
+            if (!input) return ExperimentalWorldsHost.notify('Could not find the field to fill.', 'error');
             const original = input.value;
             btn.disabled = true;
             const label = btn.textContent;
@@ -2588,9 +2588,9 @@ function bindAiFieldButtons(root, getEntity, world, getInstruction = null) {
                     getInstruction ? String(getInstruction() || '') : '');
                 input.value = text;
                 input.dispatchEvent(new Event('change', { bubbles: true }));
-                showToast('Field written. Review it, then Save World.', 'success');
+                ExperimentalWorldsHost.notify('Field written. Review it, then Save World.', 'success');
             } catch (error) {
-                showToast(`AI fill failed — ${error.message}`, 'error');
+                ExperimentalWorldsHost.notify(`AI fill failed — ${error.message}`, 'error');
             } finally {
                 btn.disabled = false;
                 btn.textContent = label;
@@ -2600,7 +2600,7 @@ function bindAiFieldButtons(root, getEntity, world, getInstruction = null) {
 }
 
 function renderWorldVisuals() {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     if (!world) return;
     const presentation = normalizeWorldPresentation(world);
     const byId = id => document.getElementById(id);
@@ -2684,7 +2684,7 @@ function renderWorldVisuals() {
     const presetSelect = byId('w-visual-guide-preset');
     const presetNameInput = byId('w-visual-guide-preset-name');
     const refreshGuidePresets = () => {
-        const presets = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets);
+        const presets = normalizeImageGuidePresets(ExperimentalWorldsState.globalSettings.imageGuidePresets);
         const names = Object.keys(presets).sort((a, b) => a.localeCompare(b));
         presetSelect.innerHTML = `<option value="">${names.length ? 'Choose a saved preset…' : 'No saved presets yet'}</option>`
             + names.map(name => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join('');
@@ -2709,14 +2709,14 @@ function renderWorldVisuals() {
             if (presetDescription) presetDescription.value = preset.description || '';
             if (presetAspect) presetAspect.value = preset.aspectRatio || '';
             if (presetFraming) presetFraming.value = preset.framing || '';
-            showToast(`Applied visual brief “${name}”. Aspect and framing apply per visual in the image editor.`, 'success');
+            ExperimentalWorldsHost.notify(`Applied visual brief “${name}”. Aspect and framing apply per visual in the image editor.`, 'success');
         };
         const savePresetButton = byId('w-visual-guide-preset-save');
         if (savePresetButton) savePresetButton.onclick = () => {
             const name = String(presetNameInput?.value || '').trim().slice(0, 80);
-            if (!name) return showToast('Name the preset before saving it.', 'error');
-            state.globalSettings.imageGuidePresets = {
-                ...normalizeImageGuidePresets(state.globalSettings.imageGuidePresets),
+            if (!name) return ExperimentalWorldsHost.notify('Name the preset before saving it.', 'error');
+            ExperimentalWorldsState.globalSettings.imageGuidePresets = {
+                ...normalizeImageGuidePresets(ExperimentalWorldsState.globalSettings.imageGuidePresets),
                 [name]: normalizeImageBriefPreset({
                     ...normalizeWorldImageGuide(presentation.imageGuide),
                     description: presetDescription?.value || '',
@@ -2724,22 +2724,22 @@ function renderWorldVisuals() {
                     framing: presetFraming?.value || ''
                 })
             };
-            persistGlobalSettingsOnly().catch(() => {});
+            ExperimentalWorldsHost.persistSharedSettings().catch(() => {});
             presets = refreshGuidePresets();
             presetSelect.value = name;
             presetNameInput.value = '';
-            showToast(`Saved visual brief “${name}” — look only, character data stays with the character.`, 'success');
+            ExperimentalWorldsHost.notify(`Saved visual brief “${name}” — look only, character data stays with the character.`, 'success');
         };
         const deletePresetButton = byId('w-visual-guide-preset-delete');
         if (deletePresetButton) deletePresetButton.onclick = () => {
             const name = presetSelect.value;
-            const next = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets);
-            if (!name || !next[name]) return showToast('Choose a saved preset to delete.', 'error');
+            const next = normalizeImageGuidePresets(ExperimentalWorldsState.globalSettings.imageGuidePresets);
+            if (!name || !next[name]) return ExperimentalWorldsHost.notify('Choose a saved preset to delete.', 'error');
             delete next[name];
-            state.globalSettings.imageGuidePresets = next;
-            persistGlobalSettingsOnly().catch(() => {});
+            ExperimentalWorldsState.globalSettings.imageGuidePresets = next;
+            ExperimentalWorldsHost.persistSharedSettings().catch(() => {});
             presets = refreshGuidePresets();
-            showToast(`Deleted visual brief “${name}”.`, 'success');
+            ExperimentalWorldsHost.notify(`Deleted visual brief “${name}”.`, 'success');
         };
     }
     byId('w-visual-accent').value = presentation.accent;
@@ -2765,9 +2765,9 @@ function renderWorldVisuals() {
             presentation.mapSkinAssetId = addWorldMediaAsset(world, image, 'map_skin', `${world.name} map skin`);
             pruneWorldMediaAssets(world);
             renderWorldVisuals();
-            showToast('Map skin embedded in this world.', 'success');
+            ExperimentalWorldsHost.notify('Map skin embedded in this world.', 'success');
         } catch (error) {
-            showToast(`Map skin upload failed: ${error.message}`, 'error');
+            ExperimentalWorldsHost.notify(`Map skin upload failed: ${error.message}`, 'error');
         } finally { event.target.value = ''; }
     };
     byId('w-visual-map-skin-generate').onclick = async event => {
@@ -2778,9 +2778,9 @@ function renderWorldVisuals() {
             presentation.mapSkinAssetId = await generateWorldMapSkin(world);
             pruneWorldMediaAssets(world);
             renderWorldVisuals();
-            showToast('Generated map skin embedded in this world.', 'success');
+            ExperimentalWorldsHost.notify('Generated map skin embedded in this world.', 'success');
         } catch (error) {
-            showToast(`Map skin generation failed: ${error.message}`, 'error');
+            ExperimentalWorldsHost.notify(`Map skin generation failed: ${error.message}`, 'error');
         } finally {
             button.disabled = false;
             button.textContent = '✨ Generate';
@@ -2846,16 +2846,16 @@ function renderWorldVisuals() {
             const button = event.currentTarget;
             const provider = worldVisualProvider(world, pipeline);
             if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
-                return showToast('Choose OpenRouter, GPTProto, NanoGPT or Fal to browse cloud image models.', 'info');
+                return ExperimentalWorldsHost.notify('Choose OpenRouter, GPTProto, NanoGPT or Fal to browse cloud image models.', 'info');
             }
             button.disabled = true;
             button.textContent = '↻ Loading…';
             try {
                 await renderWorldVisualModelSearch(world, pipeline, true);
                 modelInput.focus();
-                showToast(`${pipeline === 'revision' ? 'Reference-capable' : 'New image'} model catalog refreshed.`, 'success');
+                ExperimentalWorldsHost.notify(`${pipeline === 'revision' ? 'Reference-capable' : 'New image'} model catalog refreshed.`, 'success');
             } catch (error) {
-                showToast(`Image model catalog failed: ${error.message}`, 'error');
+                ExperimentalWorldsHost.notify(`Image model catalog failed: ${error.message}`, 'error');
             } finally {
                 button.disabled = false;
                 button.textContent = '↻ Refresh';
@@ -3092,7 +3092,7 @@ function upgradeWorldSchemaData(sourceWorld, { source = 'manual' } = {}) {
     let canonicalEntityRefs = 0;
     world.entities.forEach(entity => {
         entity.type = entity.type === 'item' ? 'item' : entity.type === 'vehicle' ? 'vehicle' : 'npc';
-        if (entity.type === 'vehicle') window.HordeSidecarTraversal?.normalizeVehicle(entity);
+        if (entity.type === 'vehicle') window.ExperimentalWorldsSidecarTraversal?.normalizeVehicle(entity);
         ['startLocation', 'homeLocation', 'vendorFor'].forEach(field => {
             const target = resolveLocation(entity[field]);
             if (target && entity[field] !== target.id) {
@@ -3213,7 +3213,7 @@ function normalizeWorldDirectoryData(world) {
         // regression where a PointerEvent was serialized into `type`.
         const authoredType = typeof entity.type === 'string' ? entity.type.trim().toLowerCase() : '';
         entity.type = ['item', 'object', 'prop'].includes(authoredType) ? 'item' : authoredType === 'vehicle' ? 'vehicle' : 'npc';
-        if (entity.type === 'vehicle') window.HordeSidecarTraversal?.normalizeVehicle(entity);
+        if (entity.type === 'vehicle') window.ExperimentalWorldsSidecarTraversal?.normalizeVehicle(entity);
         entity.persona = String(entity.persona || '').slice(0, 6000);
         const inferredDepth = entity.isMajor ? 'core'
             : (entity.persona || entity.goal || (entity.schedule || []).length ? 'recurring' : 'background');
@@ -3234,7 +3234,7 @@ function normalizeWorldDirectoryData(world) {
 }
 
 function worldDirectoryRecord(kind, id) {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     if (kind === 'region') return (world?.regions || []).find(item => item.id === id);
     if (kind === 'location') return (world?.locations || []).find(item => item.id === id);
     return (world?.entities || []).find(item => item.id === id);
@@ -3261,7 +3261,7 @@ function worldLocationDirectChildren(world, locationId) {
 }
 
 function worldDirectoryUsedBy(kind, id) {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     if (!world || !id) return [];
     const found = [];
     if (kind === 'region') {
@@ -3363,9 +3363,9 @@ function openWorldRecordInspector(kind, id, tab = '', directory = '') {
     overlay.setAttribute('aria-hidden', 'false');
     document.getElementById('world-record-kicker').textContent = kind === 'region' ? 'REGION' : kind === 'location' ? 'LOCATION' : record.type === 'item' ? 'ITEM' : 'PERSON';
     document.getElementById('world-record-title').textContent = record.name || (kind === 'region' ? 'New region' : kind === 'location' ? 'New location' : record.type === 'item' ? 'New item' : 'New person');
-    const locationLineage = kind === 'location' ? worldLocationLineage(state.editingWorld, record) : [];
+    const locationLineage = kind === 'location' ? worldLocationLineage(ExperimentalWorldsState.editingWorld, record) : [];
     document.getElementById('world-record-subtitle').textContent = kind === 'region'
-        ? `${(state.editingWorld?.locations || []).filter(location => location.regionId === record.id).length} locations · canonical link ${record.id}`
+        ? `${(ExperimentalWorldsState.editingWorld?.locations || []).filter(location => location.regionId === record.id).length} locations · canonical link ${record.id}`
         : kind === 'location'
         ? `${locationLineage.length ? `${locationLineage.map(place => place.name || place.id).join(' › ')} › ` : ''}${formatWorldMapType(record.mapType || inferWorldMapType(record))} · canonical link ${record.id}`
         : `${record.type === 'npc' ? 'Character' : 'World item'} · canonical link ${record.id}`;
@@ -3404,7 +3404,7 @@ function ensureWorldDirectoryState(world) {
 }
 
 function getWorldStudioListPage(kind, items, searchText) {
-    const worldId = state.editingWorld?.id || '';
+    const worldId = ExperimentalWorldsState.editingWorld?.id || '';
     if (worldStudioListState.worldId !== worldId) {
         worldStudioListState.worldId = worldId;
         worldStudioListState.locations = { query: '', page: 0 };
@@ -3424,7 +3424,7 @@ function appendWorldStudioListToolbar(container, kind, pageData, rerender, noun)
     toolbar.style.cssText = 'display:flex;gap:8px;align-items:center;position:sticky;top:0;z-index:4;padding:10px;margin-bottom:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;';
     toolbar.innerHTML = `
         <input class="form-input studio-list-search" style="flex:1" value="${escapeHTML(pageData.view.query)}" placeholder="Search ${escapeHTML(noun)}…">
-        <span class="form-hint" style="white-space:nowrap">${pageData.filtered.length} / ${state.editingWorld[kind].length}</span>
+        <span class="form-hint" style="white-space:nowrap">${pageData.filtered.length} / ${ExperimentalWorldsState.editingWorld[kind].length}</span>
         <button class="tool-btn studio-page-prev" ${pageData.view.page === 0 ? 'disabled' : ''}>←</button>
         <span class="form-hint" style="white-space:nowrap">${pageData.view.page + 1} / ${pageData.pages}</span>
         <button class="tool-btn studio-page-next" ${pageData.view.page >= pageData.pages - 1 ? 'disabled' : ''}>→</button>`;
@@ -3567,7 +3567,7 @@ function renderWorldRegionLocationTreeHTML(world, locations) {
 }
 
 function renderWorldRegionInspector() {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     const region = worldDirectoryRecord('region', worldRecordInspector.id);
     const container = document.getElementById('world-record-body');
     if (!world || !region || !container) return closeWorldRecordInspector();
@@ -3614,7 +3614,7 @@ function renderWorldRegionInspector() {
     container.querySelector('.travel-connect').onclick = () => {
         const origin = getLocationRef(world, container.querySelector('.travel-origin').value);
         const target = getLocationRef(world, container.querySelector('.travel-target').value);
-        if (!origin || !target) return showToast('Choose both a departure and destination location.', 'error');
+        if (!origin || !target) return ExperimentalWorldsHost.notify('Choose both a departure and destination location.', 'error');
         upsertWorldTravelConnection(world, origin, target, {
             mode: container.querySelector('.travel-mode').value,
             travelTime: container.querySelector('.travel-minutes').value,
@@ -3623,7 +3623,7 @@ function renderWorldRegionInspector() {
             isOneWay: container.querySelector('.travel-one-way input').checked
         });
         renderWorldRegionInspector(); setWorldInspectorTab('travel');
-        showToast('Travel connection added.', 'success');
+        ExperimentalWorldsHost.notify('Travel connection added.', 'success');
     };
     container.querySelectorAll('[data-remove-region-travel]').forEach(button => button.onclick = () => {
         const [originId, index] = button.dataset.removeRegionTravel.split(':');
@@ -3773,7 +3773,7 @@ function renderWorldLocationDirectory(world, container) {
 }
 
 function renderWorldLocations() {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     if (!world) return;
     normalizeAuthoredWorld(world);   // a malformed shop must not break the panel
     const inspecting = worldRecordInspector.kind === 'location' && worldRecordInspector.id;
@@ -4076,9 +4076,9 @@ function renderWorldLocations() {
                     pruneWorldMediaAssets(world);
                     renderWorldLocations();
                     openWorldVisualEditor(world, loc, 'location');
-                    showToast(`Background added to ${loc.name}. Frame and crop it before closing the editor.`, 'success');
+                    ExperimentalWorldsHost.notify(`Background added to ${loc.name}. Frame and crop it before closing the editor.`, 'success');
                 } catch (error) {
-                    showToast(`Background upload failed: ${error.message}`, 'error');
+                    ExperimentalWorldsHost.notify(`Background upload failed: ${error.message}`, 'error');
                 } finally { event.target.value = ''; }
             };
             div.querySelector('.loc-background-generate').onclick = () => openWorldVisualEditor(world, loc, 'location');
@@ -4195,7 +4195,7 @@ function renderWorldLocations() {
                 locationIdInput.readOnly = false;
                 locationIdInput.focus();
                 locationIdInput.select();
-                showToast('Changing an internal ID can affect saved sessions. Linked world records will be updated automatically.', 'info');
+                ExperimentalWorldsHost.notify('Changing an internal ID can affect saved sessions. Linked world records will be updated automatically.', 'info');
             };
             locationIdInput.onchange = (e) => {
                 const oldId = (loc.id || "").trim();
@@ -4208,7 +4208,7 @@ function renderWorldLocations() {
                 try {
                     renameWorldLocationId(world, loc, newId);
                 } catch (error) {
-                    showToast(error.message, 'error');
+                    ExperimentalWorldsHost.notify(error.message, 'error');
                     e.target.value = oldId;
                     e.target.readOnly = true;
                     return;
@@ -4437,9 +4437,9 @@ function renderWorldLocations() {
             div.querySelector('.del-loc').onclick = () => {
                 const usedBy = worldDirectoryUsedBy('location', loc.id);
                 if (usedBy.length && !confirm(`“${loc.name || loc.id}” is linked from ${usedBy.length} world record${usedBy.length === 1 ? '' : 's'}:\n\n${usedBy.slice(0, 8).join('\n')}\n\nDelete it and clear those links?`)) return;
-                removeWorldLocationRecord(state.editingWorld, loc.id);
+                removeWorldLocationRecord(ExperimentalWorldsState.editingWorld, loc.id);
                 // Nobody holds ground that no longer exists, and nobody sells there.
-                normalizeAuthoredWorld(state.editingWorld);
+                normalizeAuthoredWorld(ExperimentalWorldsState.editingWorld);
                 closeWorldRecordInspector();
                 renderWorldLocations();
                 renderWorldEntities();
@@ -4448,7 +4448,7 @@ function renderWorldLocations() {
             };
 
             div.querySelector('.set-start-btn').onclick = () => {
-                state.editingWorld.startLocationId = loc.id;
+                ExperimentalWorldsState.editingWorld.startLocationId = loc.id;
                 renderWorldLocations();
             };
 
@@ -4485,9 +4485,9 @@ function addWorldEntity(type = 'npc') {
     };
     if (entityType === 'vehicle') {
         ent.vehicle = { persistent: true, parkedAnchorId: '', owners: [], access: [], runtimeContainer: false };
-        window.HordeSidecarTraversal?.normalizeVehicle(ent);
+        window.ExperimentalWorldsSidecarTraversal?.normalizeVehicle(ent);
     }
-    state.editingWorld.entities.push(ent);
+    ExperimentalWorldsState.editingWorld.entities.push(ent);
     const directory = entityType === 'npc' ? 'people' : 'items';
     worldStudioListState[directory].query = '';
     worldStudioListState[directory].page = 0;
@@ -4528,7 +4528,7 @@ function renderWorldSecrets(owner, container) {
 }
 
 function updateWorldTokenCount() {
-    const w = state.editingWorld;
+    const w = ExperimentalWorldsState.editingWorld;
     if (!w) return;
     
     const name = document.getElementById('w-studio-name').value;
@@ -5560,7 +5560,7 @@ function renderSemanticWorldMap(container, world, options = {}) {
 }
 
 function renderWorldArchitectMap() {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     const container = document.getElementById('world-visual-canvas');
     if (!world || !container) return;
     renderSemanticWorldMap(container, world, {
@@ -5659,7 +5659,7 @@ function renderWorldEntityDirectory(world, container, mode = 'people') {
 }
 
 function ensureWorldTraversalConfig(world) {
-    const config = window.HordeSidecarTraversal?.normalizeWorldTraversal?.(world);
+    const config = window.ExperimentalWorldsSidecarTraversal?.normalizeWorldTraversal?.(world);
     if (config) return config;
     if (!world.traversalConfig || typeof world.traversalConfig !== 'object') {
         world.traversalConfig = { schemaVersion: 1, methods: [] };
@@ -5669,7 +5669,7 @@ function ensureWorldTraversalConfig(world) {
 }
 
 function addWorldTraversalMethod() {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     if (!world) return;
     const config = ensureWorldTraversalConfig(world);
     config.methods.push({
@@ -5681,7 +5681,7 @@ function addWorldTraversalMethod() {
 }
 
 function renderWorldTravel() {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     if (!world) return;
     const methodsHost = document.getElementById('w-traversal-methods-list');
     const vehiclesHost = document.getElementById('w-vehicles-list');
@@ -5732,7 +5732,7 @@ function renderWorldTravel() {
     const vehicles = (world.entities || []).filter(entity => entity.type === 'vehicle');
     if (vehiclesHost) {
         vehiclesHost.innerHTML = vehicles.length ? vehicles.map((vehicle, index) => {
-            const data = window.HordeSidecarTraversal?.normalizeVehicle?.(vehicle) || vehicle.vehicle || {};
+            const data = window.ExperimentalWorldsSidecarTraversal?.normalizeVehicle?.(vehicle) || vehicle.vehicle || {};
             const owner = (world.entities || []).find(entity => entity.id === data.ownerEntityId);
             return `<div class="world-inspector-section" data-vehicle-index="${index}" style="padding:14px; border:1px solid var(--border); border-radius:10px;">
                 <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 180px; gap:8px; align-items:center;"><strong>${escapeHTML(vehicle.name || 'Unnamed vehicle')}</strong><span class="form-hint">${data.persistent === false ? 'Runtime/staged' : 'Persistent entity'}</span><span class="form-hint">Owner: ${escapeHTML(owner?.name || data.ownerEntityId || 'none')}</span></div>
@@ -5751,7 +5751,7 @@ function renderWorldTravel() {
         vehiclesHost.querySelectorAll('[data-vehicle-index]').forEach(card => {
             const vehicle = vehicles[Number(card.dataset.vehicleIndex)];
             const update = () => {
-                const data = window.HordeSidecarTraversal?.normalizeVehicle?.(vehicle) || (vehicle.vehicle = {});
+                const data = window.ExperimentalWorldsSidecarTraversal?.normalizeVehicle?.(vehicle) || (vehicle.vehicle = {});
                 data.parkedAnchorId = card.querySelector('.vehicle-anchor').value;
                 data.ownerEntityId = card.querySelector('.vehicle-owner').value.trim().slice(0, 160);
                 data.access = card.querySelector('.vehicle-access').value.split(',').map(value => value.trim()).filter(Boolean).slice(0, 80).map(entityId => ({ entityId, role: entityId === data.ownerEntityId ? 'owner' : 'guest' }));
@@ -5765,8 +5765,8 @@ function renderWorldTravel() {
             card.querySelectorAll('input, textarea, select').forEach(input => input.addEventListener(input.type === 'checkbox' || input.tagName === 'SELECT' ? 'change' : 'input', update));
         });
     }
-    const sessions = state.worldInstances?.[world.id]?.sessions || [];
-    const journeys = sessions.flatMap(session => ((window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, session)?.traversalState?.journeys) || []).map(journey => ({ ...journey, sessionName: session.name || session.id }))).slice(-40).reverse();
+    const sessions = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
+    const journeys = sessions.flatMap(session => ((window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, session)?.traversalState?.journeys) || []).map(journey => ({ ...journey, sessionName: session.name || session.id }))).slice(-40).reverse();
     if (journeysHost) journeysHost.innerHTML = journeys.length ? journeys.map(journey => `<div style="padding:10px 12px; border:1px solid var(--border); border-radius:8px;"><strong>${escapeHTML(journey.status || 'prepared')}</strong> · ${escapeHTML(journey.sessionName)} · ${escapeHTML(journey.methodId || 'untyped journey')}<br><span class="form-hint">${escapeHTML(locationName(journey.originAnchorId))} → ${escapeHTML(locationName(journey.destinationAnchorId))} · occupants: ${escapeHTML((journey.occupants || []).join(', ') || 'none')} ${journey.runtimeContainer ? `· runtime ${escapeHTML(journey.runtimeContainer.kind || 'vehicle')}` : ''}</span></div>`).join('') : '<div class="form-hint">No journeys have been staged or completed in this world yet.</div>';
 }
 
@@ -5775,7 +5775,7 @@ function renderWorldItems() {
 }
 
 function renderWorldEntities(mode = 'people') {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     if (!world) return;
     normalizeAuthoredWorld(world);   // a malformed relationship list must not break the panel
     const inspecting = worldRecordInspector.kind === 'entity' && worldRecordInspector.id;
@@ -5932,7 +5932,7 @@ function renderWorldEntities(mode = 'people') {
                     <label style="display:block; font-size: 10px; color: var(--text-3); margin-bottom: 2px;">Sells at <span style="opacity:0.7;">(vendor)</span></label>
                     <select class="form-select ent-vendor">
                         <option value="">Not a vendor</option>
-                        ${(state.editingWorld.locations || []).map(location => `
+                        ${(ExperimentalWorldsState.editingWorld.locations || []).map(location => `
                             <option value="${escapeHTML(location.id)}" ${ent.vendorFor === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}${(location.shop || []).length ? ` (${location.shop.length})` : ' — no shop yet'}</option>`).join('')}
                     </select>
                 </div>
@@ -5940,7 +5940,7 @@ function renderWorldEntities(mode = 'people') {
                     <label style="display:block; font-size: 10px; color: var(--text-3); margin-bottom: 2px;">Belongs to <span style="opacity:0.7;">(faction)</span></label>
                     <select class="form-select ent-faction">
                         <option value="">Unaffiliated</option>
-                        ${(state.editingWorld.factions || []).map(faction => `
+                        ${(ExperimentalWorldsState.editingWorld.factions || []).map(faction => `
                             <option value="${escapeHTML(faction.id)}" ${ent.factionId === faction.id ? 'selected' : ''}>${escapeHTML(faction.name || faction.id)}</option>`).join('')}
                     </select>
                 </div>
@@ -5985,15 +5985,15 @@ function renderWorldEntities(mode = 'people') {
                     <div class="secret-title" style="color:var(--text-2);">🫱 Standing with others</div>
                     <select class="form-select ent-add-relation" style="max-width:200px; font-size:11px; padding:3px 6px;">
                         <option value="">+ Add someone…</option>
-                        ${(state.editingWorld.entities || [])
+                        ${(ExperimentalWorldsState.editingWorld.entities || [])
                             .filter(other => other.type === 'npc' && other.id !== ent.id
-                                && !(state.editingWorld.relationships || []).some(rel =>
+                                && !(ExperimentalWorldsState.editingWorld.relationships || []).some(rel =>
                                     relationshipKey(rel.a, rel.b) === relationshipKey(ent.id, other.id)))
                             .map(other => `<option value="${escapeHTML(other.id)}">${escapeHTML(other.name || other.id)}</option>`).join('')}
                     </select>
                 </div>
                 ${(() => {
-                    const mine = (state.editingWorld.relationships || [])
+                    const mine = (ExperimentalWorldsState.editingWorld.relationships || [])
                         .map((rel, relIdx) => ({ rel, relIdx }))
                         .filter(({ rel }) => rel.a === ent.id || rel.b === ent.id);
                     if (!mine.length) {
@@ -6001,7 +6001,7 @@ function renderWorldEntities(mode = 'people') {
                     }
                     return mine.map(({ rel, relIdx }) => {
                         const otherId = rel.a === ent.id ? rel.b : rel.a;
-                        const other = (state.editingWorld.entities || []).find(e => e.id === otherId);
+                        const other = (ExperimentalWorldsState.editingWorld.entities || []).find(e => e.id === otherId);
                         return `
                         <div style="display:grid; grid-template-columns:1.1fr 1fr 1.6fr 70px auto; gap:6px; align-items:center; margin-bottom:5px;">
                             <div style="font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(other?.name || otherId)}</div>
@@ -6070,21 +6070,21 @@ function renderWorldEntities(mode = 'people') {
                     pruneWorldMediaAssets(world);
                     renderWorldEntities();
                     openWorldVisualEditor(world, ent, 'npc');
-                    showToast(`Portrait added to ${ent.name}. Frame and crop it before closing the editor.`, 'success');
+                    ExperimentalWorldsHost.notify(`Portrait added to ${ent.name}. Frame and crop it before closing the editor.`, 'success');
                 } catch (error) {
-                    showToast(`Portrait upload failed: ${error.message}`, 'error');
+                    ExperimentalWorldsHost.notify(`Portrait upload failed: ${error.message}`, 'error');
                 } finally { event.target.value = ''; }
             };
             div.querySelector('.ent-portrait-generate').onclick = () => openWorldVisualEditor(world, ent, 'npc');
             div.querySelectorAll('.ent-add-outfit').forEach(button => button.onclick = () => {
                 const outfit = createBlankWorldOutfit(ent);
-                if (!outfit) return showToast('This character already has the maximum number of outfits.', 'error');
+                if (!outfit) return ExperimentalWorldsHost.notify('This character already has the maximum number of outfits.', 'error');
                 renderWorldEntities();
                 const outfitRegion = [...document.querySelectorAll('.world-inline-outfits')].find(node => node.dataset.entityId === ent.id);
                 const outfitList = outfitRegion?.querySelector('.world-inline-outfit-list');
                 scrollWorldOutfitListToEnd(outfitList, 'horizontal');
                 focusWorldOutfitName(outfitList, outfit.id, 'horizontal');
-                showToast('Blank outfit added. Fill in its title and description inline.', 'success');
+                ExperimentalWorldsHost.notify('Blank outfit added. Fill in its title and description inline.', 'success');
             });
             div.querySelectorAll('.world-inline-outfit-editor').forEach(card => {
                 const outfit = worldOutfits(ent).find(entry => entry.id === card.dataset.outfitId);
@@ -6194,7 +6194,7 @@ div.querySelector('.ent-simulation-depth').onchange = (e) => {
             div.querySelectorAll('.ent-vehicle-owned').forEach(input => input.onchange = event => {
                 const vehicle = world.entities.find(candidate => candidate.id === event.target.dataset.vehicleId && candidate.type === 'vehicle');
                 if (!vehicle) return;
-                window.HordeSidecarTraversal?.normalizeVehicle(vehicle);
+                window.ExperimentalWorldsSidecarTraversal?.normalizeVehicle(vehicle);
                 const owners = Array.isArray(vehicle.vehicle.owners) ? vehicle.vehicle.owners : [];
                 vehicle.vehicle.owners = event.target.checked
                     ? [...owners.filter(entry => (entry.entityId || entry) !== ent.id), { entityId: ent.id, role: 'owner' }]
@@ -6205,7 +6205,7 @@ div.querySelector('.ent-simulation-depth').onchange = (e) => {
             div.querySelectorAll('.ent-vehicle-access-grant').forEach(input => input.onchange = event => {
                 const vehicle = world.entities.find(candidate => candidate.id === event.target.dataset.vehicleId && candidate.type === 'vehicle');
                 if (!vehicle) return;
-                window.HordeSidecarTraversal?.normalizeVehicle(vehicle);
+                window.ExperimentalWorldsSidecarTraversal?.normalizeVehicle(vehicle);
                 const access = Array.isArray(vehicle.vehicle.access) ? vehicle.vehicle.access : [];
                 vehicle.vehicle.access = event.target.checked
                     ? [...access.filter(entry => (entry.entityId || entry) !== ent.id), { entityId: ent.id, role: 'granted' }]
@@ -6230,7 +6230,7 @@ div.querySelector('.ent-simulation-depth').onchange = (e) => {
             div.querySelector('.ent-create-group').onclick = () => {
                 const nameInput = div.querySelector('.ent-new-group-name');
                 const name = nameInput.value.trim();
-                if (!name) return showToast('Name the household or group first.', 'info');
+                if (!name) return ExperimentalWorldsHost.notify('Name the household or group first.', 'info');
                 const type = div.querySelector('.ent-new-group-type').value;
                 const base = `grp_${worldDirectorySlug(name, 'group')}`;
                 let id = base;
@@ -6245,12 +6245,12 @@ div.querySelector('.ent-simulation-depth').onchange = (e) => {
             div.querySelector('.ent-add-relation').onchange = (e) => {
                 const otherId = e.target.value;
                 if (!otherId) return;
-                if (!Array.isArray(state.editingWorld.relationships)) state.editingWorld.relationships = [];
-                state.editingWorld.relationships.push({ a: ent.id, b: otherId, label: '', score: 0, reason: '' });
+                if (!Array.isArray(ExperimentalWorldsState.editingWorld.relationships)) ExperimentalWorldsState.editingWorld.relationships = [];
+                ExperimentalWorldsState.editingWorld.relationships.push({ a: ent.id, b: otherId, label: '', score: 0, reason: '' });
                 renderWorldEntities();   // the pair now shows on both cards
                 updateWorldTokenCount();
             };
-            const relationAt = event => (state.editingWorld.relationships || [])[Number(event.target.dataset.rel)];
+            const relationAt = event => (ExperimentalWorldsState.editingWorld.relationships || [])[Number(event.target.dataset.rel)];
             div.querySelectorAll('.rel-label').forEach(input => {
                 input.oninput = (e) => {
                     const relation = relationAt(e);
@@ -6268,8 +6268,8 @@ div.querySelector('.ent-simulation-depth').onchange = (e) => {
             });
             div.querySelectorAll('.del-rel').forEach(button => {
                 button.onclick = () => {
-                    (state.editingWorld.relationships || []).splice(Number(button.dataset.rel), 1);
-                    if (!state.editingWorld.relationships.length) delete state.editingWorld.relationships;
+                    (ExperimentalWorldsState.editingWorld.relationships || []).splice(Number(button.dataset.rel), 1);
+                    if (!ExperimentalWorldsState.editingWorld.relationships.length) delete ExperimentalWorldsState.editingWorld.relationships;
                     renderWorldEntities();
                     updateWorldTokenCount();
                 };
@@ -6286,7 +6286,7 @@ div.querySelector('.ent-simulation-depth').onchange = (e) => {
         const homeControl = div.querySelector('.ent-home');
         if (homeControl) homeControl.onchange = (e) => { ent.homeLocation = e.target.value; updateWorldTokenCount(); };
         if (ent.type === 'vehicle') {
-            const normalizeVehicle = () => window.HordeSidecarTraversal?.normalizeVehicle(ent);
+            const normalizeVehicle = () => window.ExperimentalWorldsSidecarTraversal?.normalizeVehicle(ent);
             div.querySelector('.ent-vehicle-anchor').onchange = event => { ent.vehicle.parkedAnchorId = event.target.value; ent.startLocation = event.target.value; normalizeVehicle(); };
             div.querySelector('.ent-vehicle-access').onchange = event => {
                 ent.vehicle.access = [...new Set(event.target.value.split(',').map(value => value.trim()).filter(Boolean))].slice(0, 30).map(entityId => ({ entityId, role: 'owner_or_granted' }));
@@ -6297,10 +6297,10 @@ div.querySelector('.ent-simulation-depth').onchange = (e) => {
         div.querySelector('.del-ent').onclick = () => {
             const usedBy = worldDirectoryUsedBy('entity', ent.id);
             if (usedBy.length && !confirm(`“${ent.name || ent.id}” has ${usedBy.length} authored connection${usedBy.length === 1 ? '' : 's'}:\n\n${usedBy.slice(0, 8).join('\n')}\n\nDelete this record and clear those connections?`)) return;
-            state.editingWorld.entities.splice(idx, 1);
+            ExperimentalWorldsState.editingWorld.entities.splice(idx, 1);
             // Their standings and their faction membership go with them, or the
             // other cards would list a relationship with a raw id.
-            normalizeAuthoredWorld(state.editingWorld);
+            normalizeAuthoredWorld(ExperimentalWorldsState.editingWorld);
             closeWorldRecordInspector();
             renderWorldEntities();
             renderWorldFactions();
@@ -6332,11 +6332,11 @@ function factionRelationLabel(score) {
 }
 
 function addWorldFaction(position = 'top') {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     if (!world) return;
     if (!Array.isArray(world.factions)) world.factions = [];
     if (world.factions.length >= 200) {
-        showToast('200 factions is the limit for one world.', 'error');
+        ExperimentalWorldsHost.notify('200 factions is the limit for one world.', 'error');
         return;
     }
     const faction = normalizeWorldFaction({ name: `New Faction ${world.factions.length + 1}` }, world.factions.length);
@@ -6351,7 +6351,7 @@ function addWorldFaction(position = 'top') {
 }
 
 function renderWorldFactions() {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     const container = document.getElementById('w-factions-list');
     if (!world || !container) return;
     // The editor draws whatever is in memory, and that can arrive from an
@@ -6580,7 +6580,7 @@ function renderWorldFactions() {
 }
 
 function addWorldStartingLife() {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     if (!world) return;
     normalizeWorldSandboxConfig(world);
     world.startingLives.push({
@@ -6609,7 +6609,7 @@ function addWorldStartingLife() {
 }
 
 function renderWorldSandboxStudio() {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     const list = document.getElementById('w-world-origins-list');
     if (!world || !list) return;
     const config = normalizeWorldSandboxConfig(world);
@@ -6672,7 +6672,7 @@ function renderWorldSandboxStudio() {
                 <select class="form-select origin-faction"><option value="">No starting allegiance</option>${factionOptions}</select>
                 <input class="form-input origin-faction-rep" type="number" min="-100" max="100" value="${life.factionReputation}" placeholder="Faction reputation">
                 <textarea class="form-textarea origin-desc origin-wide" rows="2" placeholder="What this life feels like and what makes its opening distinct.">${escapeHTML(life.description)}</textarea>
-                <input class="form-input origin-inventory origin-wide" value="${escapeHTML((life.inventory || []).map(item => globalThis.HordeRpgMechanics?.itemName(item) || String(item || '')).filter(Boolean).join(', '))}" placeholder="Starting possessions, comma separated">
+                <input class="form-input origin-inventory origin-wide" value="${escapeHTML((life.inventory || []).map(item => globalThis.ExperimentalWorldsRpgMechanics?.itemName(item) || String(item || '')).filter(Boolean).join(', '))}" placeholder="Starting possessions, comma separated">
                 ${statControls}
                 <textarea class="form-textarea origin-obligations" rows="3" placeholder="Obligations, one per line">${escapeHTML((life.obligations || []).join('\n'))}</textarea>
                 <textarea class="form-textarea origin-privileges" rows="3" placeholder="Privileges, one per line">${escapeHTML((life.privileges || []).join('\n'))}</textarea>
@@ -6783,8 +6783,8 @@ function addWorldLore() {
         keyword: 'New Topic',
         text: 'Information about this topic...'
     };
-    state.editingWorld.lorebook = state.editingWorld.lorebook || [];
-    state.editingWorld.lorebook.push(entry);
+    ExperimentalWorldsState.editingWorld.lorebook = ExperimentalWorldsState.editingWorld.lorebook || [];
+    ExperimentalWorldsState.editingWorld.lorebook.push(entry);
     renderWorldLore();
 }
 
@@ -6806,16 +6806,16 @@ function renderWorldLore() {
             const reader = new FileReader();
             reader.onload = (ev) => {
                 try {
-                    const result = importStWorldInfoPack(state.editingWorld, JSON.parse(ev.target.result));
+                    const result = importStWorldInfoPack(ExperimentalWorldsState.editingWorld, JSON.parse(ev.target.result));
                     if (result.error) {
-                        showToast(`Import failed: ${result.error}`, 'error');
+                        ExperimentalWorldsHost.notify(`Import failed: ${result.error}`, 'error');
                         return;
                     }
-                    showToast(`Imported ${result.added} lore entries (${result.skipped} skipped).`, 'success');
+                    ExperimentalWorldsHost.notify(`Imported ${result.added} lore entries (${result.skipped} skipped).`, 'success');
                     renderWorldLore();
                     updateWorldTokenCount();
                 } catch (err) {
-                    showToast(`Import failed: ${err.message}`, 'error');
+                    ExperimentalWorldsHost.notify(`Import failed: ${err.message}`, 'error');
                 }
             };
             reader.readAsText(file);
@@ -6824,7 +6824,7 @@ function renderWorldLore() {
     };
     container.appendChild(importBar);
     
-    const entries = state.editingWorld.lorebook || [];
+    const entries = ExperimentalWorldsState.editingWorld.lorebook || [];
     entries.forEach((entry, idx) => {
         const div = document.createElement('div');
         div.className = 'studio-card';
@@ -6842,7 +6842,7 @@ function renderWorldLore() {
         div.querySelector('.lore-key').oninput = (e) => entry.keyword = e.target.value;
         div.querySelector('.lore-text').oninput = (e) => entry.text = e.target.value;
         div.querySelector('.del-lore').onclick = () => {
-            state.editingWorld.lorebook.splice(idx, 1);
+            ExperimentalWorldsState.editingWorld.lorebook.splice(idx, 1);
             renderWorldLore();
         };
 
@@ -6851,7 +6851,7 @@ function renderWorldLore() {
 }
 
 function addWorldStat() {
-    const w = state.editingWorld;
+    const w = ExperimentalWorldsState.editingWorld;
     if (!w) return;
     w.hudConfig.stats = w.hudConfig.stats || [];
     w.hudConfig.stats.push({
@@ -6864,7 +6864,7 @@ function addWorldStat() {
 }
 
 function worldItemModifierLines(item) {
-    const modifiers = globalThis.HordeRpgMechanics?.modifiers(item?.modifiers || {}) || {};
+    const modifiers = globalThis.ExperimentalWorldsRpgMechanics?.modifiers(item?.modifiers || {}) || {};
     const lines = [];
     ['checks', 'damage', 'armor'].forEach(key => { if (Number(modifiers[key])) lines.push(`${key}=${modifiers[key]}`); });
     ['attributes', 'skills', 'stats', 'defenses', 'resources'].forEach(group => {
@@ -6901,21 +6901,21 @@ function parseSequencePlanningPacket(content, fallback = {}) {
 }
 
 async function requestSequencePlanningPacket(world, sess, authorIntent, options = {}) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) throw new Error('Sidecar protocol is unavailable for this timeline.');
-    const planning = window.HordeSidecarTimeline?.beginPlanning(protocol, sess, authorIntent);
+    const planning = window.ExperimentalWorldsSidecarTimeline?.beginPlanning(protocol, sess, authorIntent);
     if (!planning) throw new Error('Sequence planning is unavailable.');
     const currentPacket = buildSidecarScenePacket(world, sess);
-    const model = world.model || state.globalSettings.defaultModel;
+    const model = world.model || ExperimentalWorldsState.globalSettings.defaultModel;
     const prompt = `[SEQUENCE PLANNING — OUT OF WORLD]\nYou are helping the author plan the next sequence in an ongoing roleplay world. This is not narration and must not advance time, move actors, create state, or resolve open questions. Reconstruct only the constraints that matter for the requested cut. A continuous transition keeps the current dramatic beat; a discontinuous transition requires an establishing beat. Return one JSON object only:\n{\n  "title":"short sequence title",\n  "sceneTitle":"short immediate scene title",\n  "transitionMode":"continuous|discontinuous",\n  "continuity":"compact narrator-facing continuity direction",\n  "constraints":["established facts to preserve"],\n  "openQuestions":["relevant unresolved questions"]\n}\n\nCURRENT CANONICAL SCENE PACKET:\n${JSON.stringify(currentPacket)}\n\nOPEN QUESTIONS:\n${JSON.stringify((protocol.questions || []).filter(question => question.status === 'open').slice(-20))}\n\nAUTHOR'S DESIRED CUT:\n${JSON.stringify(String(authorIntent || '').slice(0, 4000))}`;
     const body = {
         model, stream: false, max_tokens: Math.max(500, Number(world.maxTokens) || 1200), temperature: 0.2,
         messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Prepare the sequence planning packet.' }]
     };
-    const response = await fetch(apiBase() + '/chat/completions', {
+    const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
         method: 'POST', signal: options.signal,
-        headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
-        body: JSON.stringify(applyOpenRouterRouting(body, world, { scope: 'world' }))
+        headers: { ...ExperimentalWorldsHost.authHeaders(), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.attributionHeaders() },
+        body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting(body, world, { scope: 'world' }))
     });
     if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sequence planning failed (${response.status})`);
     const reply = (await response.json())?.choices?.[0]?.message?.content || '';
@@ -6930,33 +6930,33 @@ async function requestSequencePlanningPacket(world, sess, authorIntent, options 
 }
 
 async function requestSequenceClosureReconciliation(world, sess, options = {}) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-    const hierarchy = protocol && window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false });
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const hierarchy = protocol && window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false });
     if (!protocol || !hierarchy?.sequence) throw new Error('No active Sidecar sequence.');
     const sequence = hierarchy.sequence;
     const packet = buildSidecarScenePacket(world, sess);
     const questions = (protocol.questions || []).filter(question => ['open', 'deferred'].includes(question.status));
     const prompt = `[SEQUENCE CLOSURE RECONCILIATION]\nReview whether the active sequence can close without inventing facts. Return JSON only: {"status":"ready|blocked|needs_author","summary":"short reconciliation result","blockingQuestionIds":["stable IDs"],"questions":[{"id":"stable ID","prompt":"authorial question","blocking":true}],"provisionalReview":"what remains implicit"}. A closure must preserve canonical state, unresolved questions, provisional entities/locations, and pending jobs. Do not mutate state.\n\nSEQUENCE: ${JSON.stringify(sequence)}\nSCENE PACKET: ${JSON.stringify(packet)}\nOPEN QUESTIONS: ${JSON.stringify(questions.slice(-30))}`;
-    const model = world.model || state.globalSettings.defaultModel;
-    const response = await fetch(apiBase() + '/chat/completions', { method: 'POST', signal: options.signal, headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() }, body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: 1000, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Reconcile sequence closure.' }] }, world, { scope: 'sidecar' })) });
+    const model = world.model || ExperimentalWorldsState.globalSettings.defaultModel;
+    const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', { method: 'POST', signal: options.signal, headers: { ...ExperimentalWorldsHost.authHeaders(), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.attributionHeaders() }, body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({ model, max_tokens: 1000, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Reconcile sequence closure.' }] }, world, { scope: 'sidecar' })) });
     if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sequence closure failed (${response.status})`);
     const parsed = safeParseJSONRepair((await response.json())?.choices?.[0]?.message?.content || '{}') || {};
     const reconciliation = { status: ['ready', 'blocked', 'needs_author'].includes(parsed.status) ? parsed.status : 'needs_author', summary: String(parsed.summary || '').slice(0, 2000), blockingQuestionIds: Array.isArray(parsed.blockingQuestionIds) ? parsed.blockingQuestionIds.slice(0, 30) : [], provisionalReview: String(parsed.provisionalReview || '').slice(0, 1200), generatedAt: new Date().toISOString(), provenance: { source: 'sequence_closure_reconciliation', model } };
     sequence.closure = { ...(sequence.closure || {}), reconciliation };
     (Array.isArray(parsed.questions) ? parsed.questions : []).slice(0, 8).forEach(question => queueSidecarQuestion(world, sess, question.prompt || 'Closure clarification required.', reconciliation.summary, { id: question.id || '', origin: 'sequence_closure', target: 'user', priority: question.blocking ? 'high' : 'medium', blocking: question.blocking === true, scope: 'sequence', sequenceId: sequence.id }));
     recordSidecarTrace(world, sess, { kind: 'sequence_closure_reconciliation', prompt, reply: parsed, model });
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     return reconciliation;
 }
 
 async function requestSceneBoundaryReview(world, sess, options = {}) {
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-    const hierarchy = protocol && window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false });
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const hierarchy = protocol && window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false });
     if (!protocol || !hierarchy?.scene) throw new Error('No active Sidecar scene.');
     const packet = buildSidecarScenePacket(world, sess);
-    const model = world.model || state.globalSettings.defaultModel;
+    const model = world.model || ExperimentalWorldsState.globalSettings.defaultModel;
     const prompt = `[SCENE BOUNDARY REVIEW]\nDetermine whether a material circumstance change warrants proposing a new scene. Do not mutate canon. Return JSON only: {"shouldClose":true|false,"title":"short title","mode":"continuous|discontinuous","evidence":"why","questionIds":["existing IDs"]}. A scene boundary is a proposal for author review, never an automatic close.\nREASON: ${String(options.reason || 'author requested review').slice(0, 500)}\nPACKET: ${JSON.stringify(packet)}\nRECENT TURNS: ${JSON.stringify((protocol.turns || []).slice(-8).map(turn => ({ id: turn.id, narration: String(turn.narration || '').slice(0, 1000), sceneId: turn.sceneId })))} `;
-    const response = await fetch(apiBase() + '/chat/completions', { method: 'POST', signal: options.signal, headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() }, body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: 700, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Review the current scene boundary.' }] }, world, { scope: 'sidecar' })) });
+    const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', { method: 'POST', signal: options.signal, headers: { ...ExperimentalWorldsHost.authHeaders(), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.attributionHeaders() }, body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({ model, max_tokens: 700, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Review the current scene boundary.' }] }, world, { scope: 'sidecar' })) });
     if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Scene review failed (${response.status})`);
     const parsed = safeParseJSONRepair((await response.json())?.choices?.[0]?.message?.content || '{}') || {};
     const review = { id: `scene_review_${Date.now().toString(36)}`, sceneId: hierarchy.scene.id, shouldClose: parsed.shouldClose === true, title: String(parsed.title || 'New scene').slice(0, 180), mode: parsed.mode === 'discontinuous' ? 'discontinuous' : 'continuous', evidence: String(parsed.evidence || '').slice(0, 1600), questionIds: Array.isArray(parsed.questionIds) ? parsed.questionIds.slice(0, 12) : [], status: 'proposed', createdAt: new Date().toISOString(), provenance: { source: 'scene_boundary_review', model, reason: options.reason || 'author_requested' } };
@@ -6964,15 +6964,15 @@ async function requestSceneBoundaryReview(world, sess, options = {}) {
     protocol.sceneBoundaryReviews.push(review); protocol.sceneBoundaryReviews = protocol.sceneBoundaryReviews.slice(-40);
     hierarchy.scene.provisionalReview = { ...(hierarchy.scene.provisionalReview || {}), ...review };
     recordSidecarTrace(world, sess, { kind: 'scene_boundary_review', prompt, reply: parsed, model });
-    await saveState();
+    await ExperimentalWorldsHost.persist();
     return review;
 }
 
 async function planAndApproveWorldSequence() {
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
-    if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
-        showToast('Sequence planning is available in Sidecar worlds.', 'info');
+    if (!world || !sess || !window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
+        ExperimentalWorldsHost.notify('Sequence planning is available in Sidecar worlds.', 'info');
         return;
     }
     const authorIntent = prompt('What cut or continuation do you want for the next sequence?\n\nThis is an authorial planning request, not in-character dialogue.', '');
@@ -6989,39 +6989,39 @@ async function planAndApproveWorldSequence() {
             packet.constraints.length ? `\nPreserve:\n• ${packet.constraints.join('\n• ')}` : '',
             packet.openQuestions.length ? `\nStill open:\n• ${packet.openQuestions.join('\n• ')}` : ''
         ].filter(Boolean).join('\n');
-        showConfirmModal('Approve new sequence', detail, async () => {
-            const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
-            const result = window.HordeSidecarTimeline?.approvePlanning(protocol, sess, packet, {
+        ExperimentalWorldsHost.confirmModal('Approve new sequence', detail, async () => {
+            const protocol = window.ExperimentalWorldsSidecarHooks.normalizeWorldTimeline(world, sess);
+            const result = window.ExperimentalWorldsSidecarTimeline?.approvePlanning(protocol, sess, packet, {
                 transitionMode: packet.transitionMode,
                 title: packet.title,
                 closePriorScene: packet.transitionMode === 'discontinuous'
             });
             if (!result) throw new Error('Sequence plan could not be approved.');
             protocol.packet = buildSidecarScenePacket(world, sess);
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             renderWorldPlayState();
-            showToast('New sequence approved. The next narrator turn receives its planned starting packet.', 'success');
+            ExperimentalWorldsHost.notify('New sequence approved. The next narrator turn receives its planned starting packet.', 'success');
         });
     } catch (error) {
-        showToast(`Sequence planning failed: ${humanizeApiError(error) || error.message || error}`, 'error');
+        ExperimentalWorldsHost.notify(`Sequence planning failed: ${ExperimentalWorldsHost.humanizeApiError(error) || error.message || error}`, 'error');
     } finally {
         if (typing) typing.style.display = 'none';
     }
 }
 
 async function promoteImpliedWorldRecord(options = {}) {
-    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
-    if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
-        showToast('Implied-record promotion is available in Sidecar worlds.', 'info');
+    if (!world || !sess || !window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
+        ExperimentalWorldsHost.notify('Implied-record promotion is available in Sidecar worlds.', 'info');
         return;
     }
-    const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
-    window.HordeSidecarPromotion?.ensure(protocol);
+    const protocol = window.ExperimentalWorldsSidecarHooks.normalizeWorldTimeline(world, sess);
+    window.ExperimentalWorldsSidecarPromotion?.ensure(protocol);
     const candidates = [...protocol.provisionalLocations, ...protocol.provisionalEntities]
         .filter(record => !['promoted', 'resolved'].includes(record.status));
     if (!candidates.length) {
-        showToast('There are no implied locations or characters awaiting review.', 'info');
+        ExperimentalWorldsHost.notify('There are no implied locations or characters awaiting review.', 'info');
         return { status: 'empty' };
     }
     const requestedId = String(options.provisionalId || '').trim();
@@ -7050,9 +7050,9 @@ async function promoteImpliedWorldRecord(options = {}) {
         record.scenePulseDisposition = 'awaiting_scene_evidence';
         record.promotionEligibility = safeJsonClone(eligibility);
         protocol.packet = buildSidecarScenePacket(world, sess);
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
-        showToast(`${record.name} remains a ScenePulse candidate until it recurs, its scene closes, or World review explicitly resolves it.`, 'info');
+        ExperimentalWorldsHost.notify(`${record.name} remains a ScenePulse candidate until it recurs, its scene closes, or World review explicitly resolves it.`, 'info');
         return { status: 'awaiting_evidence', provisionalId: record.id, eligibility };
     }
     const visibleLocations = sessionLocations(world, sess);
@@ -7070,16 +7070,16 @@ async function promoteImpliedWorldRecord(options = {}) {
         }].slice(-8);
         record.status = 'needs_resolution';
         record.scenePulseDisposition = 'duplicate_requires_author_choice';
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
-        showToast('A possible duplicate is available in ScenePulse Inspect for an explicit author choice.', 'info');
+        ExperimentalWorldsHost.notify('A possible duplicate is available in ScenePulse Inspect for an explicit author choice.', 'info');
         return { status: 'needs_resolution', provisionalId: record.id, canonicalId: existing.id };
     }
     const earlyDecisionNotice = readerCandidate && !eligibility?.ready
         ? ' This candidate has not yet met the normal repeat-or-scene-closure threshold; this is an explicit author decision, not an automatic promotion.'
         : '';
-    showConfirmModal(`Promote ${record.name}`, `Create a persistent ${record.kind === 'location' ? 'location' : 'character'} from the details established in recent narration? This does not retroactively change the scene.${earlyDecisionNotice}`, async () => {
-        window.HordeSidecarPromotion?.markPromotionRequested(protocol, record.id);
+    ExperimentalWorldsHost.confirmModal(`Promote ${record.name}`, `Create a persistent ${record.kind === 'location' ? 'location' : 'character'} from the details established in recent narration? This does not retroactively change the scene.${earlyDecisionNotice}`, async () => {
+        window.ExperimentalWorldsSidecarPromotion?.markPromotionRequested(protocol, record.id);
         const explicitSeparatePromotionId = options.allowDuplicate === true ? String(record.id || '') : '';
         const introducedId = record.kind === 'location'
             ? `loc_${record.id.replace(/^provisional_location_/, '').replace(/[^a-zA-Z0-9_-]/g, '_')}`.slice(0, 100)
@@ -7111,7 +7111,7 @@ async function promoteImpliedWorldRecord(options = {}) {
             ? world.locations.find(location => location.id === introducedId)
             : world.entities.find(entity => entity.id === introducedId);
         if (!canonical) throw new Error('The native reducer did not create the requested record.');
-        window.HordeSidecarPromotion?.markPromoted(protocol, record.id, canonical.id);
+        window.ExperimentalWorldsSidecarPromotion?.markPromoted(protocol, record.id, canonical.id);
         const visualOutcome = {
             ...(applyScenePulsePromotionAppearance(canonical, record) || {}),
             ...(applyScenePulsePromotionLocation(canonical, record) || {})
@@ -7122,21 +7122,21 @@ async function promoteImpliedWorldRecord(options = {}) {
             candidateId: String(record.scenePulseCandidateId || ''), visualOutcome: safeJsonClone(visualOutcome || {}) });
         protocol.refinements = protocol.refinements.slice(-200);
         protocol.packet = buildSidecarScenePacket(world, sess);
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
-        showToast(`${record.name} is now a persistent ${record.kind === 'location' ? 'location' : 'character'}.`, 'success');
+        ExperimentalWorldsHost.notify(`${record.name} is now a persistent ${record.kind === 'location' ? 'location' : 'character'}.`, 'success');
     });
     return { status: 'confirmation_required', provisionalId: record.id, eligibility };
 }
 
-function renderWorldItemCatalogControls(world = state.editingWorld) {
+function renderWorldItemCatalogControls(world = ExperimentalWorldsState.editingWorld) {
     const container = document.getElementById('w-rules-item-catalog');
-    if (!container || !world || !globalThis.HordeRpgMechanics) return;
+    if (!container || !world || !globalThis.ExperimentalWorldsRpgMechanics) return;
     const rules = normalizeWorldGameRules(world);
     container.innerHTML = rules.itemCatalog.length ? rules.itemCatalog.map(item => `
         <article class="world-item-card" data-world-item-id="${escapeHTML(item.id)}">
             <div><span>${escapeHTML(item.type)}${item.slot ? ` · ${escapeHTML(item.slot)}` : ''}</span><strong>${escapeHTML(item.name)}</strong>
-            <small>${escapeHTML([item.damage && `Damage ${item.damage}`, item.armor && `Armor ${item.armor}`, globalThis.HordeRpgMechanics.describeModifiers(item)].filter(Boolean).join(' · ') || item.description || 'Narrative item')}</small></div>
+            <small>${escapeHTML([item.damage && `Damage ${item.damage}`, item.armor && `Armor ${item.armor}`, globalThis.ExperimentalWorldsRpgMechanics.describeModifiers(item)].filter(Boolean).join(' · ') || item.description || 'Narrative item')}</small></div>
             <div><button class="btn btn-ghost btn-small" data-world-item-edit type="button">Edit</button><button class="btn btn-ghost btn-small" data-world-item-delete type="button">Remove</button></div>
         </article>`).join('') : '<div class="form-hint">No authored items yet. Old text inventories still work; add cards when equipment needs real stats or bonuses.</div>';
     container.querySelectorAll('[data-world-item-id]').forEach(card => {
@@ -7153,12 +7153,12 @@ function renderWorldItemCatalogControls(world = state.editingWorld) {
 }
 
 function openWorldItemEditor(world, value = null) {
-    if (!world || !globalThis.HordeRpgMechanics) return;
+    if (!world || !globalThis.ExperimentalWorldsRpgMechanics) return;
     const rules = normalizeWorldGameRules(world);
-    const item = globalThis.HordeRpgMechanics.normalizeItem(value || { name: 'New item', type: 'custom' });
+    const item = globalThis.ExperimentalWorldsRpgMechanics.normalizeItem(value || { name: 'New item', type: 'custom' });
     let overlay = document.getElementById('world-item-editor-overlay');
     if (!overlay) { overlay = document.createElement('div'); overlay.id = 'world-item-editor-overlay'; overlay.className = 'modal-overlay'; document.body.appendChild(overlay); }
-    const options = globalThis.HordeRpgMechanics.TYPES.map(type => `<option value="${type}" ${item.type === type ? 'selected' : ''}>${type}</option>`).join('');
+    const options = globalThis.ExperimentalWorldsRpgMechanics.TYPES.map(type => `<option value="${type}" ${item.type === type ? 'selected' : ''}>${type}</option>`).join('');
     const slots = [...new Set(['', ...(rules.equipmentSlots || []), item.slot].filter(value => value !== undefined))]
         .map(slot => `<option value="${escapeHTML(slot)}" ${item.slot === slot ? 'selected' : ''}>${escapeHTML(slot || 'Not equipable')}</option>`).join('');
     overlay.innerHTML = `<div class="modal world-item-editor-modal" role="dialog" aria-modal="true"><header><div><span class="vh-eyebrow">WORLD ITEM</span><h2>${value ? 'Edit item' : 'Create item'}</h2><p>One reusable definition for inventories, shops, rewards and loadouts.</p></div><button class="labs-close-btn" data-item-close type="button">✕</button></header><div class="world-item-editor-grid">
@@ -7177,8 +7177,8 @@ function openWorldItemEditor(world, value = null) {
     overlay.querySelector('[data-item-save]').onclick = () => {
         const read = selector => overlay.querySelector(selector)?.value;
         const name = String(read('[data-item-name]') || '').trim();
-        if (!name) return showToast('Give the item a name.', 'error');
-        const saved = globalThis.HordeRpgMechanics.normalizeItem({ ...item, name, type: read('[data-item-type]'), slot: read('[data-item-slot]'), quantity: read('[data-item-quantity]'), damage: read('[data-item-damage]'), damageType: read('[data-item-damage-type]'), armor: read('[data-item-armor]'), value: read('[data-item-value]'), weight: read('[data-item-weight]'), rarity: read('[data-item-rarity]'), description: read('[data-item-description]'), modifiers: parseWorldItemModifiers(read('[data-item-modifiers]')), requirements: { ...item.requirements, level: read('[data-item-level]'), text: read('[data-item-requirement-text]') } });
+        if (!name) return ExperimentalWorldsHost.notify('Give the item a name.', 'error');
+        const saved = globalThis.ExperimentalWorldsRpgMechanics.normalizeItem({ ...item, name, type: read('[data-item-type]'), slot: read('[data-item-slot]'), quantity: read('[data-item-quantity]'), damage: read('[data-item-damage]'), damageType: read('[data-item-damage-type]'), armor: read('[data-item-armor]'), value: read('[data-item-value]'), weight: read('[data-item-weight]'), rarity: read('[data-item-rarity]'), description: read('[data-item-description]'), modifiers: parseWorldItemModifiers(read('[data-item-modifiers]')), requirements: { ...item.requirements, level: read('[data-item-level]'), text: read('[data-item-requirement-text]') } });
         const index = rules.itemCatalog.findIndex(entry => entry.id === item.id);
         if (index >= 0) rules.itemCatalog[index] = saved; else rules.itemCatalog.push(saved);
         world.gameRules.itemCatalog = rules.itemCatalog; close(); renderWorldItemCatalogControls(world); updateWorldTokenCount();
@@ -7343,7 +7343,7 @@ function worldStatColorHex(value) {
 }
 
 function renderWorldStudioStats() {
-    const w = state.editingWorld;
+    const w = ExperimentalWorldsState.editingWorld;
     if (!w) return;
     const container = document.getElementById('w-hud-stats-list');
     if (!container) return;
@@ -7451,17 +7451,17 @@ function renderWorlds() {
     grid.innerHTML = '';
     
     const searchVal = document.getElementById('world-search')?.value.toLowerCase() || '';
-    let list = state.worlds.filter(w => String(w.name || '').toLowerCase().includes(searchVal));
+    let list = ExperimentalWorldsState.worlds.filter(w => String(w.name || '').toLowerCase().includes(searchVal));
     const visibleCount = document.getElementById('world-visible-count');
     const totalCount = document.getElementById('world-total-count');
     if (visibleCount) visibleCount.textContent = list.length;
-    if (totalCount) totalCount.textContent = state.worlds.length;
+    if (totalCount) totalCount.textContent = ExperimentalWorldsState.worlds.length;
 
     list.forEach(world => {
         const card = document.createElement('div');
         card.className = 'char-card';
-        const timelines = state.worldInstances?.[world.id]?.sessions || [];
-        const selectedTimelineId = state.worldInstances?.[world.id]?.activeSessionId || timelines[0]?.id || '';
+        const timelines = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
+        const selectedTimelineId = ExperimentalWorldsState.worldInstances?.[world.id]?.activeSessionId || timelines[0]?.id || '';
         const timelineOptions = timelines.map(session =>
             `<option value="${escapeHTML(session.id)}"${session.id === selectedTimelineId ? ' selected' : ''}>${escapeHTML(session.name || session.id)} · ${Number(session.turnCount || 0)} turns</option>`
         ).join('');
@@ -7470,7 +7470,7 @@ function renderWorlds() {
             <div class="char-card-banner" style="height: 100px; ${bannerStyle}"></div>
             <div class="char-card-body">
                 <div class="char-card-name">${escapeHTML(world.name)}</div>
-                ${worldLoadWarnings.has(world.id) ? `<div class="world-library-warning">Needs repair · ${escapeHTML(worldLoadWarnings.get(world.id))}</div>` : ''}
+                ${ExperimentalWorldsHost.worldLoadWarning(world.id) ? `<div class="world-library-warning">Needs repair · ${escapeHTML(ExperimentalWorldsHost.worldLoadWarning(world.id))}</div>` : ''}
                 <div class="char-card-desc">${escapeHTML(world.description || 'No description')}</div>
                 <div style="display:flex; gap:8px; margin-top:12px;">
                     <button class="btn btn-ghost btn-full enter-world-btn">Enter World →</button>
@@ -7498,9 +7498,9 @@ function renderWorlds() {
         grid.appendChild(card);
     });
 
-    const recoverable = Object.values(state.worldRecoverySnapshots || {})
+    const recoverable = Object.values(ExperimentalWorldsState.worldRecoverySnapshots || {})
         .filter(snapshot => isPlainObject(snapshot?.world)
-            && !state.worlds.some(world => world.id === snapshot.world.id)
+            && !ExperimentalWorldsState.worlds.some(world => world.id === snapshot.world.id)
             && String(snapshot.world.name || '').toLowerCase().includes(searchVal));
     recoverable.forEach(snapshot => {
         const world = snapshot.world;
@@ -7513,19 +7513,19 @@ function renderWorlds() {
                 <button class="btn btn-primary btn-full recover-world-card-btn">Restore World</button>
             </div>`;
         card.querySelector('.recover-world-card-btn').onclick = async () => {
-            if (state.worlds.some(item => item.id === world.id)) return;
+            if (ExperimentalWorldsState.worlds.some(item => item.id === world.id)) return;
             const restored = safeJsonClone(world);
             // World recovery belongs to the Experimental authority.  Reading
             // the host database here would make a stock-host cleanup or a
             // future upstream store change silently break this mode.
             const storedMedia = (await window.ExperimentalWorldsRepository?.snapshot?.())?.worldMediaAssets || {};
             if (Array.isArray(storedMedia[restored.id])) restored.mediaAssets = storedMedia[restored.id];
-            state.worlds.push(restored);
-            delete state.worldRecoverySnapshots[restored.id];
-            worldMediaDirty = true;
-            await saveState();
+            ExperimentalWorldsState.worlds.push(restored);
+            delete ExperimentalWorldsState.worldRecoverySnapshots[restored.id];
+            ExperimentalWorldsHost.markMediaChanged();
+            await ExperimentalWorldsHost.persist();
             renderWorlds();
-            showToast(`Restored "${restored.name}" and reconnected its existing sessions.`, 'success');
+            ExperimentalWorldsHost.notify(`Restored "${restored.name}" and reconnected its existing sessions.`, 'success');
         };
         grid.appendChild(card);
     });

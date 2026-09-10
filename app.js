@@ -2329,15 +2329,61 @@ let state = {
 // cannot inspect or mutate the host state object or stock World records.
 window.ExperimentalWorldsVisualMediaHost?.configure({
     getGlobalSettings: () => state.globalSettings,
-    markExperimentalWorldMediaChanged: world => {
-        if ((state.worlds || []).includes(world)) worldMediaDirty = true;
-    }
+    // This adapter is called only by the Experimental visual core.  Checking
+    // host `state.worlds` would reintroduce a hidden live-object dependency.
+    markExperimentalWorldMediaChanged: () => { worldMediaDirty = true; }
 });
 
 // The host owns only the shared continuity persistence seam. Experimental
 // Worlds never reads stock World records or invokes stock World helpers.
 window.ExperimentalWorldsHost?.configure({
-    persistSharedContinuities: continuities => HordeDB.set('chatContinuities', continuities)
+    persistSharedContinuities: continuities => HordeDB.set('chatContinuities', continuities),
+    persist: () => persistExperimentalWorldsSnapshot('experimental-core'),
+    navigate: viewName => switchView(viewName),
+    markMediaChanged: () => { worldMediaDirty = true; },
+    mediaDirty: () => worldMediaDirty,
+    restoreMediaDirty: value => { worldMediaDirty = value === true; },
+    worldLoadWarning: worldId => worldLoadWarnings.get(worldId) || '',
+    notify: (...args) => showToast(...args),
+    confirmModal: (...args) => showConfirmModal(...args),
+    apiBase: () => apiBase(),
+    authHeaders: () => authHeaders(),
+    attributionHeaders: () => attributionHeaders(),
+    hasApiCredentials: () => hasApiCredentials(),
+    isLocalProvider: (...args) => isLocalProvider(...args),
+    cloudProviderName: (...args) => cloudProviderName(...args),
+    normalizedProviderId: (...args) => normalizedProviderId(...args),
+    providerApiBase: (...args) => providerApiBase(...args),
+    providerAuthHeaders: (...args) => providerAuthHeaders(...args),
+    providerAttributionHeaders: (...args) => providerAttributionHeaders(...args),
+    providerHasCredentials: (...args) => providerHasCredentials(...args),
+    providerDisplayName: (...args) => providerDisplayName(...args),
+    applyOpenRouterRouting: (...args) => applyOpenRouterRouting(...args),
+    sanitizeMessagesForProvider: (...args) => sanitizeMessagesForProvider(...args),
+    humanizeApiError: (...args) => humanizeApiError(...args),
+    localGenerationIdleTimeoutMs: (...args) => localGenerationIdleTimeoutMs(...args),
+    cloudGenerationIdleTimeoutMs: (...args) => cloudGenerationIdleTimeoutMs(...args),
+    applyRegexScripts: (...args) => applyRegexScripts(...args),
+    replaceMacros: (...args) => replaceMacros(...args),
+    getAllPresets: (...args) => getAllPresets(...args),
+    isPresetPromptEnabled: (...args) => isPresetPromptEnabled(...args),
+    getOrderedPresetPrompts: (...args) => getOrderedPresetPrompts(...args),
+    getEmbedding: (...args) => getEmbedding(...args),
+    persistSharedSettings: () => persistGlobalSettingsOnly(),
+    ensureSharedLibraryFresh: () => ensureSharedLibraryFreshForGeneration(),
+    recordSharedLibraryAssistantTurn: () => recordSharedLibraryAssistantTurn(),
+    labsAvailable: () => Boolean(window.HordeLabs),
+    labsProposal: (...args) => labsProposal(...args)
+});
+
+// The relocated Experimental core is never given the host state object.  Its
+// narrow facade exposes its own World/session fields plus the explicitly
+// shared settings, continuity and catalog records it already used before the
+// mechanical move.  A future host can adapt these bindings without changing
+// Experimental World semantics or persistence ownership.
+window.ExperimentalWorldsStateAdapter?.configure({
+    readShared: key => state[key],
+    writeShared: (key, value) => { state[key] = value; }
 });
 
 let lastPersistedWorldManifests = [];
@@ -3679,6 +3725,11 @@ async function loadState() {
             else if ((world.mediaAssets || []).length) worldMediaDirty = true; // migrate early embedded builds
         });
         state.worldInstances = hasExperimentalAuthority ? experimentalStored.worldInstances : (await HordeDB.get('worldInstances') || {});
+        if (hasExperimentalAuthority && isPlainObject(experimentalStored.workspace)) {
+            state.editingWorld = experimentalStored.workspace.editingWorld || null;
+            state.lastWorldStudioId = experimentalStored.workspace.lastWorldStudioId || null;
+            state.lastWorldStudioTab = experimentalStored.workspace.lastWorldStudioTab || null;
+        }
         if (!hasExperimentalAuthority && window.ExperimentalWorldsRepository) {
             // Capture the exact legacy host before the only destructive
             // migration step. This full preimage is recovery provenance, not
@@ -3767,7 +3818,7 @@ async function loadState() {
     if (state.worlds.length === 0) {
         state.worlds = JSON.parse(JSON.stringify(STARTER_WORLDS));
         state.globalSettings.seededWorldIds = STARTER_WORLDS.map(w => w.id);
-        await saveState();
+        await persistExperimentalWorldsAndSharedSettings('seed-experimental-worlds');
     } else {
         // Offer each starter world to existing installs exactly once. Installs
         // from before this flag existed treat their current worlds as already
@@ -3780,7 +3831,7 @@ async function loadState() {
         if (fresh.length || !Array.isArray(state.globalSettings.seededWorldIds)) {
             state.worlds.push(...JSON.parse(JSON.stringify(fresh)));
             state.globalSettings.seededWorldIds = [...new Set([...seeded, ...STARTER_WORLDS.map(w => w.id)])];
-            await saveState();
+            await persistExperimentalWorldsAndSharedSettings('offer-experimental-starters');
         }
     }
 
@@ -3790,6 +3841,7 @@ async function loadState() {
     // only the exact shipped values once; authored/custom model choices remain
     // untouched. A blank model is deliberate inheritance of the global model.
     if (migrateStarterModelInheritance(state.characters, state.worlds, state.globalSettings)) {
+        await persistExperimentalWorldsSnapshot('migrate-experimental-model-inheritance');
         await saveState();
     }
 
@@ -3863,7 +3915,7 @@ async function loadState() {
         }
         if (changed) {
             state.globalSettings.includedWorldReceipts = [...new Set(offered)];
-            await saveState();
+            await persistExperimentalWorldsAndSharedSettings('install-experimental-included-worlds');
         }
     }
 
@@ -4134,7 +4186,7 @@ async function loadState() {
             state.globalSettings.starterGoalPoolBackfillV1 = true;
             backfilled = true;
         }
-        if (backfilled) await saveState();
+        if (backfilled) await persistExperimentalWorldsAndSharedSettings('backfill-experimental-starter-worlds');
     }
 
     // Built-in worlds are part of the product, so they should never ask the
@@ -4156,7 +4208,7 @@ async function loadState() {
                 return world;
             }
         });
-        if (changed) await saveState();
+        if (changed) await persistExperimentalWorldsAndSharedSettings('upgrade-experimental-bundled-worlds');
     }
 
     // Library records load after the initial workspace snapshot. Reapply the
@@ -4164,29 +4216,48 @@ async function loadState() {
     // so active IDs point at this freshly loaded library rather than getting
     // overwritten by the regular persistence reads above.
     applyWorkspaceState(pendingWorkspaceState);
+    // The host workspace is not an Experimental persistence authority.  Its
+    // old World selection must not supersede the verified Experimental
+    // snapshot after this ownership transition.
+    if (hasExperimentalAuthority) {
+        if (workspaceEntityExists(state.worlds, experimentalStored.activeWorldId)) {
+            state.activeWorldId = experimentalStored.activeWorldId;
+        }
+        const experimentalWorkspace = isPlainObject(experimentalStored.workspace)
+            ? experimentalStored.workspace : {};
+        state.editingWorld = experimentalWorkspace.editingWorld || null;
+        state.lastWorldStudioId = experimentalWorkspace.lastWorldStudioId || null;
+        state.lastWorldStudioTab = experimentalWorkspace.lastWorldStudioTab || null;
+    }
+    // The host loaded this snapshot only to complete the one-time migration
+    // and the initial mount. From here the Experimental core reads its own
+    // isolated state authority; host experiences cannot accidentally mutate
+    // the active World/session object through `state`.
+    window.ExperimentalWorldsStateAdapter?.hydrate({
+        worlds: state.worlds,
+        worldInstances: state.worldInstances,
+        activeWorldId: state.activeWorldId,
+        worldRecoverySnapshots: state.worldRecoverySnapshots,
+        editingWorld: state.editingWorld,
+        lastWorldStudioId: state.lastWorldStudioId,
+        lastWorldStudioTab: state.lastWorldStudioTab
+    });
 }
 
 let saveStateInFlight = null;
 let saveStateQueued = false;
 
-async function persistStateSnapshot() {
+async function persistExperimentalWorldsSnapshot(reason = 'experimental-save') {
     const savingWorldMedia = worldMediaDirty;
-    // Keep one exact workspace point beside this full library transaction.
-    // It becomes the reload-protection timestamp only after IndexedDB has
-    // accepted the same world/session state.
-    const workspaceSnapshot = captureWorkspaceState();
     try {
-        (state.companions || []).forEach(companion => persistCompanionRuntime(companion));
-        // Keep heavy image payloads out of the world manifest that is rewritten
-        // on virtually every turn. The separate payload is only rewritten when
-        // an asset changes, then reattached on load and embedded on export.
-        const storedWorlds = (state.worlds || []).map(world => ({
+        const experimental = window.ExperimentalWorldsStateAdapter?.snapshot?.() || {};
+        const storedWorlds = (experimental.worlds || []).map(world => ({
             ...world,
             mediaAssets: []
         }));
         const visibleWorldIds = new Set(storedWorlds.map(world => world.id));
-        const recovery = isPlainObject(state.worldRecoverySnapshots)
-            ? state.worldRecoverySnapshots : {};
+        const recovery = isPlainObject(experimental.worldRecoverySnapshots)
+            ? experimental.worldRecoverySnapshots : {};
         lastPersistedWorldManifests.forEach(previous => {
             if (!isPlainObject(previous) || !previous.id || visibleWorldIds.has(previous.id)) return;
             recovery[previous.id] = {
@@ -4195,11 +4266,57 @@ async function persistStateSnapshot() {
                 world: safeJsonClone(previous)
             };
         });
-        state.worldRecoverySnapshots = Object.fromEntries(
+        experimental.worldRecoverySnapshots = Object.fromEntries(
             Object.entries(recovery)
                 .sort((a, b) => String(b[1]?.capturedAt || '').localeCompare(String(a[1]?.capturedAt || '')))
                 .slice(0, 30)
         );
+        window.ExperimentalWorldsState.worldRecoverySnapshots = experimental.worldRecoverySnapshots;
+        const previousExperimental = await window.ExperimentalWorldsRepository?.snapshot?.();
+        const worldMediaAssets = savingWorldMedia
+            ? Object.fromEntries((experimental.worlds || []).map(world => [
+                world.id,
+                safeJsonClone(Array.isArray(world.mediaAssets) ? world.mediaAssets : [])
+            ]))
+            : (previousExperimental?.worldMediaAssets || {});
+        if (savingWorldMedia) worldMediaDirty = false;
+        await window.ExperimentalWorldsRepository?.writeSnapshot?.({
+            worlds: storedWorlds,
+            worldRecoverySnapshots: experimental.worldRecoverySnapshots,
+            worldInstances: experimental.worldInstances,
+            activeWorldId: experimental.activeWorldId,
+            worldMediaAssets,
+            // Studio selection is Experimental-only workspace state. Keeping
+            // it here prevents a World edit from writing the host workspace.
+            workspace: {
+                editingWorld: experimental.editingWorld,
+                lastWorldStudioId: experimental.lastWorldStudioId,
+                lastWorldStudioTab: experimental.lastWorldStudioTab
+            }
+        }, reason);
+        lastPersistedWorldManifests = safeJsonClone(storedWorlds);
+    } catch (err) {
+        if (savingWorldMedia) worldMediaDirty = true;
+        throw err;
+    }
+}
+
+// A World migration may deliberately update a shared Settings receipt (for
+// example, the installed-bundle receipt) while it updates Experimental data.
+// It must never recover that convenience by calling the host whole-state
+// writer, which is intentionally blind to the Experimental repository.
+async function persistExperimentalWorldsAndSharedSettings(reason) {
+    await persistExperimentalWorldsSnapshot(reason);
+    await persistGlobalSettingsOnly();
+}
+
+async function persistStateSnapshot() {
+    // Host persistence deliberately does not enumerate Experimental Worlds.
+    // Experimental writes enter their own repository through the explicit
+    // adapter above; the host snapshot contains only host-owned records.
+    const workspaceSnapshot = captureWorkspaceState();
+    try {
+        (state.companions || []).forEach(companion => persistCompanionRuntime(companion));
         const records = {
             // Credentials are tab-session only unless the user opts in to
             // "Remember key on this device". Persisting '' erases stored copies.
@@ -4225,10 +4342,6 @@ async function persistStateSnapshot() {
             systemPresets: state.systemPresets,
             regexScripts: state.regexScripts,
             roleplayOSSources: state.roleplayOSSources || [],
-            worlds: storedWorlds,
-            worldRecoverySnapshots: state.worldRecoverySnapshots,
-            worldInstances: state.worldInstances,
-            activeWorldId: state.activeWorldId,
             ...workspaceSnapshot,
             videoWorlds: state.videoWorlds,
             videoWorldSessions: state.videoWorldSessions,
@@ -4239,38 +4352,11 @@ async function persistStateSnapshot() {
             activeCompanionId: state.activeCompanionId,
             labsDiagnostics: (state.labsDiagnostics || []).slice(-100)
         };
-        if (savingWorldMedia) {
-            records.worldMediaAssets = Object.fromEntries((state.worlds || []).map(world => [
-                world.id,
-                safeJsonClone(Array.isArray(world.mediaAssets) ? world.mediaAssets : [])
-            ]));
-            // Clear before yielding to IndexedDB. If another media edit occurs
-            // while this transaction is open it will set the flag again and
-            // the coalesced follow-up pass will preserve that newer payload.
-            worldMediaDirty = false;
-        }
-        const previousExperimental = await window.ExperimentalWorldsRepository?.snapshot?.();
-        await window.ExperimentalWorldsRepository?.writeSnapshot?.({
-            worlds: storedWorlds,
-            worldRecoverySnapshots: state.worldRecoverySnapshots,
-            worldInstances: state.worldInstances,
-            activeWorldId: state.activeWorldId,
-            worldMediaAssets: savingWorldMedia ? records.worldMediaAssets : (previousExperimental?.worldMediaAssets || {})
-        }, 'host-save');
-        // Experimental World records have their own authority. Do not let the
-        // normal Horde writer enumerate, normalize or overwrite them.
-        delete records.worlds;
-        delete records.worldRecoverySnapshots;
-        delete records.worldInstances;
-        delete records.activeWorldId;
-        delete records.worldMediaAssets;
         await HordeDB.setMultiple(records);
         pendingWorkspaceState = workspaceSnapshot;
-        lastPersistedWorldManifests = safeJsonClone(storedWorlds);
         writeGlobalSettingsMirror(records.globalSettings);
         scheduleSharedLibraryPush();
     } catch (err) {
-        if (savingWorldMedia) worldMediaDirty = true;
         const isQuota = err && (err.name === 'QuotaExceededError' || /quota/i.test(err.message || ''));
         if (isQuota) {
             showToast('⚠️ Storage FULL — changes are NOT being saved! Export a backup now (Settings → Export Full Backup), then remove large images/old sessions.', 'error');

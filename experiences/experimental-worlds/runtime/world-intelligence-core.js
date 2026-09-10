@@ -32,7 +32,7 @@ function shouldRunWorldAgent(world, sess, options = {}) {
     if (!normalizeWorldGameRules(world).modules.livingWorld) return false;
     const config = normalizeWorldAgentConfig(world);
     if (!config.enabled) return false;
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const activeSceneId = protocol?.activeSceneId || '';
     if (activeSceneId && sess.lastWorldAgentSceneId && sess.lastWorldAgentSceneId !== activeSceneId) {
         return true;
@@ -120,7 +120,7 @@ async function runWorldAgent(world, sess, options = {}) {
     const config = normalizeWorldAgentConfig(world);
     const turn = Math.max(1, parseInt(sess.turnCount) || 1);
     const startEpoch = Number(sess._worldEpoch) || 0;
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const triggerReason = options.triggerReason || (protocol?.activeSceneId && sess.lastWorldAgentSceneId !== protocol.activeSceneId ? 'scene_change' : 'turn_cadence');
     sess.lastWorldAgentTurn = turn;   // set first: a failure must not retry every turn
     if (protocol?.activeSceneId) sess.lastWorldAgentSceneId = protocol.activeSceneId;
@@ -149,10 +149,10 @@ Propose 1 to 3 developments. Return ONLY this JSON, no prose or fences:
  "npc_relationship_updates":[{"source_npc_id":"<id>","target_npc_id":"<id>","change":<integer>,"reason":"<short>"}]}
 Omit any array you are not using. Current turn is ${turn}; schedule events a few turns out, not in the past.`;
 
-    const response = await fetch(apiBase() + '/chat/completions', {
+    const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(applyOpenRouterRouting({
+        headers: { 'Content-Type': 'application/json', ...ExperimentalWorldsHost.authHeaders() },
+        body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({
             model: config.model || structuredModelFor(world),
             max_tokens: 1200,
             messages: [
@@ -171,7 +171,7 @@ Omit any array you are not using. Current turn is ${turn}; schedule events a few
     // The player may have rerolled, reset, deleted this timeline, or advanced
     // it while the background request was in flight. Never apply a development
     // authored against a state that no longer exists.
-    const liveInstance = state.worldInstances?.[world.id];
+    const liveInstance = ExperimentalWorldsState.worldInstances?.[world.id];
     const timelineStillExists = liveInstance?.sessions?.includes(sess);
     if (!timelineStillExists || (Number(sess._worldEpoch) || 0) !== startEpoch
         || Math.max(1, parseInt(sess.turnCount) || 1) !== turn) {
@@ -185,7 +185,7 @@ Omit any array you are not using. Current turn is ${turn}; schedule events a few
 
     const developments = (Array.isArray(parsed.developments) ? parsed.developments : [])
         .map(item => String(item?.summary || item || '').trim()).filter(Boolean).slice(0, 5);
-    const sidecarTimeline = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    const sidecarTimeline = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     if (sidecarTimeline || config.proposalOnly) {
             if (protocol) {
             protocol.backgroundProposals.push({
@@ -355,8 +355,8 @@ function validateWorldReferences(world) {
  * Returns true on success.
  */
 async function generateNpcSchedule(npc, world) {
-    if (!hasApiCredentials()) { showToast('API Key missing (Settings).', 'error'); return false; }
-    if (!world.locations || world.locations.length === 0) { showToast('Add locations first.', 'error'); return false; }
+    if (!ExperimentalWorldsHost.hasApiCredentials()) { ExperimentalWorldsHost.notify('API Key missing (Settings).', 'error'); return false; }
+    if (!world.locations || world.locations.length === 0) { ExperimentalWorldsHost.notify('Add locations first.', 'error'); return false; }
 
     const locManifest = world.locations
         .map(l => `- id: "${l.id}" | ${l.name}${l.description ? ` — ${l.description.slice(0, 80)}` : ''}`)
@@ -378,11 +378,11 @@ Design this NPC's believable weekly routine: 5-10 time blocks covering ordinary 
 Return ONLY this JSON, nothing else:
 {"schedule": [{"time": "07:00", "locationId": "<id from list>", "activity": "<short specific activity>", "days": ["weekday"]}]}`;
 
-    const response = await fetch(apiBase() + '/chat/completions', {
+    const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(applyOpenRouterRouting({
-            model: world.model || state.globalSettings.defaultModel,
+        headers: { 'Content-Type': 'application/json', ...ExperimentalWorldsHost.authHeaders() },
+        body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({
+            model: world.model || ExperimentalWorldsState.globalSettings.defaultModel,
             max_tokens: 900,
             messages: [
                 { role: 'system', content: 'You are a world-simulation designer. You output only valid JSON.' },
@@ -415,7 +415,7 @@ Return ONLY this JSON, nothing else:
 }
 
 function renderWorldScheduler() {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     const container = document.getElementById('scheduler-npc-list');
     if (!world || !container) return;
 
@@ -493,10 +493,10 @@ function renderWorldScheduler() {
             btn.textContent = '⏳ Designing...';
             try {
                 await generateNpcSchedule(npc, world);
-                showToast(`Schedule generated for ${npc.name}`, 'success');
+                ExperimentalWorldsHost.notify(`Schedule generated for ${npc.name}`, 'success');
                 renderWorldScheduler();
             } catch (err) {
-                showToast(`Generation failed: ${err.message}`, 'error');
+                ExperimentalWorldsHost.notify(`Generation failed: ${err.message}`, 'error');
                 btn.disabled = false;
                 btn.textContent = '✨ Auto-Generate';
             }
@@ -1353,10 +1353,10 @@ function rankStructuredModels(models, limit = 12) {
  * through the world's own settings so nothing breaks when it is unset.
  */
 function structuredModelFor(world) {
-    const chosen = String(state.globalSettings?.structuredModel || '').trim();
+    const chosen = String(ExperimentalWorldsState.globalSettings?.structuredModel || '').trim();
     if (chosen) return chosen;
     const agent = world ? normalizeWorldAgentConfig(world).model : '';
-    return agent || world?.model || state.globalSettings.defaultModel;
+    return agent || world?.model || ExperimentalWorldsState.globalSettings.defaultModel;
 }
 
 /**
@@ -1366,19 +1366,19 @@ function structuredModelFor(world) {
  * kind of chore that stops a world ever getting finished.
  */
 async function generateAgendaBeats(entity, button) {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     if (!world || !entity) return;
-    if (!hasApiCredentials()) return showToast('API Key missing (Settings).', 'error');
+    if (!ExperimentalWorldsHost.hasApiCredentials()) return ExperimentalWorldsHost.notify('API Key missing (Settings).', 'error');
     if (!String(entity.goal || '').trim()) {
-        return showToast('Give them an agenda first — the beats are the steps toward it.', 'info');
+        return ExperimentalWorldsHost.notify('Give them an agenda first — the beats are the steps toward it.', 'info');
     }
     const original = button ? button.textContent : '';
     if (button) { button.disabled = true; button.textContent = '⏳'; }
     try {
-        const response = await fetch(apiBase() + '/chat/completions', {
+        const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeaders(), ...attributionHeaders() },
-            body: JSON.stringify(applyOpenRouterRouting({
+            headers: { 'Content-Type': 'application/json', ...ExperimentalWorldsHost.authHeaders(), ...ExperimentalWorldsHost.attributionHeaders() },
+            body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({
                 model: structuredModelFor(world),
                 max_tokens: 1200,
                 response_format: { type: 'json_object' },
@@ -1420,10 +1420,10 @@ Reply with only this JSON: {"beats":["...","..."],"next_goal":"..."}` },
         const next = String(parsed.next_goal || '').trim();
         if (next && !(entity.goalPool || []).length) entity.goalPool = [next.slice(0, 240)];
         renderWorldEntities();
-        showToast(`${beats.length} beats written for ${entity.name} — edit freely, then Save World.`, 'success');
+        ExperimentalWorldsHost.notify(`${beats.length} beats written for ${entity.name} — edit freely, then Save World.`, 'success');
     } catch (error) {
         console.error('Beat generation failed', error);
-        showToast(error.message || 'Could not write beats.', 'error');
+        ExperimentalWorldsHost.notify(error.message || 'Could not write beats.', 'error');
     } finally {
         if (button) { button.disabled = false; button.textContent = original || '✨ Generate'; }
     }
@@ -2417,10 +2417,10 @@ async function runCalibrationBatch(world, pass, batch, carriedFactions) {
         // reliable way to stop a model narrating its way past the token limit.
         if (useJsonMode) body.response_format = { type: 'json_object' };
 
-        const response = await fetch(apiBase() + '/chat/completions', {
+        const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeaders(), ...attributionHeaders() },
-            body: JSON.stringify(applyOpenRouterRouting(body, world))
+            headers: { 'Content-Type': 'application/json', ...ExperimentalWorldsHost.authHeaders(), ...ExperimentalWorldsHost.attributionHeaders() },
+            body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting(body, world))
         });
         if (!response.ok) {
             const errorText = (await response.json().catch(() => ({})))?.error?.message || response.statusText;
@@ -2625,7 +2625,7 @@ function downloadLegacyWorldBackup(world) {
     anchor.download = `${String(world.name || 'world').replace(/[^a-z0-9_-]+/gi, '_')}_pre_upgrade.horde_world`;
     anchor.click();
     URL.revokeObjectURL(url);
-    showToast('Pre-upgrade world backup downloaded.', 'success');
+    ExperimentalWorldsHost.notify('Pre-upgrade world backup downloaded.', 'success');
 }
 
 function normalizeMigratedWorldInstance(world, instance) {
@@ -2647,7 +2647,7 @@ function normalizeMigratedWorldInstance(world, instance) {
             });
             session.locationStates = canonicalStates;
         }
-        window.HordeSidecarHooks?.normalizeWorldTimeline(world, session);
+        window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline(world, session);
     });
     return instance;
 }
@@ -2711,46 +2711,46 @@ function wireWorldMigrationControls(world) {
     if (!applyButton) return;
     applyButton.onclick = async () => {
         const result = worldMigrationPreview(world);
-        if (!result || result.error) return showToast(result?.error?.message || 'Upgrade preview failed.', 'error');
+        if (!result || result.error) return ExperimentalWorldsHost.notify(result?.error?.message || 'Upgrade preview failed.', 'error');
         if (!confirm(`Upgrade “${world.name || 'this world'}” to schema ${WORLD_SCHEMA_VERSION}? Downloading the original first is recommended.`)) return;
         applyButton.disabled = true;
         applyButton.textContent = 'Upgrading…';
-        const worldIndex = state.worlds.findIndex(entry => entry.id === world.id);
-        const previousStored = worldIndex >= 0 ? safeJsonClone(state.worlds[worldIndex]) : null;
-        const previousDraft = safeJsonClone(state.editingWorld);
-        const previousInstance = state.worldInstances?.[world.id] ? safeJsonClone(state.worldInstances[world.id]) : null;
-        const previousWorldMediaDirty = worldMediaDirty;
+        const worldIndex = ExperimentalWorldsState.worlds.findIndex(entry => entry.id === world.id);
+        const previousStored = worldIndex >= 0 ? safeJsonClone(ExperimentalWorldsState.worlds[worldIndex]) : null;
+        const previousDraft = safeJsonClone(ExperimentalWorldsState.editingWorld);
+        const previousInstance = ExperimentalWorldsState.worldInstances?.[world.id] ? safeJsonClone(ExperimentalWorldsState.worldInstances[world.id]) : null;
+        const previousWorldMediaDirty = ExperimentalWorldsHost.mediaDirty();
         try {
             const migrated = safeJsonClone(result.world);
             validateWorldData(migrated, 'Migrated world');
-            state.editingWorld = migrated;
-            if (worldIndex >= 0) state.worlds[worldIndex] = safeJsonClone(migrated);
-            else state.worlds.push(safeJsonClone(migrated));
-            if (state.worldInstances?.[world.id]) normalizeMigratedWorldInstance(migrated, state.worldInstances[world.id]);
+            ExperimentalWorldsState.editingWorld = migrated;
+            if (worldIndex >= 0) ExperimentalWorldsState.worlds[worldIndex] = safeJsonClone(migrated);
+            else ExperimentalWorldsState.worlds.push(safeJsonClone(migrated));
+            if (ExperimentalWorldsState.worldInstances?.[world.id]) normalizeMigratedWorldInstance(migrated, ExperimentalWorldsState.worldInstances[world.id]);
             worldMigrationPreviewState = null;
-            worldMediaDirty = true;
-            await saveState();
+            ExperimentalWorldsHost.markMediaChanged();
+            await ExperimentalWorldsHost.persist();
             renderWorldStudio();
             renderWorldAudit();
-            showToast(`World upgraded safely to schema ${WORLD_SCHEMA_VERSION}.`, 'success');
+            ExperimentalWorldsHost.notify(`World upgraded safely to schema ${WORLD_SCHEMA_VERSION}.`, 'success');
         } catch (error) {
             console.error('World migration rolled back:', error);
-            state.editingWorld = previousDraft;
-            if (worldIndex >= 0 && previousStored) state.worlds[worldIndex] = previousStored;
-            else state.worlds = state.worlds.filter(entry => entry.id !== world.id);
-            if (previousInstance) state.worldInstances[world.id] = previousInstance;
-            else if (state.worldInstances) delete state.worldInstances[world.id];
-            worldMediaDirty = previousWorldMediaDirty;
+            ExperimentalWorldsState.editingWorld = previousDraft;
+            if (worldIndex >= 0 && previousStored) ExperimentalWorldsState.worlds[worldIndex] = previousStored;
+            else ExperimentalWorldsState.worlds = ExperimentalWorldsState.worlds.filter(entry => entry.id !== world.id);
+            if (previousInstance) ExperimentalWorldsState.worldInstances[world.id] = previousInstance;
+            else if (ExperimentalWorldsState.worldInstances) delete ExperimentalWorldsState.worldInstances[world.id];
+            ExperimentalWorldsHost.restoreMediaDirty(previousWorldMediaDirty);
             worldMigrationPreviewState = null;
             // saveState writes several IndexedDB records. If an unexpected
             // storage error happened after one write, persist the restored
             // snapshot as a best-effort compensating transaction so a reload
             // cannot expose a half-applied migration.
-            try { await saveState(); }
+            try { await ExperimentalWorldsHost.persist(); }
             catch (rollbackError) { console.error('World migration rollback could not be persisted:', rollbackError); }
             renderWorldStudio();
             renderWorldAudit();
-            showToast(`Upgrade rolled back: ${error.message || 'validation failed'}`, 'error');
+            ExperimentalWorldsHost.notify(`Upgrade rolled back: ${error.message || 'validation failed'}`, 'error');
         }
     };
 }
@@ -2766,10 +2766,10 @@ function wireCalibrationControls(world, calibration, container) {
     const custom = container.querySelector('#structured-model-custom');
     if (picker && custom) {
         const commit = async (value) => {
-            state.globalSettings.structuredModel = String(value || '').trim().slice(0, 200);
-            try { await saveState(); } catch (error) { console.error('Could not save model choice', error); }
-            showToast(state.globalSettings.structuredModel
-                ? `Audits will use ${state.globalSettings.structuredModel}`
+            ExperimentalWorldsState.globalSettings.structuredModel = String(value || '').trim().slice(0, 200);
+            try { await ExperimentalWorldsHost.persist(); } catch (error) { console.error('Could not save model choice', error); }
+            ExperimentalWorldsHost.notify(ExperimentalWorldsState.globalSettings.structuredModel
+                ? `Audits will use ${ExperimentalWorldsState.globalSettings.structuredModel}`
                 : "Audits will use this world's own model", 'info');
         };
         picker.onchange = () => { custom.value = picker.value; commit(picker.value); };
@@ -2784,7 +2784,7 @@ function wireCalibrationControls(world, calibration, container) {
         // suggestion and failed with "No endpoints found".
         const status = container.querySelector('#structured-model-status');
         const refresh = container.querySelector('#structured-model-refresh');
-        const fallbackLabel = world.model || state.globalSettings.defaultModel || 'unset';
+        const fallbackLabel = world.model || ExperimentalWorldsState.globalSettings.defaultModel || 'unset';
         const populate = async (force) => {
             if (force) { openRouterModels = []; modelCatalogSource = null; }
             if (status) status.textContent = 'Checking which models can do this…';
@@ -2794,7 +2794,7 @@ function wireCalibrationControls(world, calibration, container) {
             } catch (error) {
                 console.error('Could not read the model catalog', error);
             }
-            const chosen = String(state.globalSettings.structuredModel || '').trim();
+            const chosen = String(ExperimentalWorldsState.globalSettings.structuredModel || '').trim();
             picker.innerHTML =
                 `<option value="">Use this world's model (${escapeHTML(fallbackLabel)})</option>`
                 + ranked.map(model =>
@@ -2805,8 +2805,8 @@ function wireCalibrationControls(world, calibration, container) {
                     ? `<option value="${escapeHTML(chosen)}" selected>${escapeHTML(chosen)} (typed)</option>` : '');
             if (!status) return;
             status.textContent = ranked.length
-                ? `${ranked.length} models offered, cheapest first — live from ${isLocalProvider() ? 'your local server' : cloudProviderName()}, so nothing here is a stale id.`
-                : `Could not reach the ${isLocalProvider() ? 'local' : cloudProviderName()} catalog. Type a model id above, or press Refresh once you are online.`;
+                ? `${ranked.length} models offered, cheapest first — live from ${ExperimentalWorldsHost.isLocalProvider() ? 'your local server' : ExperimentalWorldsHost.cloudProviderName()}, so nothing here is a stale id.`
+                : `Could not reach the ${ExperimentalWorldsHost.isLocalProvider() ? 'local' : ExperimentalWorldsHost.cloudProviderName()} catalog. Type a model id above, or press Refresh once you are online.`;
         };
         if (refresh) refresh.onclick = () => populate(true);
         populate(false);
@@ -2817,10 +2817,10 @@ function wireCalibrationControls(world, calibration, container) {
     // chance to undo by simply not saving.
     const persist = (appliedCount, label) => {
         if (!appliedCount) {
-            showToast('Nothing changed — that repair was already in place.', 'info');
+            ExperimentalWorldsHost.notify('Nothing changed — that repair was already in place.', 'info');
             return;
         }
-        showToast(`${label} — remember to Save World.`, 'success');
+        ExperimentalWorldsHost.notify(`${label} — remember to Save World.`, 'success');
         renderWorldAudit();          // recompute: applied findings should vanish
         renderWorldStudio();         // exits and settings may have changed
     };
@@ -2854,7 +2854,7 @@ function wireCalibrationControls(world, calibration, container) {
     container.querySelectorAll('.calibrate-pass-run').forEach(passButton => {
         const pass = passButton.dataset.pass;
         passButton.onclick = async () => {
-            if (!hasApiCredentials()) return showToast('API Key missing (Settings).', 'error');
+            if (!ExperimentalWorldsHost.hasApiCredentials()) return ExperimentalWorldsHost.notify('API Key missing (Settings).', 'error');
             container.querySelectorAll('.calibrate-pass-run').forEach(other => { other.disabled = true; });
             passButton.textContent = '⏳ Working...';
             passResults.innerHTML = `<div style="color:var(--text-3); font-size:0.85rem;">Reading the world for the ${escapeHTML(CALIBRATION_PASSES[pass]?.label || pass)} pass...</div>`;
@@ -2923,7 +2923,7 @@ function renderCalibrationPassFindings(world, host) {
     // Re-render the panel so Tier 0 reflects the change, then put these
     // proposals straight back — they are paid for and must not vanish.
     const afterApply = (count) => {
-        showToast(count
+        ExperimentalWorldsHost.notify(count
             ? `Applied ${count} change${count === 1 ? '' : 's'} — remember to Save World.`
             : 'That proposal was already represented, so it was closed without changing the world.', count ? 'success' : 'info');
         renderWorldAudit();
@@ -2960,7 +2960,7 @@ function renderCalibrationPassFindings(world, host) {
     if (dismissAll) dismissAll.onclick = () => {
         remainingIndexes.forEach(index => dismissed.add(index));
         renderCalibrationPassFindings(world, host);
-        showToast(`Dismissed ${remainingIndexes.length} proposal${remainingIndexes.length === 1 ? '' : 's'}.`, 'info');
+        ExperimentalWorldsHost.notify(`Dismissed ${remainingIndexes.length} proposal${remainingIndexes.length === 1 ? '' : 's'}.`, 'info');
     };
     const clear = host.querySelector('#calibrate-pass-clear');
     if (clear) clear.onclick = () => {
@@ -3041,7 +3041,7 @@ function renderWorldAutonomyHealthResult(world, host) {
 }
 
 function renderWorldAudit() {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     const container = document.getElementById('audit-results-container');
     if (!world || !container) return;
 
@@ -3062,7 +3062,7 @@ function renderWorldAudit() {
     // One model for every structured pass. Narration and JSON want opposite
     // models, and picking the wrong one here is what made calibration, the
     // chronicle classifier and the world turn all fail the same way.
-    const activeStructured = String(state.globalSettings.structuredModel || '').trim();
+    const activeStructured = String(ExperimentalWorldsState.globalSettings.structuredModel || '').trim();
     const structuredSection = `
         <div style="background:var(--surface2); padding:12px 14px; border-radius:10px; margin-bottom:18px; border:1px solid var(--border);">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
@@ -3083,7 +3083,7 @@ function renderWorldAudit() {
     // Calibration: everything the engine can repair on its own, with no API
     // call. Shown before the AI audit because it costs nothing and fixes the
     // faults that stop a world working at all.
-    const calibration = calibrateStructuralFindings(world, getAllPresets().find(p => p.id === world.activePresetId));
+    const calibration = calibrateStructuralFindings(world, ExperimentalWorldsHost.getAllPresets().find(p => p.id === world.activePresetId));
     const directlyFixableTypes = new Set(['set_start_location', 'raise_context_size', 'add_reciprocal_exit', 'set_map_type', 'set_containment', 'set_floor', 'connect_location']);
     const fixable = calibration.filter(f => directlyFixableTypes.has(f.type));
     const directoryHealthHtml = `${renderWorldMigrationSection(world)}<div class="world-health-card">
@@ -3232,7 +3232,7 @@ function renderWorldAudit() {
                 });
             });
 
-            showToast('Reference repaired!', 'success');
+            ExperimentalWorldsHost.notify('Reference repaired!', 'success');
             renderWorldAudit();
             renderWorldStudio(); // Refresh studio to show valid states
         };
@@ -3353,11 +3353,11 @@ function parseAuditFindings(raw) {
 }
 
 async function runAIWorldAudit() {
-    const world = state.editingWorld;
+    const world = ExperimentalWorldsState.editingWorld;
     const btn = document.getElementById('run-ai-audit-btn');
     const results = document.getElementById('ai-audit-results');
     if (!world || !results) return;
-    if (!hasApiCredentials()) return showToast('API Key missing (Settings).', 'error');
+    if (!ExperimentalWorldsHost.hasApiCredentials()) return ExperimentalWorldsHost.notify('API Key missing (Settings).', 'error');
 
     btn.disabled = true;
     btn.textContent = '⏳ Auditing...';
@@ -3386,11 +3386,11 @@ Return ONLY JSON:
         if (extraNudge) messages.push({ role: 'user', content: extraNudge });
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10 * 60 * 1000);
-        const response = await fetch(apiBase() + '/chat/completions', {
+        const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
             method: 'POST',
             signal: controller.signal,
-            headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify(applyOpenRouterRouting({
+            headers: { 'Content-Type': 'application/json', ...ExperimentalWorldsHost.authHeaders() },
+            body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({
                 model: structuredModelFor(world),
                 max_tokens: 4000, // reasoning models eat budget before emitting content
                 messages
@@ -3448,9 +3448,9 @@ Return ONLY JSON:
                     fixBtn.textContent = '✔ Applied';
                     renderWorldStudio();
                     updateWorldTokenCount();
-                    showToast('Fix applied — remember to Save World.', 'success');
+                    ExperimentalWorldsHost.notify('Fix applied — remember to Save World.', 'success');
                 } else {
-                    showToast('Could not apply: target or field not found/allowed.', 'error');
+                    ExperimentalWorldsHost.notify('Could not apply: target or field not found/allowed.', 'error');
                 }
             };
         });
@@ -3633,7 +3633,7 @@ function invalidateEpisodicFrom(session, msgIndex) {
 
     // Chat v2 memories live in the continuity store, outside the transcript.
     // Remove every derived record whose provenance touches the rewritten tail.
-    const continuity = state.chatContinuities?.[session.continuityId];
+    const continuity = ExperimentalWorldsState.chatContinuities?.[session.continuityId];
     if (continuity && Array.isArray(continuity.records)) {
         const invalidMessageIds = new Set((session.messages || []).slice(msgIndex).map(message => message.id).filter(Boolean));
         const before = continuity.records.length;
@@ -3745,7 +3745,7 @@ async function consolidateSessionEpisodicMemoryRun(session, config) {
     const CONSOLIDATION_CHUNK_SIZE = 8;
     if (currentLen - lastIdx < CONSOLIDATION_CHUNK_SIZE) return;
     
-    if (!hasApiCredentials()) {
+    if (!ExperimentalWorldsHost.hasApiCredentials()) {
         console.warn('Consolidation: Skipping - API Key missing.');
         return;
     }
@@ -3770,7 +3770,7 @@ async function consolidateSessionEpisodicMemoryRun(session, config) {
         } else if (m.role === 'assistant' || m.role === 'dm') {
             prefix = configName;
             if (m.charId) {
-                const char = state.characters.find(c => c.id === m.charId);
+                const char = ExperimentalWorldsState.characters.find(c => c.id === m.charId);
                 if (char) prefix = char.name;
             }
         }
@@ -3786,16 +3786,16 @@ async function consolidateSessionEpisodicMemoryRun(session, config) {
     try {
         // FIX 3: Use a dedicated fast model — never the character's full model
         // A flash-tier model is sufficient and avoids context limit / cost issues
-        const consolidationModel = state.globalSettings?.consolidationModel
-            || (isLocalProvider() ? state.globalSettings.defaultModel : 'google/gemini-flash-1.5-8b');
+        const consolidationModel = ExperimentalWorldsState.globalSettings?.consolidationModel
+            || (ExperimentalWorldsHost.isLocalProvider() ? ExperimentalWorldsState.globalSettings.defaultModel : 'google/gemini-flash-1.5-8b');
 
-        const response = await fetch(apiBase() + '/chat/completions', {
+        const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
             method: 'POST',
             headers: {
-                ...authHeaders(),
+                ...ExperimentalWorldsHost.authHeaders(),
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(applyOpenRouterRouting({
+            body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({
                 model: consolidationModel,
                 max_tokens: isChatMemory ? 1100 : 500,
                 messages: [
@@ -3858,7 +3858,7 @@ Begin your response with: [EPISODIC ARCHIVE]:`
                 sourceMessageIds,
                 startIndex: lastIdx,
                 endIndex: chunkEnd,
-                personaId: state.activePersonaId || ''
+                personaId: ExperimentalWorldsState.activePersonaId || ''
             });
             pendingEmbeddings = inserted;
             totalMemories = continuity.records.filter(record => record.status !== 'superseded').length;
@@ -3874,7 +3874,7 @@ Begin your response with: [EPISODIC ARCHIVE]:`
         }
         session.lastConsolidatedIndex = chunkEnd;
 
-        await saveState();
+        await ExperimentalWorldsHost.persist();
 
         // Raw structured records are already durable. Vector enrichment is a
         // second phase, so closing the app or losing the embedding provider can
@@ -3884,11 +3884,11 @@ Begin your response with: [EPISODIC ARCHIVE]:`
                 try { await hydrateChatMemoryEmbedding(record); }
                 catch (error) { console.warn('Memory vector enrichment failed; hybrid text recall remains active.', error); }
             }
-            await window.ExperimentalWorldsHost?.persistSharedContinuities?.(state.chatContinuities);
+            await window.ExperimentalWorldsHost?.persistSharedContinuities?.(ExperimentalWorldsState.chatContinuities);
         }
 
         // FIX 4: Visible feedback so you know it actually ran
-        showToast(`🧠 Memory archived (${totalMemories} active)`, 'info');
+        ExperimentalWorldsHost.notify(`🧠 Memory archived (${totalMemories} active)`, 'info');
         console.log(`Consolidation saved. Total active memories: ${totalMemories}`);
     } catch (e) {
         // Do NOT update lastConsolidatedIndex on failure — will retry next turn
@@ -3932,11 +3932,11 @@ function setupVectorMemoryViewerEvents() {
     
     if (worldOpenBtn) {
         worldOpenBtn.onclick = () => {
-            const world = state.worlds.find(item => item.id === state.activeWorldId);
+            const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
             const sess = getCurrentWorldSession();
-            if (world && sess && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
-                const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
-                window.HordeSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
+            if (world && sess && window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
+                const protocol = window.ExperimentalWorldsSidecarHooks.normalizeWorldTimeline(world, sess);
+                window.ExperimentalWorldsSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
             }
             currentVectorTab = 'episodic';
             overlay.classList.remove('hidden');
@@ -3996,18 +3996,18 @@ function setupVectorMemoryViewerEvents() {
         deleteAllBtn.onclick = async () => {
             const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
             if (!isWorld || !['episodic', 'cognition', 'unresolved'].includes(currentVectorTab)) {
-                return showToast('This view has no independently stored records to delete.', 'error');
+                return ExperimentalWorldsHost.notify('This view has no independently stored records to delete.', 'error');
             }
             const sess = getCurrentWorldSession();
-            if (!sess) return showToast('No active world session.', 'error');
+            if (!sess) return ExperimentalWorldsHost.notify('No active world session.', 'error');
             if (currentVectorTab === 'episodic') {
-                if (window.HordeSidecarHooks?.isSidecarWorld?.(state.worlds.find(world => world.id === state.activeWorldId), sess)) {
-                    const graph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar);
+                if (window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(ExperimentalWorldsState.worlds.find(world => world.id === ExperimentalWorldsState.activeWorldId), sess)) {
+                    const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar);
                     if (graph) { graph.worldHistory = []; graph.episodes = []; graph.scenes = []; graph.sequences = []; graph.lastEpisodeTurnCount = 0; graph.locationReferences = []; graph.cognition = []; sess.sidecar.jobs = []; }
                 } else sess.episodicMemories = [];
             } else {
-                const graph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar);
-                if (!graph) return showToast('Sidecar memory is unavailable for this timeline.', 'error');
+                const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar);
+                if (!graph) return ExperimentalWorldsHost.notify('Sidecar memory is unavailable for this timeline.', 'error');
                 if (currentVectorTab === 'cognition') {
                     const characterId = characterFilter?.value || '';
                     graph.cognition = graph.cognition.filter(memory => characterId && memory.characterId !== characterId);
@@ -4015,9 +4015,9 @@ function setupVectorMemoryViewerEvents() {
                     graph.locationReferences = graph.locationReferences.filter(reference => reference.locationId || reference.status === 'resolved');
                 }
             }
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             renderVectorMemoryList(queryInput?.value.trim() || '');
-            showToast('Only records in this inspector view were deleted.', 'success');
+            ExperimentalWorldsHost.notify('Only records in this inspector view were deleted.', 'success');
         };
     }
 
@@ -4025,12 +4025,12 @@ function setupVectorMemoryViewerEvents() {
         vectorizeListedBtn.onclick = async () => {
             const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
             const sess = getCurrentWorldSession();
-            const graph = isWorld && window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecar);
+            const graph = isWorld && window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess?.sidecar);
             if (!graph || !['episodic', 'cognition', 'locations', 'unresolved'].includes(currentVectorTab)) {
-                return showToast('Choose a Sidecar memory tab first.', 'info');
+                return ExperimentalWorldsHost.notify('Choose a Sidecar memory tab first.', 'info');
             }
             if (currentVectorTab !== 'episodic' && (!graph.worldHistory.some(record => Array.isArray(record.embedding)) || !graph.episodes.some(record => Array.isArray(record.embedding)))) {
-                return showToast('Vectorization cannot continue yet. Vectorize committed World History and at least one Episode first.', 'error');
+                return ExperimentalWorldsHost.notify('Vectorization cannot continue yet. Vectorize committed World History and at least one Episode first.', 'error');
             }
             const characterId = characterFilter?.value || '';
             const records = currentVectorTab === 'episodic'
@@ -4038,9 +4038,9 @@ function setupVectorMemoryViewerEvents() {
                 : currentVectorTab === 'cognition'
                 ? graph.cognition.filter(record => !characterId || record.characterId === characterId)
                 : currentVectorTab === 'locations'
-                    ? (state.worlds.find(world => world.id === state.activeWorldId)?.locations || [])
+                    ? (ExperimentalWorldsState.worlds.find(world => world.id === ExperimentalWorldsState.activeWorldId)?.locations || [])
                     : graph.locationReferences.filter(record => !record.locationId && record.status !== 'resolved');
-            const world = state.worlds.find(item => item.id === state.activeWorldId);
+            const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
             records.forEach(record => { if (!record.text && !record.vectorText) record.vectorText = currentVectorTab === 'locations' ? sidecarLocationEmbeddingText(world, record) : `${record.name || ''} ${record.evidence || ''}`.trim(); });
             vectorizeListedBtn.disabled = true;
             vectorizeListedBtn.textContent = 'Vectorizing…';
@@ -4050,10 +4050,10 @@ function setupVectorMemoryViewerEvents() {
                     const status = document.getElementById('vector-memory-status');
                     if (status) status.textContent = `Vectorization progress: ${progress.completed}/${progress.attempted}`;
                 } });
-                await saveState();
+                await ExperimentalWorldsHost.persist();
                 renderVectorMemoryList(queryInput?.value.trim() || '');
-                showToast(`Vectorized ${result.completed}/${result.attempted} derived records.`, 'success');
-            } catch (error) { showToast(`Vectorization failed: ${error.message}`, 'error'); }
+                ExperimentalWorldsHost.notify(`Vectorized ${result.completed}/${result.attempted} derived records.`, 'success');
+            } catch (error) { ExperimentalWorldsHost.notify(`Vectorization failed: ${error.message}`, 'error'); }
             finally { vectorizeListedBtn.disabled = false; vectorizeListedBtn.textContent = 'Vectorize listed'; }
         };
     }
@@ -4082,10 +4082,10 @@ function setupVectorMemoryViewerEvents() {
             const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
             try {
                 if (isWorld) {
-                    const world = state.worlds.find(w => w.id === state.activeWorldId);
+                    const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
                     const sess = getCurrentWorldSession();
                     if (!sess || !world) throw new Error('No active world session');
-                    if (window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
+                    if (window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
                         const memory = effectiveSidecarMemoryConfig(world);
                         await runSidecarBackgroundMemoryJobs(world, sess, { force: true, source: 'manual_force_archive', priority: 'manual' });
                         renderVectorMemoryList();
@@ -4100,8 +4100,8 @@ function setupVectorMemoryViewerEvents() {
                     }
                 } else {
                     const session = getCurrentSession();
-                    const config = state.characters.find(c => c.id === state.activeCharId)
-                                || state.rooms.find(r => r.id === state.activeRoomId);
+                    const config = ExperimentalWorldsState.characters.find(c => c.id === ExperimentalWorldsState.activeCharId)
+                                || ExperimentalWorldsState.rooms.find(r => r.id === ExperimentalWorldsState.activeRoomId);
                     if (!session || !config) throw new Error('No active chat session');
                     // Full rebuild: clear stale memories and re-consolidate from scratch
                     // (otherwise we'd duplicate the entire archive on top of old entries).
@@ -4116,7 +4116,7 @@ function setupVectorMemoryViewerEvents() {
                 // Refresh the list
                 renderVectorMemoryList();
             } catch (e) {
-                showToast('Force archive failed: ' + e.message, 'error');
+                ExperimentalWorldsHost.notify('Force archive failed: ' + e.message, 'error');
             } finally {
                 forceArchiveBtn.disabled = false;
                 forceArchiveBtn.textContent = '⚡ Force Archive Now';
@@ -4149,8 +4149,8 @@ function updateVectorTabUI() {
 
     const selected = characterFilter.value;
     const sess = getCurrentWorldSession();
-    const world = state.worlds.find(w => w.id === state.activeWorldId);
-    const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecar);
+    const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
+    const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess?.sidecar);
     const ids = [...new Set((graph?.cognition || []).map(record => record.characterId).filter(Boolean))];
     const names = new Map((world?.entities || []).map(entity => [entity.id, entity.name || entity.id]));
     characterFilter.innerHTML = '<option value="">All characters</option>' + ids.map(id =>
@@ -4174,9 +4174,9 @@ async function renderVectorMemoryList(filterQuery = "") {
         // Retrieve rolling episodic summaries
         if (isWorld) {
             const sess = getCurrentWorldSession();
-            const world = state.worlds.find(item => item.id === state.activeWorldId);
-            const graph = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)
-                ? window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar) : null;
+            const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
+            const graph = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)
+                ? window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar) : null;
             if (graph) {
                 currentEpisodicStore = [...graph.worldHistory, ...graph.episodes, ...(graph.scenes || []), ...(graph.sequences || [])];
                 candidates = currentEpisodicStore.filter(record => record.status === 'active').map(record => ({
@@ -4197,7 +4197,7 @@ async function renderVectorMemoryList(filterQuery = "") {
         }
     } else if (currentVectorTab === 'cognition' && isWorld) {
         const sess = getCurrentWorldSession();
-        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecar);
+        const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess?.sidecar);
         const characterId = document.getElementById('vector-character-filter')?.value || '';
         candidates = (graph?.cognition || [])
             .filter(memory => memory.status !== 'superseded' && (!characterId || memory.characterId === characterId))
@@ -4208,12 +4208,12 @@ async function renderVectorMemoryList(filterQuery = "") {
                 sourceSessionId: memory.sourceEpisodeId || memory.sourceTurnIds?.join(', ')
             }));
     } else if (currentVectorTab === 'locations' && isWorld) {
-        const world = state.worlds.find(item => item.id === state.activeWorldId);
+        const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
         candidates = (world?.locations || []).map(location => ({ text: sidecarLocationEmbeddingText(world, location), embedding: location.embedding,
             source: 'location', ref: location, type: location.mapType || 'location', status: 'canonical', importance: 0.8, sourceSessionId: location.id }));
     } else if (currentVectorTab === 'unresolved' && isWorld) {
         const sess = getCurrentWorldSession();
-        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecar);
+        const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess?.sidecar);
         candidates = (graph?.locationReferences || [])
             .filter(reference => !reference.locationId && reference.status !== 'resolved')
             .map(reference => ({
@@ -4225,7 +4225,7 @@ async function renderVectorMemoryList(filterQuery = "") {
     } else {
         // Retrieve Biography & Lore memories
         if (isWorld) {
-            const world = state.worlds.find(w => w.id === state.activeWorldId);
+            const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
             const sess = getCurrentWorldSession();
             if (world && sess) {
                 // Return all entities in current location
@@ -4253,17 +4253,17 @@ async function renderVectorMemoryList(filterQuery = "") {
         } else {
             const session = getCurrentSession();
             if (session) {
-                const config = state.characters.find(c => c.id === state.activeCharId) || 
-                               state.rooms.find(r => r.id === state.activeRoomId);
+                const config = ExperimentalWorldsState.characters.find(c => c.id === ExperimentalWorldsState.activeCharId) ||
+                               ExperimentalWorldsState.rooms.find(r => r.id === ExperimentalWorldsState.activeRoomId);
                 if (config) {
-                    if (state.activeRoomId) {
+                    if (ExperimentalWorldsState.activeRoomId) {
                         // Room Scenario Context
                         if (config.scenario) {
                             candidates.push({ text: `[ROOM SCENARIO] ${config.scenario}`, source: 'biography' });
                         }
                         // Room: collect all participant memories and bios
                         (config.characterIds || []).forEach(cid => {
-                            const tc = state.characters.find(c => c.id === cid);
+                            const tc = ExperimentalWorldsState.characters.find(c => c.id === cid);
                             if (tc) {
                                 if (tc.desc) {
                                     candidates.push({ text: `[${tc.name} DESCRIPTION] ${tc.desc}`, source: 'biography' });
@@ -4299,7 +4299,7 @@ async function renderVectorMemoryList(filterQuery = "") {
     const statusEl = document.getElementById('vector-memory-status');
     if (statusEl && isWorld) {
         const sess = getCurrentWorldSession();
-        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecar);
+        const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess?.sidecar);
         const scoped = currentVectorTab === 'cognition' && document.getElementById('vector-character-filter')?.value
             ? candidates.filter(candidate => candidate.ref?.characterId === document.getElementById('vector-character-filter').value) : candidates;
         const missing = scoped.filter(candidate => !Array.isArray(candidate.ref?.embedding)).length;
@@ -4424,9 +4424,9 @@ async function renderVectorMemoryList(filterQuery = "") {
         // unresolved-place records are independently removable, but not silently
         // rewritten: regeneration preserves their source provenance.
         const editable = currentVectorTab === 'episodic' && item.ref && currentEpisodicStore
-            && !(isWorld && window.HordeSidecarHooks?.isSidecarWorld?.(state.worlds.find(world => world.id === state.activeWorldId), getCurrentWorldSession()));
+            && !(isWorld && window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(ExperimentalWorldsState.worlds.find(world => world.id === ExperimentalWorldsState.activeWorldId), getCurrentWorldSession()));
         const removableSidecarRecord = isWorld && ['episodic', 'cognition', 'unresolved'].includes(currentVectorTab)
-            && item.ref && window.HordeSidecarHooks?.isSidecarWorld?.(state.worlds.find(world => world.id === state.activeWorldId), getCurrentWorldSession());
+            && item.ref && window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(ExperimentalWorldsState.worlds.find(world => world.id === ExperimentalWorldsState.activeWorldId), getCurrentWorldSession());
         const escaped = (item.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
         const actionBtns = editable ? `
@@ -4468,7 +4468,7 @@ async function renderVectorMemoryList(filterQuery = "") {
             pinBtn.onclick = async () => {
                 ref.pinned = !ref.pinned;
                 ref.updatedAt = Date.now();
-                await saveState();
+                await ExperimentalWorldsHost.persist();
                 renderVectorMemoryList(filterQuery);
             };
 
@@ -4476,9 +4476,9 @@ async function renderVectorMemoryList(filterQuery = "") {
                 const i = currentEpisodicStore.indexOf(ref);
                 if (i === -1) return;
                 currentEpisodicStore.splice(i, 1);
-                await saveState();
+                await ExperimentalWorldsHost.persist();
                 renderVectorMemoryList(filterQuery);
-                showToast('Memory deleted', 'success');
+                ExperimentalWorldsHost.notify('Memory deleted', 'success');
             };
 
             editBtn.onclick = async () => {
@@ -4490,19 +4490,19 @@ async function renderVectorMemoryList(filterQuery = "") {
                     editBtn.textContent = '✓ Save';
                 } else {
                     const newText = box.value.trim();
-                    if (!newText) return showToast('Memory text cannot be empty', 'error');
+                    if (!newText) return ExperimentalWorldsHost.notify('Memory text cannot be empty', 'error');
                     ref.text = newText;
                     try {
-                        ref.embedding = await getEmbedding(newText);
+                        ref.embedding = await ExperimentalWorldsHost.getEmbedding(newText);
                         ref.embeddingNamespace = HordeVectorMemory.namespace();
                         ref.updatedAt = Date.now();
                     } catch (e) {
                         console.warn('Re-embed failed, keeping text only:', e);
                         delete ref.embedding;
                     }
-                    await saveState();
+                    await ExperimentalWorldsHost.persist();
                     renderVectorMemoryList(filterQuery);
-                    showToast('Memory updated', 'success');
+                    ExperimentalWorldsHost.notify('Memory updated', 'success');
                 }
             };
         }
@@ -4511,7 +4511,7 @@ async function renderVectorMemoryList(filterQuery = "") {
             const delBtn = card.querySelector('.sidecar-memory-del-btn');
             delBtn.onclick = async () => {
                 const sess = getCurrentWorldSession();
-                const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecar);
+                const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess?.sidecar);
                 if (!graph) return;
                 if (currentVectorTab === 'cognition') {
                     graph.cognition = graph.cognition.filter(record => record !== item.ref);
@@ -4522,9 +4522,9 @@ async function renderVectorMemoryList(filterQuery = "") {
                 } else {
                     graph.worldHistory = graph.worldHistory.filter(record => record !== item.ref);
                 }
-                await saveState();
+                await ExperimentalWorldsHost.persist();
                 renderVectorMemoryList(filterQuery);
-                showToast('Derived memory removed.', 'success');
+                ExperimentalWorldsHost.notify('Derived memory removed.', 'success');
             };
         }
 

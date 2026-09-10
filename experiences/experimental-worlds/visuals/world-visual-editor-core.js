@@ -343,9 +343,9 @@ function renderWorldVisualActiveOutfit() {
                 await deriveWorldNpcPortraitDisplay(editor.world, editor.target);
                 pruneWorldMediaAssets(editor.world);
                 refreshWorldVisualEditorAfterAsset();
-                showToast(`Generated ${outfit.name}.`, 'success');
+                ExperimentalWorldsHost.notify(`Generated ${outfit.name}.`, 'success');
             } catch (error) {
-                showToast(`Outfit generation failed: ${error.message}`, 'error');
+                ExperimentalWorldsHost.notify(`Outfit generation failed: ${error.message}`, 'error');
             } finally {
                 button.disabled = false;
                 button.textContent = original;
@@ -391,7 +391,7 @@ async function applyWorldOutfitAndGenerate(event) {
     const button = event.currentTarget;
     const selectedId = String(editor.target.visuals?.currentOutfitId || '');
     const outfit = selectWorldOutfit(editor.world, editor.target, selectedId, { preferImage: false });
-    if (!outfit) return showToast('Select an outfit before applying it.', 'error');
+    if (!outfit) return ExperimentalWorldsHost.notify('Select an outfit before applying it.', 'error');
     renderWorldVisualActiveOutfit();
     const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
     const instruction = `Replace the current outfit with the complete authored outfit “${outfit.name}”: ${outfit.description || '(the outfit has not been described yet; use the authored title only)'}. Preserve the person, identity, pose, framing, lighting, composition and every unrelated detail.`;
@@ -634,7 +634,7 @@ async function runStructuredVisualAuthoring(operation, event) {
     if (!editor) return false;
     const project = saveStructuredVisualEditorDraft();
     const request = String(document.getElementById('world-visual-structured-request')?.value || '').trim();
-    if (!request) return showToast('Describe the image or the change you want first.', 'error');
+    if (!request) return ExperimentalWorldsHost.notify('Describe the image or the change you want first.', 'error');
     const button = event?.currentTarget;
     const original = button?.textContent || '';
     if (button) { button.disabled = true; button.textContent = operation === 'compile' ? 'Compiling…' : operation === 'rebuild' ? 'Rebuilding…' : 'Refining…'; }
@@ -671,15 +671,15 @@ async function runStructuredVisualAuthoring(operation, event) {
         } else {
             const current = JSON.stringify(project.structuredDocument, null, 2);
             const history = operation === 'rebuild' ? JSON.stringify(project.revisions.slice(-8), null, 2) : '';
-            const body = applyOpenRouterRouting({
-                model: String(state.globalSettings?.structuredModel || '').trim() || editor.world?.model || state.globalSettings?.defaultModel,
+            const body = ExperimentalWorldsHost.applyOpenRouterRouting({
+                model: String(ExperimentalWorldsState.globalSettings?.structuredModel || '').trim() || editor.world?.model || ExperimentalWorldsState.globalSettings?.defaultModel,
                 max_tokens: 4200, temperature: 0.15,
                 messages: [
                     { role: 'system', content: `${operation === 'rebuild' ? 'You semantically rebuild a structured visual document from authored intent and accepted revision history.' : operation === 'refine' ? 'You revise an existing structured visual document with the author’s instruction.' : 'You compile an authored image request into a structured visual document.'}\n\n${structuredVisualAuthoringSchemaDescription()}\nDo not invent visible character facts from persona or mood. Persona is only soft context when explicitly relevant. Do not return markdown.` },
                     { role: 'user', content: [`AUTHOR REQUEST:\n${request}`, `CURRENT DOCUMENT:\n${current}`, history ? `ACCEPTED REVISION HISTORY:\n${history}` : ''].filter(Boolean).join('\n\n---\n\n') }
                 ]
             }, editor.world, { scope: 'utility' });
-            const response = await fetch(apiBase() + '/chat/completions', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', { method: 'POST', headers: { ...ExperimentalWorldsHost.authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             if (!response.ok) throw new Error(`${response.status}: ${(await response.text()).slice(0, 240)}`);
             const data = await response.json();
             const next = parseStructuredVisualJson(data.choices?.[0]?.message?.content || '');
@@ -692,11 +692,11 @@ async function runStructuredVisualAuthoring(operation, event) {
             recordStructuredVisualRevision(project, { operation, authoredDocument: next, resolvedOutputPolicy: 'promote', provenance: `horde_model_${operation}` });
         }
         renderStructuredVisualDocumentEditor(project);
-        await saveState();
-        showToast(`Structured visual ${operation} complete. Review the document, then generate when ready.`, 'success');
+        await ExperimentalWorldsHost.persist();
+        ExperimentalWorldsHost.notify(`Structured visual ${operation} complete. Review the document, then generate when ready.`, 'success');
         return true;
     } catch (error) {
-        showToast(`Structured visual ${operation} failed — ${error.message}`, 'error');
+        ExperimentalWorldsHost.notify(`Structured visual ${operation} failed — ${error.message}`, 'error');
         return false;
     } finally {
         if (button) { button.disabled = false; button.textContent = original; }
@@ -880,13 +880,13 @@ function renderWorldOutfitManager() {
         row.querySelector('.world-outfit-wear')?.addEventListener('click', () => {
             selectWorldOutfit(manager.world, entity, outfit.id);
             renderWorldOutfitManager();
-            showToast(`${entity.name || 'This character'} now wears “${outfit.name}”.${(outfit.imageAssetIds || []).length ? ' Its latest outfit image is now active.' : ' Generate a portrait when you want one.'}`, 'success');
+            ExperimentalWorldsHost.notify(`${entity.name || 'This character'} now wears “${outfit.name}”.${(outfit.imageAssetIds || []).length ? ' Its latest outfit image is now active.' : ' Generate a portrait when you want one.'}`, 'success');
         });
         row.querySelector('.world-outfit-generate')?.addEventListener('click', () => {
             selectWorldOutfit(manager.world, entity, outfit.id);
             closeWorldOutfitManager();
             openWorldVisualEditor(manager.world, entity, 'npc');
-            showToast(`“${outfit.name}” is worn for the next portrait. Review the brief, then Generate new.`, 'info');
+            ExperimentalWorldsHost.notify(`“${outfit.name}” is worn for the next portrait. Review the brief, then Generate new.`, 'info');
         });
         row.querySelector('.world-outfit-edit')?.addEventListener('click', () => {
             manager.editId = outfit.id;
@@ -903,7 +903,7 @@ function renderWorldOutfitManager() {
                 entity.currentOutfit = '';
             }
             renderWorldOutfitManager();
-            showToast(`Deleted “${outfit.name}”.`, 'success');
+            ExperimentalWorldsHost.notify(`Deleted “${outfit.name}”.`, 'success');
         });
     });
 }
@@ -920,7 +920,7 @@ function ensureWorldOutfitManagerBound() {
         const entity = manager.entity;
         const name = String(document.getElementById('world-outfit-name')?.value || '').trim().slice(0, 80);
         const description = String(document.getElementById('world-outfit-description')?.value || '').trim().slice(0, 1200);
-        if (!name || !description) return showToast('An outfit needs a name and a description.', 'error');
+        if (!name || !description) return ExperimentalWorldsHost.notify('An outfit needs a name and a description.', 'error');
         entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
         const outfits = worldOutfits(entity);
         if (manager.editId) {
@@ -959,7 +959,7 @@ function ensureWorldOutfitManagerBound() {
         const original = button.textContent;
         const instruction = String(document.getElementById('world-outfit-instruction')?.value || '').trim();
         const name = String(document.getElementById('world-outfit-name')?.value || '').trim();
-        if (!instruction && !name) return showToast('Name the outfit or write an instruction first.', 'error');
+        if (!instruction && !name) return ExperimentalWorldsHost.notify('Name the outfit or write an instruction first.', 'error');
         button.disabled = true;
         button.textContent = 'Designing…';
         try {
@@ -968,9 +968,9 @@ function ensureWorldOutfitManagerBound() {
                 manager.entity, manager.world, 'fill',
                 [instruction, name ? `Outfit name: ${name}` : ''].filter(Boolean).join('\n'));
             document.getElementById('world-outfit-description').value = text;
-            showToast('Outfit designed. Review it, then add it.', 'success');
+            ExperimentalWorldsHost.notify('Outfit designed. Review it, then add it.', 'success');
         } catch (error) {
-            showToast(`Outfit design failed — ${error.message}`, 'error');
+            ExperimentalWorldsHost.notify(`Outfit design failed — ${error.message}`, 'error');
         } finally {
             button.disabled = false;
             button.textContent = original;
@@ -982,7 +982,7 @@ function exportCurrentWorldVisual() {
     const editor = worldVisualEditorState;
     if (!editor) return;
     const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
-    if (!source) return showToast('There is no selected image to export.', 'error');
+    if (!source) return ExperimentalWorldsHost.notify('There is no selected image to export.', 'error');
     const mime = source.match(/^data:(image\/[a-z0-9.+-]+)/i)?.[1]?.toLowerCase() || 'image/jpeg';
     const extension = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : mime.includes('gif') ? 'gif' : 'jpg';
     const stem = String(editor.target.name || (editor.kind === 'npc' ? 'portrait' : 'location'))
@@ -993,7 +993,7 @@ function exportCurrentWorldVisual() {
     anchor.href = source;
     anchor.download = `${stem}_${editor.kind === 'npc' ? 'portrait' : 'location'}_${number}.${extension}`;
     anchor.click();
-    showToast(`Exported image ${number} for ${editor.target.name || 'this visual'}.`, 'success');
+    ExperimentalWorldsHost.notify(`Exported image ${number} for ${editor.target.name || 'this visual'}.`, 'success');
 }
 
 // Refine prompt: the AI applies the author's revision instruction to the
@@ -1006,7 +1006,7 @@ async function refineWorldVisualPromptWithAI(event, instructionOverride = '', op
     if (!editor) return false;
     const button = event.currentTarget;
     const instruction = String(instructionOverride || document.getElementById('world-visual-correction').value || '').trim();
-    if (!instruction) { showToast('Write the revision you want applied before refining the prompt.', 'error'); return false; }
+    if (!instruction) { ExperimentalWorldsHost.notify('Write the revision you want applied before refining the prompt.', 'error'); return false; }
     const originalButtonText = button.textContent;
     const isNpc = editor.kind === 'npc';
     const identityLabels = {
@@ -1039,9 +1039,9 @@ async function refineWorldVisualPromptWithAI(event, instructionOverride = '', op
     button.disabled = true;
     button.textContent = 'Refining…';
     try {
-        const model = String(state.globalSettings?.structuredModel || '').trim()
-            || editor.world?.model || state.globalSettings?.defaultModel;
-        const body = applyOpenRouterRouting({
+        const model = String(ExperimentalWorldsState.globalSettings?.structuredModel || '').trim()
+            || editor.world?.model || ExperimentalWorldsState.globalSettings?.defaultModel;
+        const body = ExperimentalWorldsHost.applyOpenRouterRouting({
             model,
             max_tokens: 2000,
             messages: [
@@ -1063,9 +1063,9 @@ async function refineWorldVisualPromptWithAI(event, instructionOverride = '', op
                 }
             ]
         }, editor.world, { scope: 'utility' });
-        const response = await fetch(apiBase() + '/chat/completions', {
+        const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
             method: 'POST',
-            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            headers: { ...ExperimentalWorldsHost.authHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         });
         if (!response.ok) throw new Error(`${response.status}: ${(await response.text()).slice(0, 160)}`);
@@ -1094,10 +1094,10 @@ async function refineWorldVisualPromptWithAI(event, instructionOverride = '', op
         // Persist the reworked text with the visual settings so Generate new
         // (the confirm step) and a later editor open both see it.
         saveWorldVisualEditorFields();
-        showToast(applied.length ? `Refined the prompt: ${applied.join(', ')}. Review the fields, then Generate new.` : 'Applied the outfit refinement instruction. Generate new will use it.', 'success');
+        ExperimentalWorldsHost.notify(applied.length ? `Refined the prompt: ${applied.join(', ')}. Review the fields, then Generate new.` : 'Applied the outfit refinement instruction. Generate new will use it.', 'success');
         return true;
     } catch (error) {
-        showToast(`Refine prompt failed — ${error.message}`, 'error');
+        ExperimentalWorldsHost.notify(`Refine prompt failed — ${error.message}`, 'error');
         return false;
     } finally {
         button.disabled = false;
@@ -1115,8 +1115,8 @@ async function runWorldVisual4D(event) {
     const complaint = String(document.getElementById('world-visual-correction')?.value || '').trim();
     const assetId = worldVisualEditorAssetId(editor);
     const asset = worldMediaAsset(editor.world, assetId);
-    if (!asset) return showToast('Generate or select an image before running 4D.', 'error');
-    if (!complaint) return showToast('Describe what the provider got wrong first.', 'error');
+    if (!asset) return ExperimentalWorldsHost.notify('Generate or select an image before running 4D.', 'error');
+    if (!complaint) return ExperimentalWorldsHost.notify('Describe what the provider got wrong first.', 'error');
     button.disabled = true;
     const original = button.textContent;
     button.textContent = 'Diagnosing…';
@@ -1130,17 +1130,17 @@ async function runWorldVisual4D(event) {
             outfit: worldCurrentOutfit(editor.target),
             outfitSnapshot: worldCurrentOutfit(editor.target)?.description || ''
         }, worldImageGuideForTarget(editor.world, editor.target, 'npc'));
-        const model = String(state.globalSettings?.structuredModel || '').trim()
-            || editor.world?.model || state.globalSettings?.defaultModel;
-        const body = applyOpenRouterRouting({
+        const model = String(ExperimentalWorldsState.globalSettings?.structuredModel || '').trim()
+            || editor.world?.model || ExperimentalWorldsState.globalSettings?.defaultModel;
+        const body = ExperimentalWorldsHost.applyOpenRouterRouting({
             model, max_tokens: 2400,
             messages: [
                 { role: 'system', content: 'You diagnose a provider image misunderstanding. Return ONLY JSON: {"proposedChanges":[{"domain":"character|imageIntent|framing|look|outfit","field":"...","before":"...","after":"...","reason":"...","authority":"persistent|image-local"}]}. Never apply changes. Do not impose generic beauty standards. Persistent Character changes must be marked authority persistent.' },
                 { role: 'user', content: JSON.stringify({ complaint, character: spec.character, imageIntent: spec.imageIntent, framing: spec.framing, look: spec.look, outfit: spec.outfit, generatedAsset: { id: assetId, resolved: asset.resolvedStructuredPrompt, prompt: asset.prompt }, }) }
             ]
         }, editor.world, { scope: 'utility' });
-        const response = await fetch(apiBase() + '/chat/completions', {
-            method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
+            method: 'POST', headers: { ...ExperimentalWorldsHost.authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body)
         });
         if (!response.ok) throw new Error(`${response.status}: ${(await response.text()).slice(0, 200)}`);
         const data = await response.json();
@@ -1151,7 +1151,7 @@ async function runWorldVisual4D(event) {
         const changes = Array.isArray(proposal.proposedChanges) ? proposal.proposedChanges : [];
         if (!changes.length) throw new Error('the debugger found no field-level correction');
         const detail = changes.map(change => `${change.domain}.${change.field}\n${change.before || '(blank)'}\n→ ${change.after || '(blank)'}\n${change.reason || ''}`).join('\n\n');
-        showConfirmModal('Increase 4D 3D 3D 3D 3 — proposed correction', detail, async () => {
+        ExperimentalWorldsHost.confirmModal('Increase 4D 3D 3D 3D 3 — proposed correction', detail, async () => {
             const inputFor = change => {
                 if (change.domain === 'imageIntent' && change.field === 'authoredPrompt') return document.getElementById('world-visual-prompt');
                 if (change.domain === 'character' && change.field === 'appearance') return document.getElementById('world-visual-primary');
@@ -1165,10 +1165,10 @@ async function runWorldVisual4D(event) {
                 else if (input && change.authority === 'persistent') input.value = String(change.after || '').slice(0, 12000);
             });
             saveWorldVisualEditorFields();
-            showToast('4D correction accepted. Review the fields, then generate manually.', 'success');
+            ExperimentalWorldsHost.notify('4D correction accepted. Review the fields, then generate manually.', 'success');
         }, 'Apply proposal', 'Keep current state');
     } catch (error) {
-        showToast(`4D diagnosis failed — ${error.message}`, 'error');
+        ExperimentalWorldsHost.notify(`4D diagnosis failed — ${error.message}`, 'error');
     } finally {
         button.disabled = false;
         button.textContent = original;
@@ -1185,8 +1185,8 @@ async function runWorldVisualGeneration(revisionOnly, event) {
     const sourceAsset = revisionOnly ? worldMediaAsset(editor.world, worldVisualEditorAssetId(editor)) : null;
     const inheritedOutfit = editor.kind === 'npc'
         ? (worldCurrentOutfit(editor.target) || worldOutfitForAsset(editor.target, worldVisualEditorAssetId(editor))) : null;
-    if (revisionOnly && !referenceImage) return showToast('Select an existing image before revising it.', 'error');
-    if (revisionOnly && !correction) return showToast('Write the adjustment you want before revising the image.', 'error');
+    if (revisionOnly && !referenceImage) return ExperimentalWorldsHost.notify('Select an existing image before revising it.', 'error');
+    if (revisionOnly && !correction) return ExperimentalWorldsHost.notify('Write the adjustment you want before revising the image.', 'error');
     button.disabled = true;
     button.textContent = revisionOnly ? 'Revising...' : 'Generating...';
     try {
@@ -1248,11 +1248,11 @@ async function runWorldVisualGeneration(revisionOnly, event) {
             else editor.target.visuals.backgroundCorrection = '';
         }
         pruneWorldMediaAssets(editor.world);
-        await saveState();
+        await ExperimentalWorldsHost.persist();
         refreshWorldVisualEditorAfterAsset();
-        showToast(`${revisionOnly ? 'Revised' : 'Generated'} ${editor.target.name} as image ${worldVisualHistory(editor.world, editor.target, editor.kind).length}.`, 'success');
+        ExperimentalWorldsHost.notify(`${revisionOnly ? 'Revised' : 'Generated'} ${editor.target.name} as image ${worldVisualHistory(editor.world, editor.target, editor.kind).length}.`, 'success');
     } catch (error) {
-        showToast(`${revisionOnly ? 'Image revision' : 'Image generation'} failed: ${error.message}`, 'error');
+        ExperimentalWorldsHost.notify(`${revisionOnly ? 'Image revision' : 'Image generation'} failed: ${error.message}`, 'error');
     } finally {
         button.disabled = false;
         button.textContent = revisionOnly ? 'Refine image' : 'Generate new';
@@ -1265,7 +1265,7 @@ async function runWorldVisualCropFill(event) {
     if (!editor) return;
     const button = event.currentTarget;
     const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
-    if (!source) return showToast('Generate or select an image before using Crop & Fill.', 'error');
+    if (!source) return ExperimentalWorldsHost.notify('Generate or select an image before using Crop & Fill.', 'error');
     button.disabled = true;
     button.textContent = 'Filling…';
     try {
@@ -1315,9 +1315,9 @@ async function runWorldVisualCropFill(event) {
         else editor.target.visuals.backgroundCorrection = '';
         pruneWorldMediaAssets(editor.world);
         refreshWorldVisualEditorAfterAsset();
-        showToast(`Filled ${editor.target.name} into a ${aspectRatio} frame as image ${worldVisualHistory(editor.world, editor.target, editor.kind).length}.`, 'success');
+        ExperimentalWorldsHost.notify(`Filled ${editor.target.name} into a ${aspectRatio} frame as image ${worldVisualHistory(editor.world, editor.target, editor.kind).length}.`, 'success');
     } catch (error) {
-        showToast(`Crop & Fill failed: ${error.message}`, 'error');
+        ExperimentalWorldsHost.notify(`Crop & Fill failed: ${error.message}`, 'error');
     } finally {
         button.disabled = false;
         button.textContent = 'Crop & Fill';
@@ -1344,9 +1344,9 @@ function ensureWorldVisualEditorBound() {
             }
             const label = editor?.target?.name || 'Visual';
             closeWorldVisualEditor();
-            showToast(`${label} visual settings and profile frame saved.`, 'success');
+            ExperimentalWorldsHost.notify(`${label} visual settings and profile frame saved.`, 'success');
         } catch (error) {
-            showToast(`Could not save visual settings: ${error.message}`, 'error');
+            ExperimentalWorldsHost.notify(`Could not save visual settings: ${error.message}`, 'error');
         }
     };
     modal.addEventListener('click', event => { if (event.target === modal) closeWorldVisualEditor(); });
@@ -1383,7 +1383,7 @@ function ensureWorldVisualEditorBound() {
         const editor = worldVisualEditorState;
         if (!editor) return;
         const project = saveStructuredVisualEditorDraft();
-        if (project.structuredDocument.objects.length >= STRUCTURED_VISUAL_MAX_OBJECTS) return showToast(`A visual document can contain at most ${STRUCTURED_VISUAL_MAX_OBJECTS} authored objects.`, 'error');
+        if (project.structuredDocument.objects.length >= STRUCTURED_VISUAL_MAX_OBJECTS) return ExperimentalWorldsHost.notify(`A visual document can contain at most ${STRUCTURED_VISUAL_MAX_OBJECTS} authored objects.`, 'error');
         const id = newStructuredVisualObjectId('obj');
         project.structuredDocument.objects.push({ description: '', relationship: 'Related to the primary subject in the scene.' });
         project.objectOrder.push(id);
@@ -1407,11 +1407,11 @@ function ensureWorldVisualEditorBound() {
             project.hordeObjectMetadata = normalizeStructuredVisualObjectMetadata(project.hordeObjectMetadata, project.objectOrder);
             recordStructuredVisualRevision(project, { operation: 'manual', authoredDocument: next, provenance: 'raw_json_editor', resolvedOutputPolicy: 'promote' });
             renderStructuredVisualDocumentEditor(project);
-            await saveState();
+            await ExperimentalWorldsHost.persist();
             if (status) { status.textContent = 'Applied a valid structured-document revision.'; status.className = 'form-hint is-success'; }
         } catch (error) {
             if (status) { status.textContent = error.message; status.className = 'form-hint is-error'; }
-            showToast(`Structured JSON was not applied — ${error.message}`, 'error');
+            ExperimentalWorldsHost.notify(`Structured JSON was not applied — ${error.message}`, 'error');
         }
     });
     ['world-visual-primary', 'world-visual-prompt', 'world-visual-correction']
@@ -1439,7 +1439,7 @@ function ensureWorldVisualEditorBound() {
                 if (!displayId) throw new Error('The profile frame could not be derived from this image.');
                 pruneWorldMediaAssets(editor.world);
                 refreshWorldVisualEditorAfterAsset();
-                showToast(`Profile frame saved for ${editor.target.name}. The full image is preserved for future edits.`, 'success');
+                ExperimentalWorldsHost.notify(`Profile frame saved for ${editor.target.name}. The full image is preserved for future edits.`, 'success');
             } else {
                 const cropped = await cropWorldVisual(source,
                     document.getElementById('world-visual-aspect').value,
@@ -1453,10 +1453,10 @@ function ensureWorldVisualEditorBound() {
                 registerWorldVisualVariant(editor.world, editor.target, editor.kind, assetId);
                 pruneWorldMediaAssets(editor.world);
                 refreshWorldVisualEditorAfterAsset();
-                showToast(`Cropped ${editor.target.name} to the selected frame.`, 'success');
+                ExperimentalWorldsHost.notify(`Cropped ${editor.target.name} to the selected frame.`, 'success');
             }
         } catch (error) {
-            showToast(`Crop failed: ${error.message}`, 'error');
+            ExperimentalWorldsHost.notify(`Crop failed: ${error.message}`, 'error');
         } finally {
             button.disabled = false;
             button.textContent = 'Apply Crop';
@@ -1471,27 +1471,27 @@ function ensureWorldVisualEditorBound() {
         const editor = worldVisualEditorState;
         if (!editor || editor.kind !== 'npc') return;
         const assetId = worldVisualEditorAssetId(editor);
-        if (!assetId) return showToast('Select a generated image first.', 'error');
+        if (!assetId) return ExperimentalWorldsHost.notify('Select a generated image first.', 'error');
         editor.target.identityReferences = Array.isArray(editor.target.identityReferences) ? editor.target.identityReferences : [];
         editor.target.identityReferences = [
             ...editor.target.identityReferences.filter(ref => ref.assetId !== assetId),
             { assetId, purpose: 'primary_identity', revision: Number(editor.target.visuals?.imageProfileRevision || 0) || 0, notes: 'Author-selected identity reference.' }
         ].slice(-12);
-        showToast('Selected image saved as a character identity reference.', 'success');
+        ExperimentalWorldsHost.notify('Selected image saved as a character identity reference.', 'success');
     };
     document.getElementById('world-visual-apply-outfit').onclick = event => applyWorldOutfitAndGenerate(event);
     document.getElementById('world-visual-new-outfit').onclick = () => {
         const editor = worldVisualEditorState;
         if (!editor || editor.kind !== 'npc') return;
         const outfit = createBlankWorldOutfit(editor.target);
-        if (!outfit) return showToast('This character already has the maximum number of outfits.', 'error');
+        if (!outfit) return ExperimentalWorldsHost.notify('This character already has the maximum number of outfits.', 'error');
         selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false });
         renderWorldEntities();
         renderWorldVisualActiveOutfit();
         const outfitList = document.getElementById('world-visual-active-outfit-list');
         scrollWorldOutfitListToEnd(outfitList);
         focusWorldOutfitName(outfitList, outfit.id);
-        showToast('Blank outfit added and selected. Fill in its description on the character screen.', 'success');
+        ExperimentalWorldsHost.notify('Blank outfit added and selected. Fill in its description on the character screen.', 'success');
     };
     const outfitSelect = document.getElementById('world-visual-outfit-select');
     if (outfitSelect) outfitSelect.onchange = event => {
@@ -1516,7 +1516,7 @@ function ensureWorldVisualEditorBound() {
     if (briefPicker) briefPicker.onchange = () => {
         const editor = worldVisualEditorState;
         const name = briefPicker.value;
-        const preset = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets)[name];
+        const preset = normalizeImageGuidePresets(ExperimentalWorldsState.globalSettings.imageGuidePresets)[name];
         if (!editor || !name || !preset) return;
         editor.activeBriefName = name;
         // Visual editor generation is intentionally fixed to the portrait
@@ -1554,7 +1554,7 @@ function ensureWorldVisualEditorBound() {
         briefPicker.value = name;
         const activeLabel = document.getElementById('world-visual-brief-active');
         if (activeLabel) activeLabel.textContent = `Active: ${name}`;
-        showToast(`Applied visual brief “${name}” to ${editor.target.name || 'this visual'}.`, 'success');
+        ExperimentalWorldsHost.notify(`Applied visual brief “${name}” to ${editor.target.name || 'this visual'}.`, 'success');
     };
     document.getElementById('world-visual-brief-save-as').onclick = async event => {
         const editor = worldVisualEditorState;
@@ -1564,7 +1564,7 @@ function ensureWorldVisualEditorBound() {
         const input = document.getElementById('world-visual-brief-save-name');
         const selected = String(picker?.value || editor.activeBriefName || '').trim();
         const name = String(input?.value || '').trim().slice(0, 100) || `${selected || 'Visual brief'} - modified`;
-        const presets = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets);
+        const presets = normalizeImageGuidePresets(ExperimentalWorldsState.globalSettings.imageGuidePresets);
         const guide = normalizeWorldImageGuide({
             ...(worldImageGuide(editor.world) || {}),
             ...(selected ? (presets[selected] || {}) : {})
@@ -1586,7 +1586,7 @@ function ensureWorldVisualEditorBound() {
                 primaryObject: structured.objects[0] ? { location: structured.objects[0].location, relative_size: structured.objects[0].relative_size, pose: structured.objects[0].pose, expression: structured.objects[0].expression, action: structured.objects[0].action, orientation: structured.objects[0].orientation, relationship: structured.objects[0].relationship } : {}
             } : null
         };
-        state.globalSettings.imageGuidePresets = presets;
+        ExperimentalWorldsState.globalSettings.imageGuidePresets = presets;
         editor.activeBriefName = name;
         if (picker) {
             picker.innerHTML = '<option value="">Apply a visual brief…</option>'
@@ -1597,8 +1597,8 @@ function ensureWorldVisualEditorBound() {
         const activeLabel = document.getElementById('world-visual-brief-active');
         if (activeLabel) activeLabel.textContent = `Active: ${name}`;
         button.disabled = true;
-        try { await persistGlobalSettingsOnly(); showToast(`Saved global visual brief “${name}”.`, 'success'); }
-        catch (error) { showToast(`Could not save visual brief — ${error.message}`, 'error'); }
+        try { await ExperimentalWorldsHost.persistSharedSettings(); ExperimentalWorldsHost.notify(`Saved global visual brief “${name}”.`, 'success'); }
+        catch (error) { ExperimentalWorldsHost.notify(`Could not save visual brief — ${error.message}`, 'error'); }
         finally { button.disabled = false; }
     };
 
@@ -1711,7 +1711,7 @@ function openWorldVisualEditor(world, target, kind) {
     // and framing in one action.
     const briefPicker = document.getElementById('world-visual-brief-preset');
     if (briefPicker) {
-        const presets = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets);
+        const presets = normalizeImageGuidePresets(ExperimentalWorldsState.globalSettings.imageGuidePresets);
         const names = Object.keys(presets).sort((a, b) => a.localeCompare(b));
         briefPicker.innerHTML = `<option value="">Apply a visual brief…</option>`
             + names.map(name => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join('');
@@ -1804,8 +1804,8 @@ async function generateWorldVisual(world, prompt, {
     if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
         throw new Error('Choose OpenRouter, GPTProto, NanoGPT or Fal under World Studio → Visuals, or upload an image manually.');
     }
-    if (!providerHasCredentials(provider)) {
-        throw new Error(`Add a ${providerDisplayName(provider)} API key in Settings before generating world visuals.`);
+    if (!ExperimentalWorldsHost.providerHasCredentials(provider)) {
+        throw new Error(`Add a ${ExperimentalWorldsHost.providerDisplayName(provider)} API key in Settings before generating world visuals.`);
     }
     const model = worldVisualModel(world, provider, pipeline);
     let modelInfo = companionImageModelInfo(model);

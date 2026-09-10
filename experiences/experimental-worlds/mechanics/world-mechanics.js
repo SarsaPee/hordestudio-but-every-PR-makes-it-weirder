@@ -1585,7 +1585,9 @@
         // separate from the mutable state candidates so caching works and
         // the truth never depends on the reference surviving.
         if (serves('bunnyRxReference', audience)) {
-            const resolveExcerpt = value => globalThis.replaceMacros ? globalThis.replaceMacros(value, null) : value;
+            const resolveExcerpt = value => globalThis.ExperimentalWorldsHost
+                ? globalThis.ExperimentalWorldsHost.replaceMacros(value, null)
+                : value;
             unique(Object.entries(state.alteredStates || {})
                 .filter(([actorId]) => onStage(actorId))
                 .flatMap(([, values]) => list(values)
