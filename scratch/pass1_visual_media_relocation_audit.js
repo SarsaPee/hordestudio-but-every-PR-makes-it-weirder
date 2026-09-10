@@ -70,6 +70,18 @@ const playIndex = html.indexOf('experiences/experimental-worlds/runtime/world-pl
 assert(playIndex >= 0 && playIndex < appIndex,
     'relocated World Play core loads before the single host bootstrap');
 
+const sessionStart = acceptedApp.indexOf('// --- Narrated outfit');
+const sessionEnd = acceptedApp.indexOf('// --- World Agent', sessionStart);
+assert(sessionStart >= 0 && sessionEnd > sessionStart, 'Pass-0 World session source unit is present');
+const relocatedSession = fs.readFileSync('experiences/experimental-worlds/runtime/world-session-core.js', 'utf8');
+assert.equal(relocatedSession.trimEnd(), acceptedApp.slice(sessionStart, sessionEnd).trimEnd(),
+    'World session core differs from the Pass-0 oracle');
+assert(!fs.readFileSync('app.js', 'utf8').includes('// --- Narrated outfit'),
+    'World session core is no longer ambiguously retained in the host bootstrap');
+const sessionIndex = html.indexOf('experiences/experimental-worlds/runtime/world-session-core.js');
+assert(sessionIndex >= 0 && sessionIndex < appIndex,
+    'relocated World session core loads before the single host bootstrap');
+
 const acceptedStyle = execFileSync('git', ['show', `${sourceRevision}:style.css`], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
 const visualStyleStart = acceptedStyle.lastIndexOf('/* ─── WORLD ENGINE ─── */');
 const visualStyleEnd = acceptedStyle.indexOf('/* ScenePulse-inspired in-place Scene Intelligence Workspace.', visualStyleStart);
