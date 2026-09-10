@@ -61,6 +61,10 @@ cp "$ROOT_DIR/experiences/stock-worlds-17-pass0/runtime.js" \
 mkdir -p "$APP_DIR/experiences/experimental-worlds/runtime" \
   "$APP_DIR/host-adapters/experimental-worlds"
 cp "$ROOT_DIR/experiences/experimental-worlds/runtime/sidecar-core.js" \
+  "$ROOT_DIR/experiences/experimental-worlds/runtime/experimental-runtime-compat.js" \
+  "$ROOT_DIR/experiences/experimental-worlds/runtime/experimental-vector-memory.js" \
+  "$ROOT_DIR/experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js" \
+  "$ROOT_DIR/experiences/experimental-worlds/runtime/world-message-input.js" \
   "$ROOT_DIR/experiences/experimental-worlds/runtime/dossier-claims.js" \
   "$ROOT_DIR/experiences/experimental-worlds/runtime/world-studio-core.js" \
   "$ROOT_DIR/experiences/experimental-worlds/runtime/world-play-core.js" \
@@ -82,11 +86,13 @@ cp "$ROOT_DIR/experiences/experimental-worlds/visuals/world-portrait-prompt.js" 
   "$APP_DIR/experiences/experimental-worlds/visuals/"
 cp "$ROOT_DIR/host-adapters/experimental-worlds/visual-media-host-adapter.js" \
   "$ROOT_DIR/host-adapters/experimental-worlds/experimental-worlds-host-adapter.js" \
+  "$ROOT_DIR/host-adapters/experimental-worlds/experimental-worlds-state-adapter.js" \
   "$APP_DIR/host-adapters/experimental-worlds/"
 cp "$ROOT_DIR/experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js" \
   "$ROOT_DIR/experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js" \
   "$APP_DIR/experiences/experimental-worlds/scenepulse/"
 cp "$ROOT_DIR/experiences/experimental-worlds/styles/scene-pulse-worlds.css" \
+  "$ROOT_DIR/experiences/experimental-worlds/styles/experimental-worlds-isolated.css" \
   "$ROOT_DIR/experiences/experimental-worlds/styles/world-visuals-and-sidecar.css" \
   "$APP_DIR/experiences/experimental-worlds/styles/"
 # The native Source Runtime dynamically imports its pinned local ScenePulse

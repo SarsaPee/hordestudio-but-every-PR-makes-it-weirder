@@ -30,4 +30,15 @@ assert(!/window\.(?:escapeHTML|cssUrl|isPlainObject|safeJsonClone)\s*=/.test(sta
 assert(standaloneFixture.includes('experimental-runtime-compat.js'),
     'the standalone fixture must load the Experimental utility closure itself');
 
+const portable = fs.readFileSync('scripts/build-portable.sh', 'utf8');
+[
+    'experimental-runtime-compat.js',
+    'experimental-vector-memory.js',
+    'experimental-rpg-mechanics.js',
+    'world-message-input.js',
+    'experimental-worlds-state-adapter.js',
+    'experimental-worlds-isolated.css'
+].forEach(file => assert(portable.includes(file),
+    `portable build must include the Experimental boot asset ${file}`));
+
 console.log('Experimental private utility closure audit passed.');

@@ -323,6 +323,24 @@ class McpBridgeAudit(unittest.TestCase):
             self.assertEqual(content_type, "text/javascript")
             self.assertTrue((bridge.APP_DIR / filename).is_file())
 
+    def test_launcher_serves_the_complete_experimental_boot_closure(self):
+        # The relocated mode is still loaded as normal external scripts.  A
+        # missing allow-list entry makes the host bootstrap run without its
+        # private helpers, which is an extraction regression rather than a
+        # recoverable browser-state problem.
+        expected = {
+            "/host-adapters/experimental-worlds/experimental-worlds-state-adapter.js": "text/javascript",
+            "/experiences/experimental-worlds/runtime/experimental-runtime-compat.js": "text/javascript",
+            "/experiences/experimental-worlds/runtime/experimental-vector-memory.js": "text/javascript",
+            "/experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js": "text/javascript",
+            "/experiences/experimental-worlds/runtime/world-message-input.js": "text/javascript",
+            "/experiences/experimental-worlds/styles/experimental-worlds-isolated.css": "text/css",
+        }
+        for path, expected_type in expected.items():
+            filename, content_type = bridge.STATIC_FILES[path]
+            self.assertEqual(content_type, expected_type)
+            self.assertTrue((bridge.APP_DIR / filename).is_file())
+
     @mock.patch.object(bridge, "http_request")
     @mock.patch.object(bridge, "ThreadingHTTPServer")
     def test_relaunch_reuses_an_existing_horde_bridge(self, server, request):
