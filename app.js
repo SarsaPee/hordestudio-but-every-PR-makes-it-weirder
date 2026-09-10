@@ -2286,6 +2286,14 @@ window.ExperimentalWorldsVisualMediaHost?.configure({
     }
 });
 
+// The one host owns inter-experience multiplayer discovery. Experimental
+// Worlds sees stock only through this explicit, optional contract.
+window.ExperimentalWorldsHost = Object.freeze({
+    listStockMultiplayerSources: () => window.StockWorlds17Pass0?.listMultiplayerSources?.() || [],
+    currentStockMultiplayerContext: () => window.StockWorlds17Pass0?.currentMultiplayerContext?.() || null,
+    stockMultiplayerCampaignTemplate: context => window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context) || null
+});
+
 let lastPersistedWorldManifests = [];
 const worldLoadWarnings = new Map();
 

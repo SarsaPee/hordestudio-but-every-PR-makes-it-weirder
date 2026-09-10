@@ -62,8 +62,11 @@ const playStart = acceptedApp.indexOf('// --- World Play & Engine ---');
 const playEnd = acceptedApp.indexOf('// --- Narrated outfit', playStart);
 assert(playStart >= 0 && playEnd > playStart, 'Pass-0 World Play source unit is present');
 const relocatedPlay = fs.readFileSync('experiences/experimental-worlds/runtime/world-play-core.js', 'utf8');
-assert.equal(relocatedPlay.trimEnd(), acceptedApp.slice(playStart, playEnd).trimEnd(),
-    'World Play core differs from the Pass-0 oracle');
+assert.equal(relocatedPlay
+    .replace('window.ExperimentalWorldsHost?.listStockMultiplayerSources?.() || []', 'window.StockWorlds17Pass0?.listMultiplayerSources?.() || []')
+    .replace('window.ExperimentalWorldsHost?.currentStockMultiplayerContext?.()', 'window.StockWorlds17Pass0?.currentMultiplayerContext?.()')
+    .replace('window.ExperimentalWorldsHost?.stockMultiplayerCampaignTemplate?.(context)', 'window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context)').trimEnd(), acceptedApp.slice(playStart, playEnd).trimEnd(),
+    'World Play core differs from the Pass-0 oracle beyond the explicit host multiplayer contract');
 assert(!fs.readFileSync('app.js', 'utf8').includes('// --- World Play & Engine ---'),
     'World Play core is no longer ambiguously retained in the host bootstrap');
 const playIndex = html.indexOf('experiences/experimental-worlds/runtime/world-play-core.js');

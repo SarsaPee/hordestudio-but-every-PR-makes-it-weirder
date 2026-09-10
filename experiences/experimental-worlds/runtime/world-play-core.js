@@ -145,7 +145,7 @@ function multiplayerSources(type = multiplayerHubType) {
             name: world.name || 'Untitled World',
             description: world.description || 'Persistent World', image: world.image || world.banner || ''
             })),
-            ...(window.StockWorlds17Pass0?.listMultiplayerSources?.() || [])
+            ...(window.ExperimentalWorldsHost?.listStockMultiplayerSources?.() || [])
         ];
     }
     return [
@@ -287,7 +287,7 @@ function currentMultiplayerContext(preferredType = '') {
     }
     if (preferredType === 'world' || !preferredType) {
         if (state.view === 'stockWorlds') {
-            const stockContext = window.StockWorlds17Pass0?.currentMultiplayerContext?.();
+            const stockContext = window.ExperimentalWorldsHost?.currentStockMultiplayerContext?.();
             if (stockContext) return stockContext;
         }
         const world = state.worlds.find(item => item.id === state.activeWorldId);
@@ -328,7 +328,7 @@ function buildMultiplayerSnapshot(context) {
 function buildMultiplayerCampaignTemplate(context) {
     if (!context?.id) return null;
     if (context.stockWorlds17Pass0) {
-        return window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context) || null;
+        return window.ExperimentalWorldsHost?.stockMultiplayerCampaignTemplate?.(context) || null;
     }
     const provider = normalizedProviderId();
     if (context.type === 'chat') {
@@ -8915,4 +8915,3 @@ function applyNarratedLocation(world, sess, narrative) {
     console.warn(`Horde Engine: the scene reads as "${target.name}" but no location_id was recorded — moved the player there from ${previous}.`);
     return { from: previous, to: target.id, name: target.name };
 }
-
