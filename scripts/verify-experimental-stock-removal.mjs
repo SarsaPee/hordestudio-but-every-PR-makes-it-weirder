@@ -19,6 +19,13 @@ for (const file of files) {
 // active World fields.  Shared settings/provider/media services are allowed
 // only through ExperimentalWorldsHost and ExperimentalWorldsState.
 const ownedRuntime = files.filter(file => /\/(?:runtime|visuals|mechanics)\//.test(file));
+// ScenePulse is a mode-owned runtime too.  Its two live integration files are
+// included here even though the vendored source package is deliberately left
+// outside this narrow host-coupling guard.
+const guardedExperimentalSources = [
+    ...ownedRuntime,
+    ...files.filter(file => /\/scenepulse\/(?:scene-pulse-worlds|scenepulse-source-runtime)\.js$/.test(file)),
+];
 const hostStateLeak = /\bstate\.(?:worlds|worldInstances|activeWorldId|worldRecoverySnapshots|editingWorld|lastWorldStudioId|lastWorldStudioTab)\b/;
 const hostWholeSave = /\bsaveState\s*\(/;
 const ambientExperimentalRuntime = /\b(?:HordeSidecar(?:Hooks|Mode|Timeline|Promotion|Traversal|MemoryGraph|Reader|ReaderBackfill)|HordeRpgMechanics|worldMediaDirty|resizeWorldMessageInput|resetWorldMessageInput|setWorldMessageInputManualHeight|installWorldMessageResizeHandle)\b|(?<![.\w])switchView\s*\(/;
@@ -29,13 +36,15 @@ const hostExperienceLeak = /\bExperimentalWorldsState\.(?:characters|chats|perso
 const hostUtilityLeak = /(?<![\w.])(?:escapeHTML|cssUrl|displayInitials|isPlainObject|safeJsonClone|normalizePersona|personaPromptText|extractJSON|safeParseJSONRepair|normalizeUploadedImage|optimizeImage)\b/;
 const hostWorldFlightLeak = /(?<![.\w])(?:worldGenController|worldTurnInProgress|sidecarRetryInProgress|scenePulseReaderRefreshController)\b/;
 const ambiguousWorldSubsystemLeak = /\b(?:HordeDossierClaims|HordeCanonicalImageComposer)\b/;
-for (const file of ownedRuntime) {
+const hostDiagnosticGlobalLeak = /\b(?:window|global)\.__horde(?:ApiCallTraces|RuntimeErrors|CommitTool|CurrentKey|CurrentSnapshot)\b/;
+for (const file of guardedExperimentalSources) {
     const source = readFileSync(file, 'utf8');
     assert(!hostStateLeak.test(source), `${file} reaches Experimental World state through the host object`);
     assert(!hostWholeSave.test(source), `${file} reaches the host whole-state writer`);
     assert(!ambientExperimentalRuntime.test(source), `${file} reaches an ambient World runtime instead of its Experimental-owned implementation or adapter`);
     assert(!hostExperienceLeak.test(source), `${file} reaches a removed host experience instead of an optional adapter capability`);
     assert(!hostUtilityLeak.test(source), `${file} reaches a host utility instead of Experimental Worlds' private compatibility copy`);
+    assert(!hostDiagnosticGlobalLeak.test(source), `${file} reaches a Horde ambient global instead of its mode-owned state or host adapter`);
     if (!file.endsWith('/experimental-runtime-compat.js')) {
         assert(!hostWorldFlightLeak.test(source), `${file} reaches a World request flag owned by the host bootstrap instead of Experimental Worlds' runtime coordinator`);
     }
