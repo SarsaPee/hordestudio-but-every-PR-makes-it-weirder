@@ -63,6 +63,8 @@ const restoreHostContract = source => [
     ['ExperimentalWorldsHost.getOrderedPresetPrompts', 'getOrderedPresetPrompts'],
     ['ExperimentalWorldsHost.getEmbedding', 'getEmbedding'],
     ['ExperimentalWorldsHost.persistSharedSettings', 'persistGlobalSettingsOnly'],
+    ['ExperimentalWorldsHost.modelCatalog()', 'openRouterModels'],
+    ['ExperimentalWorldsHost.getModelCatalog({ force })', 'getOpenRouterModels()'],
     ['ExperimentalWorldsHost.ensureSharedLibraryFresh', 'ensureSharedLibraryFreshForGeneration'],
     ['ExperimentalWorldsHost.recordSharedLibraryAssistantTurn', 'recordSharedLibraryAssistantTurn'],
     ['ExperimentalWorldsVisualMediaHost.imageModelFallback', 'companionImageModelFallback'],
@@ -186,7 +188,10 @@ const restoreExperimentalRouteLifecycle = source => replaceOracleFunction(replac
     .replace("ExperimentalWorldsRuntime.bindRouteListener('sidecar-feature-guard-pointer', document, 'pointerdown', blockUnavailableSidecarFeature, true);", "document.addEventListener('pointerdown', blockUnavailableSidecarFeature, true);")
     .replace("ExperimentalWorldsRuntime.bindRouteListener('sidecar-feature-guard-key', document, 'keydown', blockUnavailableSidecarFeature, true);", "document.addEventListener('keydown', blockUnavailableSidecarFeature, true);\n        document.body.dataset.sidecarFeatureGuard = 'true';")
     .replace("ExperimentalWorldsRuntime.bindRouteListener('sidecar-model-search-dismiss', document, 'click', event => {", "document.addEventListener('click', event => {"), 'setupWorldStudioLogic', acceptedStudio), 'setupSidecarModelSearch', acceptedStudio);
-const restoredStudio = compareSource(restoreExperimentalWarning(restoreHostContract(restoreExperimentalRouteLifecycle(relocatedStudio)))
+const restoredStudio = compareSource(restoreExperimentalWarning(restoreHostContract(restoreExperimentalRouteLifecycle(relocatedStudio))
+    // Cache ownership moved to the host adapter. Reconstitute the former
+    // explicit invalidation only for the Pass-0 source-faithfulness oracle.
+    .replace("const populate = async (force) => {\n            if (status)", "const populate = async (force) => {\n            if (force) { openRouterModels = []; modelCatalogSource = null; }\n            if (status)"))
     .replace('            state.lastWorldStudioTab = target;\n            saveState();', '            state.lastWorldStudioTab = target;\n            persistWorkspaceSoon();')
     .replace('        state.lastWorldStudioId = worldId;\n        saveState();', '        state.lastWorldStudioId = worldId;\n        persistWorkspaceSoon();')
     .replace(`            // World recovery belongs to the Experimental authority.  Reading\n            // the host database here would make a stock-host cleanup or a\n            // future upstream store change silently break this mode.\n            const storedMedia = (await window.ExperimentalWorldsRepository?.snapshot?.())?.worldMediaAssets || {};`,
@@ -325,6 +330,7 @@ const intelligenceEnd = acceptedApp.indexOf('// --- Data model', intelligenceSta
 assert(intelligenceStart >= 0 && intelligenceEnd > intelligenceStart, 'Pass-0 World intelligence source unit is present');
 const relocatedIntelligence = fs.readFileSync('experiences/experimental-worlds/runtime/world-intelligence-core.js', 'utf8');
 const restoredIntelligence = compareSource(restoreExperimentalWarning(restoreHostContract(relocatedIntelligence))
+    .replace("const populate = async (force) => {\n            if (status)", "const populate = async (force) => {\n            if (force) { openRouterModels = []; modelCatalogSource = null; }\n            if (status)")
     .replace('await window.ExperimentalWorldsHost?.persistSharedContinuities?.(state.chatContinuities);', "await HordeDB.set('chatContinuities', state.chatContinuities);")
     .replace(`                const name = ExperimentalWorldsHost.chatMemoryParticipantName(m.charId);
                 if (name) prefix = name;`, `                const char = state.characters.find(c => c.id === m.charId);
@@ -463,6 +469,7 @@ const restoreExperimentalWorkspaceListener = source => {
 };
 const relocatedProtocol = fs.readFileSync('experiences/experimental-worlds/runtime/world-protocol-core.js', 'utf8');
 const restoredProtocol = restoreExperimentalWorkspaceListener(restoreHostContract(relocatedProtocol))
+    .replace('const catalogue = openRouterModels;', 'const catalogue = Array.isArray(globalThis.openRouterModels) ? globalThis.openRouterModels : [];')
     // Explicit Pass-1 lifecycle seam: all user-invoked Sidecar provider work
     // captures Experimental ownership and cannot attach a late result after a
     // mode/world/timeline/restore change. Strip only that small guard when

@@ -2719,7 +2719,7 @@ Disposition and relationship scores are -100..100. Generate 4-10 people, never a
             { role: 'user', content: `${source}\n\nWORLD: ${world.name}\n${world.description || ''}\n\nLOCATIONS:\n${locations}\n\nEXISTING PEOPLE AVAILABLE FOR REAL CONNECTIONS:\n${people || 'none'}` }
         ]
     };
-    const modelInfo = openRouterModels.find(model => model.id === body.model);
+    const modelInfo = ExperimentalWorldsHost.modelCatalog().find(model => model.id === body.model);
     if (!ExperimentalWorldsHost.isLocalProvider() && modelInfo?.supported_parameters?.some(parameter => STRUCTURED_PARAM_FLAGS.includes(parameter))) {
         body.response_format = { type: 'json_object' };
     }

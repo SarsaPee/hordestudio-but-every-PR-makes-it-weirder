@@ -49,6 +49,11 @@
         getOrderedPresetPrompts: (...args) => requireHost().getOrderedPresetPrompts(...args),
         getEmbedding: (...args) => requireHost().getEmbedding(...args),
         persistSharedSettings: () => requireHost().persistSharedSettings(),
+        // The host owns provider configuration and its cached catalogue.  The
+        // Experimental runtime may ask for a current or refreshed snapshot,
+        // but must not reach the host's ambient cache variables directly.
+        modelCatalog: () => requireHost().modelCatalog?.() || [],
+        getModelCatalog: options => requireHost().getModelCatalog?.(options) || Promise.resolve([]),
         ensureSharedLibraryFresh: () => requireHost().ensureSharedLibraryFresh(),
         recordSharedLibraryAssistantTurn: () => requireHost().recordSharedLibraryAssistantTurn(),
         labsAvailable: () => requireHost().labsAvailable(),

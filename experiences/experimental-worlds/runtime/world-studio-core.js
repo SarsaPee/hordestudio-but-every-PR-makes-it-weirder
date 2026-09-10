@@ -1317,7 +1317,7 @@ function openWorldStudio(worldId = null, options = {}) {
     const activeTab = document.querySelector('.world-studio-tab.active')?.dataset.tab || 'w-basics';
     renderWorldStudioPanel(activeTab);
 
-    const cachedWorldModel = openRouterModels.find(model => model.id === w.model);
+    const cachedWorldModel = ExperimentalWorldsHost.modelCatalog().find(model => model.id === w.model);
     if (cachedWorldModel) {
         populateModelInfoCard(cachedWorldModel, 'w-');
         updateReasoningVisibility(cachedWorldModel.supported_parameters || [], w.model, false, 'w-');

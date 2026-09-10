@@ -33,7 +33,7 @@ const hostExperienceLeak = /\bExperimentalWorldsState\.(?:characters|chats|perso
 // A helper can leak as a callback (for example `.filter(isPlainObject)`), not
 // only as a direct call. Reject every bare host utility token; the private
 // `experimental*` copies are deliberately not matched by the boundary.
-const hostUtilityLeak = /(?<![\w.])(?:escapeHTML|cssUrl|displayInitials|isPlainObject|safeJsonClone|normalizePersona|personaPromptText|extractJSON|safeParseJSONRepair|normalizeUploadedImage|optimizeImage)\b/;
+const hostUtilityLeak = /(?<![\w.])(?:escapeHTML|cssUrl|displayInitials|isPlainObject|safeJsonClone|normalizePersona|personaPromptText|extractJSON|safeParseJSONRepair|normalizeUploadedImage|optimizeImage|openRouterModels|modelCatalogSource|getOpenRouterModels)\b/;
 const hostWorldFlightLeak = /(?<![.\w])(?:worldGenController|worldTurnInProgress|sidecarRetryInProgress|scenePulseReaderRefreshController)\b/;
 const ambiguousWorldSubsystemLeak = /\b(?:HordeDossierClaims|HordeCanonicalImageComposer)\b/;
 const hostDiagnosticGlobalLeak = /\b(?:window|global)\.__horde(?:ApiCallTraces|RuntimeErrors|CommitTool|CurrentKey|CurrentSnapshot)\b/;

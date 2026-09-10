@@ -2786,11 +2786,10 @@ function wireCalibrationControls(world, calibration, container) {
         const refresh = container.querySelector('#structured-model-refresh');
         const fallbackLabel = world.model || ExperimentalWorldsState.globalSettings.defaultModel || 'unset';
         const populate = async (force) => {
-            if (force) { openRouterModels = []; modelCatalogSource = null; }
             if (status) status.textContent = 'Checking which models can do this…';
             let ranked = [];
             try {
-                ranked = rankStructuredModels(await getOpenRouterModels());
+                ranked = rankStructuredModels(await ExperimentalWorldsHost.getModelCatalog({ force }));
             } catch (error) {
                 console.error('Could not read the model catalog', error);
             }

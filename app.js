@@ -2385,6 +2385,14 @@ window.ExperimentalWorldsHost?.configure({
     getOrderedPresetPrompts: (...args) => getOrderedPresetPrompts(...args),
     getEmbedding: (...args) => getEmbedding(...args),
     persistSharedSettings: () => persistGlobalSettingsOnly(),
+    modelCatalog: () => Array.isArray(openRouterModels) ? openRouterModels : [],
+    getModelCatalog: ({ force = false } = {}) => {
+        if (force) {
+            openRouterModels = [];
+            modelCatalogSource = null;
+        }
+        return getOpenRouterModels();
+    },
     ensureSharedLibraryFresh: () => ensureSharedLibraryFreshForGeneration(),
     recordSharedLibraryAssistantTurn: () => recordSharedLibraryAssistantTurn(),
     labsAvailable: () => Boolean(window.HordeLabs),

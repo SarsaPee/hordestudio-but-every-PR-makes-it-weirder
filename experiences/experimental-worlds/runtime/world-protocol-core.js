@@ -3216,7 +3216,7 @@ function sidecarSupportsStructuredJson(provider, model, tracker = {}, profile = 
     // Unknown/custom providers stay on the validated prompt+parser fallback
     // path. Use native JSON mode only when the loaded model catalogue has
     // explicitly advertised support for it.
-    const catalogue = Array.isArray(globalThis.openRouterModels) ? globalThis.openRouterModels : [];
+    const catalogue = ExperimentalWorldsHost.modelCatalog();
     const match = catalogue.find(entry => String(entry?.id || '').toLowerCase() === String(model || '').toLowerCase());
     return !!(match && Array.isArray(match.supported_parameters)
         && match.supported_parameters.some(value => ['response_format', 'structured_outputs'].includes(String(value || '').toLowerCase())));
