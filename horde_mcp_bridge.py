@@ -124,6 +124,7 @@ STATIC_FILES = {
     "/experiences/experimental-worlds/visuals/world-portrait-prompt.js": ("experiences/experimental-worlds/visuals/world-portrait-prompt.js", "text/javascript"),
     "/experiences/experimental-worlds/visuals/world-visual-media-core.js": ("experiences/experimental-worlds/visuals/world-visual-media-core.js", "text/javascript"),
     "/experiences/experimental-worlds/visuals/world-visual-provider-core.js": ("experiences/experimental-worlds/visuals/world-visual-provider-core.js", "text/javascript"),
+    "/experiences/experimental-worlds/visuals/world-visual-editor-core.js": ("experiences/experimental-worlds/visuals/world-visual-editor-core.js", "text/javascript"),
     "/host-adapters/experimental-worlds/visual-media-host-adapter.js": ("host-adapters/experimental-worlds/visual-media-host-adapter.js", "text/javascript"),
     "/experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js": ("experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js", "text/javascript"),
     "/experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js": ("experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js", "text/javascript"),

@@ -104,4 +104,16 @@ assert.equal(relocatedVisualStyles.trimEnd(), acceptedStyle.slice(visualStyleSta
 assert(html.includes('experiences/experimental-worlds/styles/world-visuals-and-sidecar.css'),
     'relocated visual and Sidecar stylesheet is registered by the same document');
 
+const visualEditorStart = acceptedApp.indexOf('const WORLD_VISUAL_ASPECTS');
+const visualEditorEnd = acceptedApp.indexOf('// --- Voice notes and calls', visualEditorStart);
+assert(visualEditorStart >= 0 && visualEditorEnd > visualEditorStart, 'Pass-0 visual editor source unit is present');
+const relocatedVisualEditor = fs.readFileSync('experiences/experimental-worlds/visuals/world-visual-editor-core.js', 'utf8');
+assert.equal(relocatedVisualEditor.trimEnd(), acceptedApp.slice(visualEditorStart, visualEditorEnd).trimEnd(),
+    'visual editor core differs from the Pass-0 oracle');
+assert(!fs.readFileSync('app.js', 'utf8').includes('const WORLD_VISUAL_ASPECTS'),
+    'visual editor core is no longer ambiguously retained in the host bootstrap');
+const visualEditorIndex = html.indexOf('experiences/experimental-worlds/visuals/world-visual-editor-core.js');
+assert(visualEditorIndex >= 0 && visualEditorIndex < appIndex,
+    'relocated visual editor core loads before the single host bootstrap');
+
 console.log('Pass-1 visual/media relocation audit passed.');

@@ -76,6 +76,7 @@ cp "$ROOT_DIR/experiences/experimental-worlds/mechanics/world-mechanics.js" \
 cp "$ROOT_DIR/experiences/experimental-worlds/visuals/world-portrait-prompt.js" \
   "$ROOT_DIR/experiences/experimental-worlds/visuals/world-visual-media-core.js" \
   "$ROOT_DIR/experiences/experimental-worlds/visuals/world-visual-provider-core.js" \
+  "$ROOT_DIR/experiences/experimental-worlds/visuals/world-visual-editor-core.js" \
   "$APP_DIR/experiences/experimental-worlds/visuals/"
 cp "$ROOT_DIR/host-adapters/experimental-worlds/visual-media-host-adapter.js" \
   "$APP_DIR/host-adapters/experimental-worlds/"
