@@ -3340,7 +3340,7 @@ function parseAuditFindings(raw) {
             if (Array.isArray(p)) return p;
             if (p && Array.isArray(p.findings)) return p.findings;
         } catch (e) { /* try next strategy */ }
-        // Bare top-level array (extractJSON only hunts for {...})
+        // Bare top-level array (the object-only recovery path hunts for {...})
         try {
             const a = candidate.indexOf('['), b = candidate.lastIndexOf(']');
             if (a !== -1 && b > a) {

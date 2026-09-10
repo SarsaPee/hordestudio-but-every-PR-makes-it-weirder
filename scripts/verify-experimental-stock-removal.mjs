@@ -23,7 +23,10 @@ const hostStateLeak = /\bstate\.(?:worlds|worldInstances|activeWorldId|worldReco
 const hostWholeSave = /\bsaveState\s*\(/;
 const ambientExperimentalRuntime = /\b(?:HordeSidecar(?:Hooks|Mode|Timeline|Promotion|Traversal|MemoryGraph|Reader|ReaderBackfill)|HordeRpgMechanics|worldMediaDirty|resizeWorldMessageInput|resetWorldMessageInput|setWorldMessageInputManualHeight|installWorldMessageResizeHandle)\b|(?<![.\w])switchView\s*\(/;
 const hostExperienceLeak = /\bExperimentalWorldsState\.(?:characters|chats|personas|activePersonaId|activeSessionId|activeCharId|activeRoomId|rooms)\b|\bwindow\.HordeMultiplayer(?:Engine)?\b|\bgetCurrentSession\s*\(/;
-const hostUtilityLeak = /(?<![\w.])(?:escapeHTML|cssUrl|displayInitials|isPlainObject|safeJsonClone|normalizePersona|personaPromptText|extractJSON|safeParseJSONRepair|normalizeUploadedImage|optimizeImage)\s*\(/;
+// A helper can leak as a callback (for example `.filter(isPlainObject)`), not
+// only as a direct call. Reject every bare host utility token; the private
+// `experimental*` copies are deliberately not matched by the boundary.
+const hostUtilityLeak = /(?<![\w.])(?:escapeHTML|cssUrl|displayInitials|isPlainObject|safeJsonClone|normalizePersona|personaPromptText|extractJSON|safeParseJSONRepair|normalizeUploadedImage|optimizeImage)\b/;
 const hostWorldFlightLeak = /(?<![.\w])(?:worldGenController|worldTurnInProgress|sidecarRetryInProgress|scenePulseReaderRefreshController)\b/;
 const ambiguousWorldSubsystemLeak = /\b(?:HordeDossierClaims|HordeCanonicalImageComposer)\b/;
 for (const file of ownedRuntime) {
