@@ -202,7 +202,7 @@ function setupWorldStudioLogic() {
     // keyboard changes while Inline Legacy is the selected pipeline.  The
     // migration card and pipeline selector are intentionally outside these
     // marked surfaces so an author always has a clear route forward.
-    if (!document.body.dataset.sidecarFeatureGuard) {
+    if (!ExperimentalWorldsRuntime.hasRouteListener('sidecar-feature-guard-click')) {
         const blockUnavailableSidecarFeature = event => {
             const feature = event.target instanceof Element
                 ? event.target.closest('[data-sidecar-feature].sidecar-feature-disabled')
@@ -212,10 +212,9 @@ function setupWorldStudioLogic() {
             event.stopImmediatePropagation();
             if (event.type === 'click') ExperimentalWorldsHost.notify('This feature is available after the world is migrated to the Sidecar state pipeline.', 'info');
         };
-        document.addEventListener('click', blockUnavailableSidecarFeature, true);
-        document.addEventListener('pointerdown', blockUnavailableSidecarFeature, true);
-        document.addEventListener('keydown', blockUnavailableSidecarFeature, true);
-        document.body.dataset.sidecarFeatureGuard = 'true';
+        ExperimentalWorldsRuntime.bindRouteListener('sidecar-feature-guard-click', document, 'click', blockUnavailableSidecarFeature, true);
+        ExperimentalWorldsRuntime.bindRouteListener('sidecar-feature-guard-pointer', document, 'pointerdown', blockUnavailableSidecarFeature, true);
+        ExperimentalWorldsRuntime.bindRouteListener('sidecar-feature-guard-key', document, 'keydown', blockUnavailableSidecarFeature, true);
     }
 
     const recordOverlay = document.getElementById('world-record-overlay');
@@ -717,18 +716,20 @@ function renderSidecarModelSearchResults() {
 function setupSidecarModelSearch() {
     const input = document.getElementById('w-sidecar-model');
     const results = document.getElementById('w-sidecar-model-results');
-    if (!input || !results || input.dataset.sidecarSearchReady === 'true') return;
-    input.dataset.sidecarSearchReady = 'true';
-    input.addEventListener('focus', renderSidecarModelSearchResults);
-    input.addEventListener('input', renderSidecarModelSearchResults);
-    input.addEventListener('change', applySidecarSelectedModelMetadata);
-    input.addEventListener('keydown', event => {
-        if (event.key === 'Escape') {
-            results.classList.add('hidden');
-            input.setAttribute('aria-expanded', 'false');
-        }
-    });
-    document.addEventListener('click', event => {
+    if (!input || !results) return;
+    if (input.dataset.sidecarSearchReady !== 'true') {
+        input.dataset.sidecarSearchReady = 'true';
+        input.addEventListener('focus', renderSidecarModelSearchResults);
+        input.addEventListener('input', renderSidecarModelSearchResults);
+        input.addEventListener('change', applySidecarSelectedModelMetadata);
+        input.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                results.classList.add('hidden');
+                input.setAttribute('aria-expanded', 'false');
+            }
+        });
+    }
+    ExperimentalWorldsRuntime.bindRouteListener('sidecar-model-search-dismiss', document, 'click', event => {
         if (!input.contains(event.target) && !results.contains(event.target)) {
             results.classList.add('hidden');
             input.setAttribute('aria-expanded', 'false');
@@ -879,7 +880,7 @@ function renderRoleplayOSChoiceBlock(block, os, hasSource) {
     return '<div class="os-choice-row">'
         + '<div class="os-choice-head"><span class="os-choice-label">' + experimentalEscapeHTML(block.question || block.variableName) + '</span>' + tags.join('') + '</div>'
         + chipRow
-        + (notes.length ? '<div class="form-hint os-choice-note">' + notes.map(escapeHTML).join(' ') + '</div>' : '')
+        + (notes.length ? '<div class="form-hint os-choice-note">' + notes.map(experimentalEscapeHTML).join(' ') + '</div>' : '')
         + (strays.length ? '<div class="form-hint os-choice-note">Preserved values are kept from an earlier source; they still gate any sections that reference them.</div>' : '')
         + '</div>';
 }
@@ -950,7 +951,7 @@ function renderRoleplayOSConfigEditor(world) {
                 + (annotation.pinned ? '<span class="os-tag os-tag-pinned">pinned</span>' : '')
                 + (annotation.replaced ? '<span class="os-tag os-tag-replaced">replaced</span>' : '') + '</div>'
                 + '<code class="os-builtin-value">' + experimentalEscapeHTML(shown || '&mdash;') + '</code>'
-                + (notes.length ? '<div class="form-hint os-choice-note">' + notes.map(escapeHTML).join(' ') + '</div>' : '')
+                + (notes.length ? '<div class="form-hint os-choice-note">' + notes.map(experimentalEscapeHTML).join(' ') + '</div>' : '')
                 + '</div>');
         });
     } else {
@@ -2326,7 +2327,7 @@ async function renderWorldVisualModelSearch(world, pipeline = 'new', force = fal
     if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
         status.textContent = 'The inherited provider does not expose a cloud image catalog. Choose OpenRouter, GPTProto, NanoGPT or Fal, or enter the exact model ID used by your provider.';
         results.innerHTML = '<div class="smart-input-empty">Choose a catalog-backed image provider to browse compatible models.</div>';
-        setCompanionSearchOpen(input, results, true);
+        experimentalSetSearchOpen(input, results, true);
         return;
     }
     status.textContent = `Loading ${pipeline === 'revision' ? 'reference-capable ' : ''}image models from ${ExperimentalWorldsHost.providerDisplayName(provider)}…`;
@@ -2334,12 +2335,12 @@ async function renderWorldVisualModelSearch(world, pipeline = 'new', force = fal
     // results box with a loading placeholder immediately so the dropdown is
     // visibly working instead of silently absent — clicks during the gap
     // used to land on nothing and look like dead options.
-    setCompanionSearchOpen(input, results, true);
-    renderCompanionSearchResults(results, [], () => {}, `Loading ${pipeline === 'revision' ? 'reference-capable ' : ''}image models…`);
+    experimentalSetSearchOpen(input, results, true);
+    experimentalRenderSearchResults(results, [], () => {}, `Loading ${pipeline === 'revision' ? 'reference-capable ' : ''}image models…`);
     let models = [];
     try {
-        models = rankCompanionImageModels(
-            await getCompanionOutputModels('image', force, provider), provider);
+        models = ExperimentalWorldsVisualMediaHost.rankImageModels(
+            await ExperimentalWorldsVisualMediaHost.getImageOutputModels('image', force, provider), provider);
     } catch (error) {
         console.warn('Could not load the World Visuals image catalog:', error);
     }
@@ -2362,14 +2363,14 @@ async function renderWorldVisualModelSearch(world, pipeline = 'new', force = fal
             Number.isFinite(model.price) ? `$${model.price.toFixed(5)}/image` : '']
             .filter(Boolean).join(' · ')
     }));
-    renderCompanionSearchResults(results, options, option => {
+    experimentalRenderSearchResults(results, options, option => {
         const liveWorld = ExperimentalWorldsState.editingWorld;
         if (!liveWorld) return;
         const presentation = normalizeWorldPresentation(liveWorld);
         presentation[ui.modelField] = option.value;
         if (pipeline === 'new') presentation.imageModel = option.value;
         input.value = option.value;
-        setCompanionSearchOpen(input, results, false);
+        experimentalSetSearchOpen(input, results, false);
         status.textContent = `${option.label} selected · ${ExperimentalWorldsHost.providerDisplayName(provider)}`;
     }, models.length
         ? 'No compatible model matches. Keep typing to use an exact custom model ID.'
@@ -2818,7 +2819,7 @@ function renderWorldVisuals() {
             } else if (previous === 'gptproto' && nextModel === 'gemini-3.1-flash-lite-image') {
                 nextModel = 'google/gemini-3.1-flash-lite-image';
             } else if (pipeline === 'new' && previous !== presentation[ui.providerField]) {
-                nextModel = companionImageModelFallback(worldVisualProvider(world, pipeline));
+                nextModel = ExperimentalWorldsVisualMediaHost.imageModelFallback(worldVisualProvider(world, pipeline));
             }
             presentation[ui.modelField] = nextModel;
             if (pipeline === 'new') {
@@ -2838,10 +2839,10 @@ function renderWorldVisuals() {
             void renderWorldVisualModelSearch(world, pipeline);
         };
         modelInput.onkeydown = event => {
-            if (event.key === 'Escape') setCompanionSearchOpen(modelInput, modelResults, false);
+            if (event.key === 'Escape') experimentalSetSearchOpen(modelInput, modelResults, false);
         };
         modelInput.onblur = () => setTimeout(() =>
-            setCompanionSearchOpen(modelInput, modelResults, false), 120);
+            experimentalSetSearchOpen(modelInput, modelResults, false), 120);
         byId(ui.refresh).onclick = async event => {
             const button = event.currentTarget;
             const provider = worldVisualProvider(world, pipeline);

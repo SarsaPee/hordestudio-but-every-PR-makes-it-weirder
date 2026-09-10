@@ -446,7 +446,7 @@ function renderRemoteMultiplayerHistory(containerId, history, type) {
         const role = message.role === 'dm' ? 'assistant' : message.role;
         const row = document.createElement('div');
         row.className = `msg msg-${type === 'world' && role === 'assistant' ? 'dm' : role}`;
-        row.innerHTML = `<div class="msg-bubble"><div class="msg-text">${parseHordeMarkdown(String(message.text || ''))}</div></div>`;
+        row.innerHTML = `<div class="msg-bubble"><div class="msg-text">${experimentalParseHordeMarkdown(String(message.text || ''))}</div></div>`;
         container.appendChild(row);
     });
     if (!container.children.length) {
@@ -457,14 +457,9 @@ function renderRemoteMultiplayerHistory(containerId, history, type) {
 
 function applyMultiplayerSnapshot(context, snapshot, type) {
     if (type === 'chat') {
-        const view = document.getElementById('chat-view');
-        if (view?.classList.contains('hidden')) ExperimentalWorldsHost.navigate('chat');
-        view?.classList.add('multiplayer-guest-view');
-        document.getElementById('chat-char-name').textContent = snapshot.experienceName || context?.name || 'Shared Chat';
-        document.getElementById('chat-char-model').textContent = 'Host-authoritative shared chat';
-        const avatar = document.getElementById('chat-avatar');
-        if (avatar) { avatar.style.backgroundImage = 'none'; avatar.textContent = '◎'; }
-        renderRemoteMultiplayerHistory('messages-container', snapshot.history, 'chat');
+        if (!ExperimentalWorldsHost.renderHostChatMultiplayerSnapshot(context, snapshot)) {
+            ExperimentalWorldsHost.notify('This Experimental-only host has no Chat guest surface. The shared World remains available.', 'info');
+        }
         return;
     }
 
@@ -488,7 +483,7 @@ function applyMultiplayerSnapshot(context, snapshot, type) {
     stats.innerHTML = (hud.stats || []).map(stat => {
         const ranged = Number(stat.max) > Number(stat.min);
         const fill = ranged ? Math.max(0, Math.min(100, ((Number(stat.value) - Number(stat.min)) / (Number(stat.max) - Number(stat.min))) * 100)) : 0;
-        return `<div class="world-card" style="padding:8px 12px"><div style="display:flex;justify-content:space-between"><span>${experimentalEscapeHTML(stat.name)}</span><strong>${experimentalEscapeHTML(String(stat.value))}${Number(stat.max) > 0 ? ` / ${experimentalEscapeHTML(String(stat.max))}` : ''}</strong></div>${ranged ? `<div class="world-stat-track"><span style="width:${fill}%;background:${cssColor(stat.color)}"></span></div>` : ''}</div>`;
+        return `<div class="world-card" style="padding:8px 12px"><div style="display:flex;justify-content:space-between"><span>${experimentalEscapeHTML(stat.name)}</span><strong>${experimentalEscapeHTML(String(stat.value))}${Number(stat.max) > 0 ? ` / ${experimentalEscapeHTML(String(stat.max))}` : ''}</strong></div>${ranged ? `<div class="world-stat-track"><span style="width:${fill}%;background:${experimentalCssColor(stat.color)}"></span></div>` : ''}</div>`;
     }).join('') || '<div class="world-card" style="padding:8px 12px;color:var(--text-3)">No meters configured.</div>';
     document.getElementById('world-outfit-content').textContent = hud.outfit || 'Not specified.';
     document.getElementById('world-ledger-content').textContent = hud.ledger || 'No public milestones recorded yet.';
@@ -506,11 +501,9 @@ function applyMultiplayerSnapshot(context, snapshot, type) {
 
 function leaveMultiplayerExperience() {
     document.getElementById('world-play-view')?.classList.remove('multiplayer-guest-view');
-    document.getElementById('chat-view')?.classList.remove('multiplayer-guest-view');
     const worldInput = document.getElementById('world-user-input');
-    const chatInput = document.getElementById('user-input');
     if (worldInput) { worldInput.disabled = false; worldInput.placeholder = 'What do you do?...'; }
-    if (chatInput) { chatInput.disabled = false; chatInput.placeholder = 'Type your message...'; }
+    ExperimentalWorldsHost.clearHostChatMultiplayerPresentation();
 }
 
 async function hardResetActiveWorldTimeline() {
@@ -1143,11 +1136,11 @@ function setupWorldPlayLogic() {
 
     document.getElementById('world-session-zero-btn').onclick = () => openSessionZero(null);
     document.getElementById('world-persona-btn').onclick = () => {
-        const overlay = document.getElementById('personas-modal-overlay');
-        if (!overlay) return;
-        renderPersonasList();
-        overlay.classList.remove('hidden');
-        ExperimentalWorldsHost.notify('Create or select a Persona, then choose “Set as Active” to bind it to this timeline.', 'info');
+        if (ExperimentalWorldsHost.openSharedPersonaManager()) {
+            ExperimentalWorldsHost.notify('Create or select a Persona, then choose “Set as Active” to bind it to this timeline.', 'info');
+        } else {
+            ExperimentalWorldsHost.notify('No shared Persona manager is installed in this Experimental-only host.', 'info');
+        }
     };
 
     document.getElementById('world-plan-sequence-btn').onclick = () => openWorldSidecarLine({
@@ -1789,7 +1782,7 @@ function normalizeWorldGameRules(world) {
             value,
             min,
             max,
-            color: cssColor(stat.color, 'var(--accent)'),
+            color: experimentalCssColor(stat.color, 'var(--accent)'),
             ...(hadRollConfig ? { roll } : {})
         };
     });
@@ -3918,9 +3911,9 @@ function renderWorldPlayState() {
             div.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div style="font-size:0.75rem; color:var(--text-3); text-transform:uppercase; font-weight:700;">${experimentalEscapeHTML(stat.name)}</div>
-                    <div style="font-size:0.9rem; font-weight:700; color:${cssColor(stat.color)};">${experimentalEscapeHTML(String(val))}${stat.max > 0 ? ` / ${experimentalEscapeHTML(String(stat.max))}` : ''}${equipmentDelta ? ` <small title="Equipment bonus">(${equipmentDelta > 0 ? '+' : ''}${experimentalEscapeHTML(String(equipmentDelta))} gear)</small>` : ''}</div>
+                    <div style="font-size:0.9rem; font-weight:700; color:${experimentalCssColor(stat.color)};">${experimentalEscapeHTML(String(val))}${stat.max > 0 ? ` / ${experimentalEscapeHTML(String(stat.max))}` : ''}${equipmentDelta ? ` <small title="Equipment bonus">(${equipmentDelta > 0 ? '+' : ''}${experimentalEscapeHTML(String(equipmentDelta))} gear)</small>` : ''}</div>
                 </div>
-                ${hasRange ? `<div class="world-stat-track"><span style="width:${fillPercent}%; background:${cssColor(stat.color)};"></span></div>` : ''}`;
+                ${hasRange ? `<div class="world-stat-track"><span style="width:${fillPercent}%; background:${experimentalCssColor(stat.color)};"></span></div>` : ''}`;
             statsContainer.appendChild(div);
         });
     }
@@ -4665,10 +4658,10 @@ function renderWorldDialogueCard(world, speaker, dialogue, className = 'world-np
     const initials = String(speaker?.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
     // An FF voice color tag, when present, wins over the entity's configured
     // dialogue color: the narrator issued it for this exact line.
-    const color = cssColor(options.color || speaker?.visuals?.dialogueColor || 'var(--accent)');
+    const color = experimentalCssColor(options.color || speaker?.visuals?.dialogueColor || 'var(--accent)');
     return `<div class="${className}" data-speaker-id="${experimentalEscapeHTML(speaker?.id || '')}" style="--speaker-color:${color}">
         <span class="world-npc-dialogue-avatar" style="${portrait ? `background-image:url('${experimentalCssUrl(portrait)}')` : ''}">${portrait ? '' : experimentalEscapeHTML(initials)}</span>
-        <span class="world-npc-dialogue-copy"><strong>${experimentalEscapeHTML(speaker?.name || 'Unknown')}</strong><span>${parseHordeMarkdown(dialogue)}</span></span>
+        <span class="world-npc-dialogue-copy"><strong>${experimentalEscapeHTML(speaker?.name || 'Unknown')}</strong><span>${experimentalParseHordeMarkdown(dialogue)}</span></span>
     </div>`;
 }
 
@@ -4764,22 +4757,22 @@ function renderWorldPlayerVoiceCard(sess, dialogue) {
     const name = persona?.name || identity.name || 'You';
     const avatar = persona?.avatar || '';
     const initials = String(name).split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || 'YOU';
-    const color = cssColor(persona?.color || '#4A90E2', '#4A90E2');
+    const color = experimentalCssColor(persona?.color || '#4A90E2', '#4A90E2');
     return `<div class="world-npc-dialogue world-player-dialogue" data-speaker-id="player" style="--speaker-color:${color}">
         <span class="world-npc-dialogue-avatar" style="${avatar ? `background-image:url('${experimentalCssUrl(avatar)}')` : ''}">${avatar ? '' : experimentalEscapeHTML(initials)}</span>
-        <span class="world-npc-dialogue-copy"><strong>${experimentalEscapeHTML(name)}</strong><span>${parseHordeMarkdown(dialogue)}</span></span>
+        <span class="world-npc-dialogue-copy"><strong>${experimentalEscapeHTML(name)}</strong><span>${experimentalParseHordeMarkdown(dialogue)}</span></span>
     </div>`;
 }
 
 function renderWorldVoiceLineCard(color, dialogue) {
     // Tagged dialogue whose speaker could not be resolved: still a voice
     // line, in the narrator-issued color, without a name or portrait.
-    return `<div class="world-voice-line" style="--speaker-color:${cssColor(color)}">${parseHordeMarkdown(dialogue)}</div>`;
+    return `<div class="world-voice-line" style="--speaker-color:${experimentalCssColor(color)}">${experimentalParseHordeMarkdown(dialogue)}</div>`;
 }
 
 function renderWorldNarrativeHtml(world, text, sess = null) {
     const source = String(text || '');
-    if (!world || !source) return parseHordeMarkdown(stripFFVoiceTags(source));
+    if (!world || !source) return experimentalParseHordeMarkdown(stripFFVoiceTags(source));
     const paragraphs = source.split(/\n{2,}/);
     const quotePattern = /“([^”\n]+)”|"([^"\n]+)"/g;
     let recognized = 0;
@@ -4826,7 +4819,7 @@ function renderWorldNarrativeHtml(world, text, sess = null) {
                 carryAge++;
                 if (carryAge > 2) carriedSpeaker = null;
             }
-            return `<div class="world-narrative-prose">${parseHordeMarkdown(paragraph)}</div>`;
+            return `<div class="world-narrative-prose">${experimentalParseHordeMarkdown(paragraph)}</div>`;
         }
 
         let cursor = 0;
@@ -4843,7 +4836,7 @@ function renderWorldNarrativeHtml(world, text, sess = null) {
             // colour span. Explicit authored "You said/asked…" evidence wins
             // over that cosmetic tag, so it cannot inherit Charlotte's colour.
             if (sess && (worldSpeechIsPlayerVoice(lead, quoteTail) || explicitPlayerSpeech)) {
-                if (lead.trim()) paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(lead)}</div>`;
+                if (lead.trim()) paragraphHtml += `<div class="world-narrative-prose">${experimentalParseHordeMarkdown(lead)}</div>`;
                 paragraphHtml += renderWorldPlayerVoiceCard(sess, item.dialogue);
                 cursor = item.end;
                 carriedSpeaker = null;
@@ -4873,7 +4866,7 @@ function renderWorldNarrativeHtml(world, text, sess = null) {
                 if (item.tagged) {
                     // Ambiguous attribution still renders as a colored voice
                     // line; the tag guarantees a character is speaking.
-                    if (lead.trim()) paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(lead)}</div>`;
+                    if (lead.trim()) paragraphHtml += `<div class="world-narrative-prose">${experimentalParseHordeMarkdown(lead)}</div>`;
                     paragraphHtml += renderWorldVoiceLineCard(item.color, item.dialogue);
                     cursor = item.end;
                     carryAge = 0;
@@ -4885,7 +4878,7 @@ function renderWorldNarrativeHtml(world, text, sess = null) {
                 // person's face/name on the line.
                 return;
             }
-            if (lead.trim()) paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(lead)}</div>`;
+            if (lead.trim()) paragraphHtml += `<div class="world-narrative-prose">${experimentalParseHordeMarkdown(lead)}</div>`;
             paragraphHtml += renderWorldDialogueCard(world, speaker, item.dialogue, 'world-npc-dialogue', { color: speakerColor });
             cursor = item.end;
             carriedSpeaker = speaker;
@@ -4896,17 +4889,17 @@ function renderWorldNarrativeHtml(world, text, sess = null) {
             const nextFocus = worldNarrativeFocus(world, paragraph, carriedSpeaker);
             if (nextFocus) { carriedSpeaker = nextFocus; carryAge = 0; }
             else carryAge++;
-            return `<div class="world-narrative-prose">${parseHordeMarkdown(paragraph)}</div>`;
+            return `<div class="world-narrative-prose">${experimentalParseHordeMarkdown(paragraph)}</div>`;
         }
         const tail = stripFFVoiceTags(paragraph.slice(cursor));
         if (tail.trim()) {
-            paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(tail)}</div>`;
+            paragraphHtml += `<div class="world-narrative-prose">${experimentalParseHordeMarkdown(tail)}</div>`;
             const tailFocus = worldNarrativeFocus(world, tail, carriedSpeaker);
             if (tailFocus) carriedSpeaker = tailFocus;
         }
         return paragraphHtml;
     }).join('');
-    return recognized ? html : parseHordeMarkdown(stripFFVoiceTags(source));
+    return recognized ? html : experimentalParseHordeMarkdown(stripFFVoiceTags(source));
 }
 
 function renderWorldPlayerMessageHtml(sess, text) {
@@ -4916,10 +4909,10 @@ function renderWorldPlayerMessageHtml(sess, text) {
     const name = persona?.name || identity.name || 'You';
     const avatar = persona?.avatar || '';
     const initials = String(name).split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || 'YOU';
-    const color = cssColor(persona?.color || '#4A90E2', '#4A90E2');
+    const color = experimentalCssColor(persona?.color || '#4A90E2', '#4A90E2');
     return `<div class="world-npc-dialogue world-player-dialogue" style="--speaker-color:${color}">
         <span class="world-npc-dialogue-avatar" style="${avatar ? `background-image:url('${experimentalCssUrl(avatar)}')` : ''}">${avatar ? '' : experimentalEscapeHTML(initials)}</span>
-        <span class="world-npc-dialogue-copy"><strong>${experimentalEscapeHTML(name)}</strong><span>${parseHordeMarkdown(text)}</span></span>
+        <span class="world-npc-dialogue-copy"><strong>${experimentalEscapeHTML(name)}</strong><span>${experimentalParseHordeMarkdown(text)}</span></span>
     </div>`;
 }
 
@@ -5049,7 +5042,7 @@ function appendWorldMessageUI(msg, index = null) {
         ? renderWorldNarrativeHtml(world, displayText, activeSession)
         : msg.role === 'user' && presentationMode !== 'classic'
             ? renderWorldPlayerMessageHtml(activeSession, displayText)
-            : parseHordeMarkdown(msg.role === 'dm' ? stripFFVoiceTags(displayText) : displayText);
+            : experimentalParseHordeMarkdown(msg.role === 'dm' ? stripFFVoiceTags(displayText) : displayText);
     const metaParts = [];
     if (msg.location) {
         const locObj = world ? world.locations.find(l => l.id === msg.location) : null;
@@ -7809,7 +7802,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                         if (handoffBoundaryRender) streamVisibleRenderedUpTo = handoffStart;
                         textTarget.innerHTML = streamPresentationMode === 'cinematic'
                             ? renderWorldNarrativeHtml(world, visibleStreamingText, sess)
-                            : parseHordeMarkdown(stripFFVoiceTags(visibleStreamingText));
+                            : experimentalParseHordeMarkdown(stripFFVoiceTags(visibleStreamingText));
                     }
                     const container = document.getElementById('world-messages-container');
                     container.scrollTop = container.scrollHeight;

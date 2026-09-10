@@ -1808,15 +1808,14 @@ async function generateWorldVisual(world, prompt, {
         throw new Error(`Add a ${ExperimentalWorldsHost.providerDisplayName(provider)} API key in Settings before generating world visuals.`);
     }
     const model = worldVisualModel(world, provider, pipeline);
-    let modelInfo = companionImageModelInfo(model);
+    let modelInfo = ExperimentalWorldsVisualMediaHost.imageModelInfo(model);
     if (!modelInfo) {
-        const ranked = rankCompanionImageModels(await getCompanionOutputModels('image', false, provider), provider);
-        companionImageModelCatalog = ranked;
+        const ranked = ExperimentalWorldsVisualMediaHost.rankImageModels(await ExperimentalWorldsVisualMediaHost.getImageOutputModels('image', false, provider), provider);
         modelInfo = ranked.find(item => item.id === model) || null;
     }
-    const endpoints = await getCompanionImageEndpoints(model, false, provider);
-    const endpoint = chooseCompanionImageEndpoint(endpoints, { imageProviderTag: '' }, !!referenceImage);
-    const capabilities = companionImageCapabilities(modelInfo, endpoint);
+    const endpoints = await ExperimentalWorldsVisualMediaHost.getImageEndpoints(model, false, provider);
+    const endpoint = ExperimentalWorldsVisualMediaHost.chooseImageEndpoint(endpoints, { imageProviderTag: '' }, !!referenceImage);
+    const capabilities = ExperimentalWorldsVisualMediaHost.imageCapabilities(modelInfo, endpoint);
     const referenceDescriptor = capabilities.input_references;
     const advertisedReference = !!referenceDescriptor
         && (referenceDescriptor.type !== 'range' || Number(referenceDescriptor.max) > 0);
@@ -1866,7 +1865,7 @@ async function generateWorldVisual(world, prompt, {
     };
     const buildBody = includeReference => {
         const body = attachWorldVisualReference(
-            applyCompanionImageParameters({ model, prompt: finalPrompt }, requestConfig, capabilities, endpoint),
+            ExperimentalWorldsVisualMediaHost.applyImageParameters({ model, prompt: finalPrompt }, requestConfig, capabilities, endpoint),
             provider, model, includeReference ? referenceImage : '');
         if (provider === 'fal') {
             body.aspect_ratio = aspectRatio;
@@ -1886,20 +1885,23 @@ async function generateWorldVisual(world, prompt, {
         return body;
     };
     let generated;
-    requestCompanionPhoto.lastResult = null;
+    let providerResult = {};
     try {
-        generated = await requestCompanionPhoto(buildBody(canUseReference), provider);
+        const response = await ExperimentalWorldsVisualMediaHost.requestImage(buildBody(canUseReference), provider);
+        generated = response.image;
+        providerResult = response.result || {};
     } catch (error) {
         if (requireReference || !canUseReference
             || (!error.referencePrivacyRejected && !error.referenceTransportRejected)) throw error;
-        generated = await requestCompanionPhoto(buildBody(false), provider);
+        const response = await ExperimentalWorldsVisualMediaHost.requestImage(buildBody(false), provider);
+        generated = response.image;
+        providerResult = response.result || {};
     }
     const portable = await makeWorldVisualPortable(generated, maxDimension, quality);
     // A model's generated composition is the source asset. Do not silently
     // trim it into the editor's display frame: cropping is an explicit,
     // reversible derived-asset action and Crop & Fill is the API-backed way
     // to outpaint a new target frame without sacrificing source pixels.
-    const providerResult = requestCompanionPhoto.lastResult || {};
     const providerResponseMetadata = experimentalIsPlainObject(providerResult)
         ? Object.fromEntries(Object.entries(providerResult).filter(([key]) => key !== 'image')) : null;
     const resolved = experimentalIsPlainObject(providerResult.resolved_structured_prompt)
@@ -2066,4 +2068,3 @@ async function generateWorldMapSkin(world) {
         kind: 'map_skin', label: `${world.name} map skin`
     });
 }
-

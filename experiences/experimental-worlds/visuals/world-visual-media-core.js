@@ -998,7 +998,7 @@ function normalizeWorldPresentation(world) {
         playerCanOverride: raw.playerCanOverride !== false,
         artStyle: String(raw.artStyle || 'cinematic').slice(0, 80),
         artDirection: String(raw.artDirection || '').slice(0, 4000),
-        accent: cssColor(raw.accent, '#E63946'),
+        accent: experimentalCssColor(raw.accent, '#E63946'),
         panelOpacity: livingClamp(raw.panelOpacity == null ? 88 : raw.panelOpacity, 35, 100),
         backgroundDim: livingClamp(raw.backgroundDim == null ? 68 : raw.backgroundDim, 0, 95),
         mapSkinAssetId: String(raw.mapSkinAssetId || '').slice(0, 160),

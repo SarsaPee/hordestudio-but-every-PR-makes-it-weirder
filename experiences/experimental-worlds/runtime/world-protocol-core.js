@@ -6956,7 +6956,7 @@ function renderSidecarConversation(world, sess) {
         const author = entry.role === 'user';
         return `<div style="margin:0 0 9px; padding:8px 9px; border-radius:7px; background:${author ? 'var(--surface)' : 'rgba(108, 92, 231, 0.12)'}; border-left:3px solid ${author ? 'var(--accent)' : '#6c5ce7'};">
             <div style="font-size:0.66rem; color:var(--text-3); font-weight:800; text-transform:uppercase; margin-bottom:3px;">${author ? 'Author → Sidecar' : 'Sidecar'}</div>
-            <div style="font-size:0.82rem; color:var(--text-2);">${parseHordeMarkdown(String(entry.text || ''))}</div>
+            <div style="font-size:0.82rem; color:var(--text-2);">${experimentalParseHordeMarkdown(String(entry.text || ''))}</div>
         </div>`;
     }).join('') || '<div style="color:var(--text-3); font-size:0.8rem;">Ask Sidecar about the current world, open continuity questions, or an explicit authorial refinement.</div>';
     log.querySelectorAll('.sidecar-proposal-approve').forEach(button => button.onclick = async () => {
@@ -9949,11 +9949,10 @@ function renderSidecarWorkspace(world, sess) {
                     : workspaceUi.view === 'all-known' ? `<div class="si-view-intro"><span class="si-kicker">ALL KNOWN CHARACTERS</span><h2>World registry</h2><p>Kept deliberately outside the relevance-first scene roster.</p></div>${section('all-known', 'Known characters', allKnownBody, `${model.knownCharacters.length}`, '♙')}`
                 : sceneBody;
     const rerender = () => { renderSidecarWorkspace(world, sess); };
-    // Keep a single tiny bridge on window for the generated tab buttons.  It
-    // avoids relying on a long-lived listener attached to DOM that is rebuilt
-    // during world renders, while still mutating the canonical timeline UI
-    // state rather than introducing a second workspace state store.
-    window.__hordeSceneWorkspaceView = view => {
+    // The workspace is rebuilt during Sidecar updates, so each generated
+    // toolbar receives a fresh local handler.  No document-wide listener or
+    // ambient window bridge survives a route change.
+    const selectWorkspaceView = view => {
         if (!['scene', 'relationships', 'characters', 'history', 'thoughts', 'all-known'].includes(view)) return;
         workspaceUi.view = view;
         protocol.workspaceUi = workspaceUi;
@@ -9961,33 +9960,17 @@ function renderSidecarWorkspace(world, sess) {
         rerender();
         ExperimentalWorldsHost.persist().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
     };
-    if (!window.__hordeSceneWorkspaceDocumentListener) {
-        document.addEventListener('click', event => {
-            const button = event.target?.closest?.('#world-sidecar-workspace [data-si-view]');
-            if (!button) return;
-            window.__hordeSceneWorkspaceView?.(button.dataset.siView);
-        });
-        window.__hordeSceneWorkspaceDocumentListener = true;
-    }
     const toolbarButton = (label, view, title) => `<button type="button" class="sp-toolbar-btn si-source-toolbar-btn ${workspaceUi.view === view ? 'sp-tb-active' : ''}" data-si-view="${view}" title="${experimentalEscapeHTML(title)}" aria-label="${experimentalEscapeHTML(title)}">${label}</button>`;
     const compactPipelineAction = model.historical
         ? `<button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="return-current" title="Return to the current scene" aria-label="Return to the current scene">↩</button>`
         : `<button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="refresh" title="Refresh Scene Intelligence" aria-label="Refresh Scene Intelligence">↻</button>`;
     host.innerHTML = `<div class="sp-toolbar si-source-toolbar"><div class="sp-brand si-source-brand"><span class="sp-brand-mark" aria-hidden="true">◉</span><span class="sp-brand-word">Scene<span>Pulse</span></span><small>${experimentalEscapeHTML(model.hierarchy.scene?.title || model.location?.name || 'Current scene')}</small></div><span class="sp-toolbar-spacer"></span><span class="sidecar-status-pill ${statusClass}">${experimentalEscapeHTML(model.historical ? 'History mode' : statusLabel)}</span>${compactPipelineAction}${toolbarButton('⌂', 'scene', 'Open current scene')}${toolbarButton('◌', 'thoughts', 'Open character thoughts')}${toolbarButton('◷', 'history', 'Open accepted scene history')}${toolbarButton('♙', 'all-known', 'Browse all known characters')}<button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="collapse-all" title="Collapse or expand scene sections" aria-label="Collapse or expand scene sections">▦</button><button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="backstage" title="Open Backstage evidence" aria-label="Open Backstage evidence">≡</button><button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="gm" title="Open World GM" aria-label="Open World GM">✎</button></div><div class="sp-panel-body si-body">${viewBody}</div>`;
-    // Bind the generated tab controls directly after each redraw.  The
-    // workspace is rebuilt during Sidecar updates, so a one-time listener on
-    // an earlier DOM node is not sufficient.  The document-level bridge above
-    // remains as a defensive fallback for host redraws that occur mid-click.
+    // Bind generated tab controls directly after each redraw. The element
+    // owns their lifetime and is discarded on the next render or route exit.
     host.querySelectorAll('[data-si-view]').forEach(buttonEl => buttonEl.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
-        const nextView = buttonEl.dataset.siView;
-        if (!['scene', 'relationships', 'characters', 'history', 'thoughts', 'all-known'].includes(nextView)) return;
-        workspaceUi.view = nextView;
-        protocol.workspaceUi = workspaceUi;
-        sess.sidecar = protocol;
-        rerender();
-        ExperimentalWorldsHost.persist().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
+        selectWorkspaceView(buttonEl.dataset.siView);
     }));
     host.querySelectorAll('[data-si-section-toggle]').forEach(header => header.addEventListener('click', event => {
         if (event.target.closest('[data-si-section-refresh]')) return;

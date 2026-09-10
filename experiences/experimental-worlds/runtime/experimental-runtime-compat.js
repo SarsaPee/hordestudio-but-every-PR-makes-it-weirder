@@ -46,6 +46,7 @@
         sidecarRetryInProgress: false,
         readerRefreshController: null
     };
+    const routeListeners = new Map();
     global.ExperimentalWorldsRuntime = Object.freeze({
         turnInProgress: () => requestRuntime.turnInProgress,
         setTurnInProgress: value => { requestRuntime.turnInProgress = value === true; },
@@ -55,6 +56,20 @@
         setSidecarRetryInProgress: value => { requestRuntime.sidecarRetryInProgress = value === true; },
         readerRefreshController: () => requestRuntime.readerRefreshController,
         setReaderRefreshController: controller => { requestRuntime.readerRefreshController = controller || null; },
+        hasRouteListener: key => routeListeners.has(String(key || '')),
+        bindRouteListener(key, target, type, listener, options) {
+            const id = String(key || '');
+            if (!id || !target?.addEventListener || typeof listener !== 'function') return false;
+            const previous = routeListeners.get(id);
+            if (previous) previous.target.removeEventListener(previous.type, previous.listener, previous.options);
+            target.addEventListener(type, listener, options);
+            routeListeners.set(id, { target, type, listener, options });
+            return true;
+        },
+        clearRouteListeners() {
+            routeListeners.forEach(entry => entry.target.removeEventListener(entry.type, entry.listener, entry.options));
+            routeListeners.clear();
+        },
         abortAll() {
             requestRuntime.generationController?.abort?.();
             requestRuntime.readerRefreshController?.abort?.();
@@ -62,6 +77,7 @@
             requestRuntime.readerRefreshController = null;
             requestRuntime.turnInProgress = false;
             requestRuntime.sidecarRetryInProgress = false;
+            this.clearRouteListeners();
         }
     });
 
@@ -90,6 +106,76 @@
         const cleaned = String(url).replace(/["'()\\<>\n\r]/g, '');
         if (/^\s*(javascript|vbscript):/i.test(cleaned)) return '';
         return cleaned;
+    };
+
+    global.experimentalCssColor = function experimentalCssColor(value, fallback = 'var(--accent)') {
+        const color = String(value || '').trim();
+        if (/^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(color)) return color;
+        if (/^var\(--[A-Za-z0-9-]+\)$/.test(color)) return color;
+        if (/^(?:rgb|rgba|hsl|hsla)\([0-9.,%+\-\s]+\)$/i.test(color)) return color;
+        if (/^[A-Za-z]{1,30}$/.test(color)) return color;
+        return fallback;
+    };
+
+    // This is the existing Horde markdown treatment copied into the private
+    // Experimental closure.  World narration therefore keeps its authored
+    // rendering behaviour when ordinary Chat is absent.
+    global.experimentalParseHordeMarkdown = function experimentalParseHordeMarkdown(text) {
+        if (!text) return '';
+        const scaffolds = [];
+        let working = text.replace(
+            /<details(?:\s[^>]*)?>[\s\S]*?(?:<\/details>|$)|<(plot_tracking_module|thinking|reasoning|cot|planning)>[\s\S]*?(?:<\/\1>|$)/gi,
+            match => { scaffolds.push(match); return `S${scaffolds.length - 1}`; }
+        );
+        let safe = global.experimentalEscapeHTML(working)
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            .replace(/&quot;(.*?)&quot;/g, '<span class="dialogue">&quot;$1&quot;</span>')
+            .replace(/“([^”]*)”/g, '<span class="dialogue">“$1”</span>')
+            .replace(/\n/g, '<br>');
+        return safe.replace(/S(\d+)/g, (_match, index) => {
+            const raw = scaffolds[+index] || '';
+            const summary = raw.match(/<summary>([\s\S]*?)<\/summary>/i);
+            const title = (summary ? summary[1] : 'Director’s Notes').replace(/[<>]/g, '').trim() || 'Director’s Notes';
+            const inner = raw
+                .replace(/<\/?details(?:\s[^>]*)?>/gi, '')
+                .replace(/<summary>[\s\S]*?<\/summary>/gi, '')
+                .replace(/<\/?(plot_tracking_module|thinking|reasoning|cot|planning)>/gi, '')
+                .trim();
+            return `<details class="rp-scaffold"><summary>🎬 ${global.experimentalEscapeHTML(title)}</summary><div class="rp-scaffold-body">${global.experimentalEscapeHTML(inner).replace(/\n/g, '<br>')}</div></details>`;
+        });
+    };
+
+    global.experimentalRenderSearchResults = function experimentalRenderSearchResults(results, items, onSelect, emptyText) {
+        if (!results) return;
+        results.innerHTML = '';
+        if (!items.length) {
+            const empty = document.createElement('div');
+            empty.className = 'vh-search-empty';
+            empty.textContent = emptyText;
+            results.appendChild(empty);
+        } else {
+            items.forEach(item => {
+                const button = document.createElement('button');
+                button.type = 'button'; button.className = 'searchable-dropdown-item';
+                button.setAttribute('role', 'option');
+                const label = document.createElement('span');
+                label.className = 'model-display-name'; label.textContent = item.label;
+                const meta = document.createElement('span');
+                meta.className = 'model-display-id'; meta.textContent = item.meta || item.value || '';
+                button.append(label, meta);
+                button.onmousedown = event => event.preventDefault();
+                button.onclick = () => onSelect(item);
+                results.appendChild(button);
+            });
+        }
+        results.classList.remove('hidden');
+    };
+
+    global.experimentalSetSearchOpen = function experimentalSetSearchOpen(input, results, open) {
+        if (!input || !results) return;
+        results.classList.toggle('hidden', !open);
+        input.setAttribute('aria-expanded', String(open));
     };
 
     global.experimentalDisplayInitials = function experimentalDisplayInitials(name, fallback = '?') {

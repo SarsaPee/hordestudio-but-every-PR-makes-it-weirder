@@ -2323,7 +2323,26 @@ window.ExperimentalWorldsVisualMediaHost?.configure({
     getGlobalSettings: () => state.globalSettings,
     // This adapter is called only by the Experimental visual core.  Checking
     // host `state.worlds` would reintroduce a hidden live-object dependency.
-    markExperimentalWorldMediaChanged: () => { worldMediaDirty = true; }
+    markExperimentalWorldMediaChanged: () => { worldMediaDirty = true; },
+    // Generic image catalog, transport and media stabilization remain current
+    // host services.  Experimental Worlds receives them only through its
+    // visual-media adapter; it never shares the host catalogue's mutable
+    // state or reaches a VH/Chat renderer directly.
+    imageModelFallback: provider => companionImageModelFallback(provider),
+    getImageOutputModels: (...args) => getCompanionOutputModels(...args),
+    rankImageModels: (...args) => rankCompanionImageModels(...args),
+    imageModelInfo: model => companionImageModelInfo(model),
+    getImageEndpoints: (...args) => getCompanionImageEndpoints(...args),
+    chooseImageEndpoint: (...args) => chooseCompanionImageEndpoint(...args),
+    imageCapabilities: (...args) => companionImageCapabilities(...args),
+    applyImageParameters: (...args) => applyCompanionImageParameters(...args),
+    async requestImage(...args) {
+        requestCompanionPhoto.lastResult = null;
+        const image = await requestCompanionPhoto(...args);
+        return { image, result: requestCompanionPhoto.lastResult || {} };
+    },
+    normalizeGeneratedImageSource: (...args) => normalizeGeneratedImageSource(...args),
+    stabilizeGeneratedImageSource: (...args) => stabilizeGeneratedImageSource(...args)
 });
 
 // The host owns only the shared continuity persistence seam. Experimental
@@ -2430,6 +2449,41 @@ window.ExperimentalWorldsHost?.configure({
     joinMultiplayerInvite: (...args) => window.HordeMultiplayer?.joinInvite?.(...args),
     multiplayerPromptState: (...args) => window.HordeMultiplayerEngine?.promptState?.(...args) || '',
     currentMultiplayerPersona: sessionPersonaId => (state.personas || []).find(item => item.id === (sessionPersonaId || state.activePersonaId)) || null,
+    renderHostChatMultiplayerSnapshot: (context, snapshot) => {
+        const view = document.getElementById('chat-view');
+        if (!view) return false;
+        if (view.classList.contains('hidden')) switchView('chat');
+        view.classList.add('multiplayer-guest-view');
+        document.getElementById('chat-char-name').textContent = snapshot.experienceName || context?.name || 'Shared Chat';
+        document.getElementById('chat-char-model').textContent = 'Host-authoritative shared chat';
+        const avatar = document.getElementById('chat-avatar');
+        if (avatar) { avatar.style.backgroundImage = 'none'; avatar.textContent = '◎'; }
+        const container = document.getElementById('messages-container');
+        if (!container) return false;
+        container.innerHTML = '';
+        (Array.isArray(snapshot.history) ? snapshot.history : []).forEach(message => {
+            const role = message.role === 'dm' ? 'assistant' : message.role;
+            const row = document.createElement('div');
+            row.className = `msg msg-${role}`;
+            row.innerHTML = `<div class="msg-bubble"><div class="msg-text">${parseHordeMarkdown(String(message.text || ''))}</div></div>`;
+            container.appendChild(row);
+        });
+        if (!container.children.length) container.innerHTML = '<div class="chat-empty"><h3>Shared session ready</h3><p>The host’s opening scene will appear here.</p></div>';
+        container.scrollTop = container.scrollHeight;
+        return true;
+    },
+    clearHostChatMultiplayerPresentation: () => {
+        document.getElementById('chat-view')?.classList.remove('multiplayer-guest-view');
+        const input = document.getElementById('user-input');
+        if (input) { input.disabled = false; input.placeholder = 'Type your message...'; }
+    },
+    openSharedPersonaManager: () => {
+        const overlay = document.getElementById('personas-modal-overlay');
+        if (!overlay) return false;
+        renderPersonasList();
+        overlay.classList.remove('hidden');
+        return true;
+    },
     chatMemoryParticipantName: charId => (state.characters || []).find(character => character.id === charId)?.name || '',
     chatMemoryContext: () => {
         const session = getCurrentSession();

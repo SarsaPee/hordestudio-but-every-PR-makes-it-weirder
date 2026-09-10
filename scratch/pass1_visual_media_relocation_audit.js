@@ -18,6 +18,10 @@ const restoreHostContract = source => [
     ['experimentalSafeJsonClone', 'safeJsonClone'],
     ['experimentalEscapeHTML', 'escapeHTML'],
     ['experimentalCssUrl', 'cssUrl'],
+    ['experimentalCssColor', 'cssColor'],
+    ['experimentalParseHordeMarkdown', 'parseHordeMarkdown'],
+    ['experimentalSetSearchOpen', 'setCompanionSearchOpen'],
+    ['experimentalRenderSearchResults', 'renderCompanionSearchResults'],
     ['experimentalDisplayInitials', 'displayInitials'],
     ['experimentalNormalizePersona', 'normalizePersona'],
     ['experimentalPersonaPromptText', 'personaPromptText'],
@@ -61,6 +65,16 @@ const restoreHostContract = source => [
     ['ExperimentalWorldsHost.persistSharedSettings', 'persistGlobalSettingsOnly'],
     ['ExperimentalWorldsHost.ensureSharedLibraryFresh', 'ensureSharedLibraryFreshForGeneration'],
     ['ExperimentalWorldsHost.recordSharedLibraryAssistantTurn', 'recordSharedLibraryAssistantTurn'],
+    ['ExperimentalWorldsVisualMediaHost.imageModelFallback', 'companionImageModelFallback'],
+    ['ExperimentalWorldsVisualMediaHost.normalizeGeneratedImageSource', 'normalizeGeneratedImageSource'],
+    ['ExperimentalWorldsVisualMediaHost.stabilizeGeneratedImageSource', 'stabilizeGeneratedImageSource'],
+    ['ExperimentalWorldsVisualMediaHost.getImageOutputModels', 'getCompanionOutputModels'],
+    ['ExperimentalWorldsVisualMediaHost.rankImageModels', 'rankCompanionImageModels'],
+    ['ExperimentalWorldsVisualMediaHost.imageModelInfo', 'companionImageModelInfo'],
+    ['ExperimentalWorldsVisualMediaHost.getImageEndpoints', 'getCompanionImageEndpoints'],
+    ['ExperimentalWorldsVisualMediaHost.chooseImageEndpoint', 'chooseCompanionImageEndpoint'],
+    ['ExperimentalWorldsVisualMediaHost.imageCapabilities', 'companionImageCapabilities'],
+    ['ExperimentalWorldsVisualMediaHost.applyImageParameters', 'applyCompanionImageParameters'],
     ['ExperimentalWorldsHost.labsProposal', 'labsProposal'],
     ['ExperimentalWorldsHost.labsAvailable', 'window.HordeLabs'],
     ['ExperimentalWorldsHost.sharedPersonas()', 'state.personas'],
@@ -96,6 +110,7 @@ const restorePrivateUtilities = source => [
     ['experimentalSafeJsonClone', 'safeJsonClone'],
     ['experimentalEscapeHTML', 'escapeHTML'],
     ['experimentalCssUrl', 'cssUrl'],
+    ['experimentalCssColor', 'cssColor'],
     ['experimentalDisplayInitials', 'displayInitials'],
     ['experimentalNormalizePersona', 'normalizePersona'],
     ['experimentalPersonaPromptText', 'personaPromptText'],
@@ -148,16 +163,33 @@ assert(adapterIndex >= 0 && adapterIndex < coreIndex && coreIndex < providerInde
 const studioStart = acceptedApp.indexOf('// --- World Engine ---');
 const studioEnd = acceptedApp.indexOf('// --- World Play & Engine ---', studioStart);
 assert(studioStart >= 0 && studioEnd > studioStart, 'Pass-0 World Studio source unit is present');
+const acceptedStudio = acceptedApp.slice(studioStart, studioEnd);
 const relocatedStudio = fs.readFileSync('experiences/experimental-worlds/runtime/world-studio-core.js', 'utf8');
-assert.equal(compareSource(restoreExperimentalWarning(restoreHostContract(relocatedStudio))
+const replaceOracleFunction = (source, name, oracle) => source.replace(extractedFunction(source, name), extractedFunction(oracle, name));
+const restoreExperimentalRouteLifecycle = source => replaceOracleFunction(replaceOracleFunction(source
+    .replace("if (!ExperimentalWorldsRuntime.hasRouteListener('sidecar-feature-guard-click')) {", 'if (!document.body.dataset.sidecarFeatureGuard) {')
+    .replace("ExperimentalWorldsRuntime.bindRouteListener('sidecar-feature-guard-click', document, 'click', blockUnavailableSidecarFeature, true);", "document.addEventListener('click', blockUnavailableSidecarFeature, true);")
+    .replace("ExperimentalWorldsRuntime.bindRouteListener('sidecar-feature-guard-pointer', document, 'pointerdown', blockUnavailableSidecarFeature, true);", "document.addEventListener('pointerdown', blockUnavailableSidecarFeature, true);")
+    .replace("ExperimentalWorldsRuntime.bindRouteListener('sidecar-feature-guard-key', document, 'keydown', blockUnavailableSidecarFeature, true);", "document.addEventListener('keydown', blockUnavailableSidecarFeature, true);\n        document.body.dataset.sidecarFeatureGuard = 'true';")
+    .replace("ExperimentalWorldsRuntime.bindRouteListener('sidecar-model-search-dismiss', document, 'click', event => {", "document.addEventListener('click', event => {"), 'setupWorldStudioLogic', acceptedStudio), 'setupSidecarModelSearch', acceptedStudio);
+const restoredStudio = compareSource(restoreExperimentalWarning(restoreHostContract(restoreExperimentalRouteLifecycle(relocatedStudio)))
     .replace('            state.lastWorldStudioTab = target;\n            saveState();', '            state.lastWorldStudioTab = target;\n            persistWorkspaceSoon();')
     .replace('        state.lastWorldStudioId = worldId;\n        saveState();', '        state.lastWorldStudioId = worldId;\n        persistWorkspaceSoon();')
     .replace(`            // World recovery belongs to the Experimental authority.  Reading\n            // the host database here would make a stock-host cleanup or a\n            // future upstream store change silently break this mode.\n            const storedMedia = (await window.ExperimentalWorldsRepository?.snapshot?.())?.worldMediaAssets || {};`,
         "            const storedMedia = await HordeDB.get('worldMediaAssets') || {};")
-    ), compareSource(acceptedApp.slice(studioStart, studioEnd)),
-    'World Studio core differs from the Pass-0 oracle beyond the explicit Experimental-repository recovery seam');
+    );
+const expectedStudio = compareSource(acceptedStudio);
+if (restoredStudio !== expectedStudio) {
+    let difference = 0;
+    while (restoredStudio[difference] === expectedStudio[difference]
+        && difference < Math.max(restoredStudio.length, expectedStudio.length)) difference += 1;
+    throw new Error(`World Studio oracle mismatch at ${difference}: actual=${JSON.stringify(restoredStudio.slice(difference - 160, difference + 280))} expected=${JSON.stringify(expectedStudio.slice(difference - 160, difference + 280))}`);
+}
 assert(!fs.readFileSync('app.js', 'utf8').includes('// --- World Engine ---'),
     'World Studio core is no longer ambiguously retained in the host bootstrap');
+assert(relocatedStudio.includes("ExperimentalWorldsRuntime.bindRouteListener('sidecar-feature-guard-click'")
+    && relocatedStudio.includes("ExperimentalWorldsRuntime.bindRouteListener('sidecar-model-search-dismiss'"),
+    'World Studio document captures are lifecycle-owned and released on mode exit');
 const studioIndex = html.indexOf('experiences/experimental-worlds/runtime/world-studio-core.js');
 assert(studioIndex >= 0 && studioIndex < appIndex,
     'relocated World Studio core loads before the single host bootstrap');
@@ -198,6 +230,7 @@ function restoreOptionalMultiplayerHostContract(source) {
         'currentMultiplayerPersona', 'currentMultiplayerContext',
         'multiplayerCurrentSession', 'buildChatMultiplayerSnapshot',
         'buildMultiplayerSnapshot', 'buildMultiplayerCampaignTemplate',
+        'applyMultiplayerSnapshot', 'leaveMultiplayerExperience',
         'executeIsolatedMultiplayerTurn'
     ];
     return names.reduce((next, name) => next.replace(extractedFunction(next, name), extractedFunction(acceptedPlay, name)), source);
@@ -211,6 +244,19 @@ const restoredPlay = restoreOptionalMultiplayerHostContract(restoreHostContract(
     .replace('        turnOwner = captureExperimentalTurnOwner(world, sess);\n', '')
     .replace(/^\s*assertExperimentalTurnOwner\(turnOwner\);\n/gm, '')
     .replace('        saveState().catch(() => {});\n        saveState();', '        saveState().catch(() => {});\n        persistWorkspaceSoon();')
+    .replace(`    document.getElementById('world-persona-btn').onclick = () => {
+        if (ExperimentalWorldsHost.openSharedPersonaManager()) {
+            showToast('Create or select a Persona, then choose “Set as Active” to bind it to this timeline.', 'info');
+        } else {
+            showToast('No shared Persona manager is installed in this Experimental-only host.', 'info');
+        }
+    };`, `    document.getElementById('world-persona-btn').onclick = () => {
+        const overlay = document.getElementById('personas-modal-overlay');
+        if (!overlay) return;
+        renderPersonasList();
+        overlay.classList.remove('hidden');
+        showToast('Create or select a Persona, then choose “Set as Active” to bind it to this timeline.', 'info');
+    };`)
     .replace(/(state\.worldInstances\[state\.activeWorldId\]\.activeSessionId = e\.target\.value;\n\s*saveState\(\)\.catch\(\(\) => \{\}\);)(\n\s*renderWorldPlayState\(\);)/, '$1\n        persistWorkspaceSoon();$2');
 const comparedRestoredPlay = compareSource(restoredPlay);
 const comparedAcceptedPlay = compareSource(acceptedPlay);
@@ -326,8 +372,44 @@ const visualEditorStart = acceptedApp.indexOf('const WORLD_VISUAL_ASPECTS');
 const visualEditorEnd = acceptedApp.indexOf('// --- Voice notes and calls', visualEditorStart);
 assert(visualEditorStart >= 0 && visualEditorEnd > visualEditorStart, 'Pass-0 visual editor source unit is present');
 const relocatedVisualEditor = fs.readFileSync('experiences/experimental-worlds/visuals/world-visual-editor-core.js', 'utf8');
-assert.equal(compareSource(restoreHostContract(relocatedVisualEditor)), compareSource(acceptedApp.slice(visualEditorStart, visualEditorEnd)),
-    'visual editor core differs from the Pass-0 oracle');
+const restoreVisualEditorImageAdapter = source => source
+    .replace(`        const ranked = ExperimentalWorldsVisualMediaHost.rankImageModels(await ExperimentalWorldsVisualMediaHost.getImageOutputModels('image', false, provider), provider);
+        modelInfo = ranked.find(item => item.id === model) || null;`, `        const ranked = ExperimentalWorldsVisualMediaHost.rankImageModels(await ExperimentalWorldsVisualMediaHost.getImageOutputModels('image', false, provider), provider);
+        companionImageModelCatalog = ranked;
+        modelInfo = ranked.find(item => item.id === model) || null;`)
+    .replace(`    let generated;
+    let providerResult = {};
+    try {
+        const response = await ExperimentalWorldsVisualMediaHost.requestImage(buildBody(canUseReference), provider);
+        generated = response.image;
+        providerResult = response.result || {};
+    } catch (error) {
+        if (requireReference || !canUseReference
+            || (!error.referencePrivacyRejected && !error.referenceTransportRejected)) throw error;
+        const response = await ExperimentalWorldsVisualMediaHost.requestImage(buildBody(false), provider);
+        generated = response.image;
+        providerResult = response.result || {};
+    }
+    const portable = await makeWorldVisualPortable(generated, maxDimension, quality);`, `    let generated;
+    requestCompanionPhoto.lastResult = null;
+    try {
+        generated = await requestCompanionPhoto(buildBody(canUseReference), provider);
+    } catch (error) {
+        if (requireReference || !canUseReference
+            || (!error.referencePrivacyRejected && !error.referenceTransportRejected)) throw error;
+        generated = await requestCompanionPhoto(buildBody(false), provider);
+    }
+    const portable = await makeWorldVisualPortable(generated, maxDimension, quality);`)
+    .replace(`    const providerResponseMetadata = experimentalIsPlainObject(providerResult)`, `    const providerResult = requestCompanionPhoto.lastResult || {};
+    const providerResponseMetadata = experimentalIsPlainObject(providerResult)`);
+const restoredVisualEditor = compareSource(restoreHostContract(restoreVisualEditorImageAdapter(relocatedVisualEditor)));
+const acceptedVisualEditor = compareSource(acceptedApp.slice(visualEditorStart, visualEditorEnd));
+if (restoredVisualEditor !== acceptedVisualEditor) {
+    let difference = 0;
+    while (restoredVisualEditor[difference] === acceptedVisualEditor[difference]
+        && difference < Math.max(restoredVisualEditor.length, acceptedVisualEditor.length)) difference += 1;
+    throw new Error(`Visual editor oracle mismatch at ${difference}: actual=${JSON.stringify(restoredVisualEditor.slice(difference - 160, difference + 280))} expected=${JSON.stringify(acceptedVisualEditor.slice(difference - 160, difference + 280))}`);
+}
 assert(!fs.readFileSync('app.js', 'utf8').includes('const WORLD_VISUAL_ASPECTS'),
     'visual editor core is no longer ambiguously retained in the host bootstrap');
 const visualEditorIndex = html.indexOf('experiences/experimental-worlds/visuals/world-visual-editor-core.js');

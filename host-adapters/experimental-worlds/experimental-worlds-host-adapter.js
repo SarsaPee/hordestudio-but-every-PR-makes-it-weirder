@@ -69,6 +69,12 @@
         joinMultiplayerInvite: (...args) => requireHost().joinMultiplayerInvite?.(...args),
         multiplayerPromptState: (...args) => requireHost().multiplayerPromptState?.(...args) || '',
         currentMultiplayerPersona: sessionPersonaId => requireHost().currentMultiplayerPersona?.(sessionPersonaId) || null,
+        // A Chat guest presentation and the shared Persona manager are host
+        // features.  Experimental Worlds can offer them when present, but
+        // neither is a prerequisite for an Experimental-only installation.
+        renderHostChatMultiplayerSnapshot: (...args) => requireHost().renderHostChatMultiplayerSnapshot?.(...args) === true,
+        clearHostChatMultiplayerPresentation: () => requireHost().clearHostChatMultiplayerPresentation?.(),
+        openSharedPersonaManager: () => requireHost().openSharedPersonaManager?.() === true,
         // The retained Chat memory surface is likewise optional.  The
         // Experimental World memory engine never reads Chat state directly.
         chatMemoryParticipantName: charId => requireHost().chatMemoryParticipantName?.(charId) || '',

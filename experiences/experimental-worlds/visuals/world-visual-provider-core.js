@@ -22,7 +22,7 @@ function worldVisualModel(world, provider, pipeline = 'new') {
     if (provider === 'openrouter' && authored === 'gemini-3.1-flash-lite-image') {
         return 'google/gemini-3.1-flash-lite-image';
     }
-    return authored || companionImageModelFallback(provider);
+    return authored || ExperimentalWorldsVisualMediaHost.imageModelFallback(provider);
 }
 
 function blobAsDataUrl(blob) {
@@ -35,7 +35,7 @@ function blobAsDataUrl(blob) {
 }
 
 async function makeWorldVisualPortable(source, maxDimension, quality) {
-    let data = normalizeGeneratedImageSource(source);
+    let data = ExperimentalWorldsVisualMediaHost.normalizeGeneratedImageSource(source);
     if (!data) throw new Error('The image provider returned no usable image.');
     if (!data.startsWith('data:image/')) {
         let response;
@@ -44,7 +44,7 @@ async function makeWorldVisualPortable(source, maxDimension, quality) {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             data = await blobAsDataUrl(await response.blob());
         } catch (error) {
-            const stable = await stabilizeGeneratedImageSource(data);
+            const stable = await ExperimentalWorldsVisualMediaHost.stabilizeGeneratedImageSource(data);
             if (!stable.startsWith('data:image/')) {
                 throw new Error('The image was generated, but its temporary URL could not be embedded. Run Horde Studio with its launcher so the secure local media bridge can stabilize provider URLs.');
             }
