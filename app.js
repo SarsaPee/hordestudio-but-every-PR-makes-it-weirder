@@ -4549,7 +4549,12 @@ async function finalizeExperimentalLegacyCutover() {
     const restoredDigest = await repository.digest({
         worlds: restored.worlds, worldInstances: restored.worldInstances,
         activeWorldId: restored.activeWorldId, worldRecoverySnapshots: restored.worldRecoverySnapshots,
-        worldMediaAssets: restored.worldMediaAssets
+        worldMediaAssets: restored.worldMediaAssets,
+        // stageLegacyImport checks the complete Experimental snapshot shape.
+        // Workspace selection belongs to that shape too; omitting it here
+        // made an otherwise verified fresh-profile migration fail its own
+        // readback guard before any host record could be safely removed.
+        workspace: restored.workspace
     });
     // This is the one ownership-cutover transaction: no normal Experimental
     // save may intervene between its verified stage and removal of host keys.

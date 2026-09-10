@@ -16,6 +16,8 @@ assert.match(app, /preservedWorldDigest !== journal\.legacyPreimageDigest/,
     'cutover must reject a changed Experimental preimage');
 assert.match(app, /restoredDigest !== journal\.stagedDigest/,
     'cutover must require exact staged-copy readback, not merely a non-empty World list');
+assert.match(app, /worldMediaAssets: restored\.worldMediaAssets,[\s\S]*?workspace: restored\.workspace/,
+    'cutover readback must hash the same Experimental workspace shape that the staged snapshot hashes');
 const removal = app.indexOf("await HordeDB.deleteMultiple(['worlds', 'worldRecoverySnapshots', 'worldInstances', 'activeWorldId', 'worldMediaAssets'])");
 const journal = app.indexOf("status: 'legacy-host-records-removed'", removal);
 assert(removal >= 0 && journal > removal,
