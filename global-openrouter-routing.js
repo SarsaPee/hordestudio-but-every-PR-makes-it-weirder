@@ -402,7 +402,14 @@ function openRouterRoutingDraftValue(scope) {
 }
 
 function openRouterUiKey() {
-    return String(document.getElementById('global-api-key')?.value || state.apiKey || '').trim();
+    // Routing metadata is a host service request, not a public catalogue
+    // request. Prefer the same credential path used by the host's actual
+    // OpenRouter calls, then preserve the unsaved Settings-field fallback.
+    // Do not return or log this value outside the request construction path.
+    const hostAuthorization = typeof providerAuthHeaders === 'function'
+        ? String(providerAuthHeaders('openrouter')?.Authorization || '') : '';
+    const hostKey = hostAuthorization.replace(/^Bearer\s+/i, '').trim();
+    return hostKey || String(document.getElementById('global-api-key')?.value || state?.apiKey || '').trim();
 }
 
 function openRouterUiHeaders() {
@@ -411,6 +418,44 @@ function openRouterUiHeaders() {
         ...(key ? { Authorization: `Bearer ${key}` } : {}),
         ...attributionHeaders()
     };
+}
+
+// Kept only in memory for a focused support diagnosis. It never records the
+// credential or request headers themselves; `authenticated` is a boolean.
+const openRouterEndpointRequestTrace = [];
+
+function endpointMetricPresence(payload) {
+    const rows = Array.isArray(payload?.data?.endpoints) ? payload.data.endpoints : [];
+    return rows.map(row => ({
+        tag: String(row?.tag || '').trim(),
+        latencyLast30m: row?.latency_last_30m ?? null,
+        throughputLast30m: row?.throughput_last_30m ?? null
+    }));
+}
+
+function recordOpenRouterEndpointTrace(entry) {
+    openRouterEndpointRequestTrace.push({ at: Date.now(), ...entry });
+    while (openRouterEndpointRequestTrace.length > 12) openRouterEndpointRequestTrace.shift();
+}
+
+async function requestOpenRouterModelEndpoints(url, { authenticated }) {
+    const headers = authenticated ? openRouterUiHeaders() : attributionHeaders();
+    const response = await fetch(url, { method: 'GET', headers });
+    const payload = await response.json().catch(() => null);
+    const trace = {
+        url,
+        method: 'GET',
+        authenticated: Boolean(headers.Authorization),
+        status: response.status,
+        ok: response.ok,
+        // This is the endpoint response before the display mapper. The values
+        // are non-secret endpoint telemetry; full payload remains in the
+        // response lifetime rather than being logged or persisted.
+        rawMetricFields: endpointMetricPresence(payload)
+    };
+    recordOpenRouterEndpointTrace(trace);
+    if (!response.ok) throw new Error(`model endpoints failed (${response.status})`);
+    return { payload, trace };
 }
 
 async function fetchOpenRouterProviderCatalog({ force = false } = {}) {
@@ -438,9 +483,7 @@ async function fetchOpenRouterModelEndpoints(model, { force = false } = {}) {
     const author = cleanModel.slice(0, splitAt);
     const slug = cleanModel.slice(splitAt + 1);
     const url = `${OPENROUTER_ENDPOINT_API}/${encodeURIComponent(author)}/${encodeURIComponent(slug)}/endpoints`;
-    const response = await fetch(url, { headers: openRouterUiHeaders() });
-    if (!response.ok) throw new Error(`model endpoints failed (${response.status})`);
-    const payload = await response.json();
+    const { payload } = await requestOpenRouterModelEndpoints(url, { authenticated: true });
     const rows = Array.isArray(payload?.data?.endpoints) ? payload.data.endpoints : [];
     const endpoints = rows.map(row => ({
         slug: String(row?.tag || '').trim(),
@@ -453,6 +496,20 @@ async function fetchOpenRouterModelEndpoints(model, { force = false } = {}) {
     })).filter(row => isValidOpenRouterProviderSlug(row.slug));
     openRouterEndpointCatalogs.set(cleanModel, { endpoints, fetchedAt: Date.now() });
     return endpoints;
+}
+
+async function diagnoseOpenRouterModelEndpointAuth(model) {
+    const cleanModel = String(model || '').trim();
+    if (!cleanModel.includes('/')) throw new Error('choose an OpenRouter model before diagnosing endpoint metadata');
+    const splitAt = cleanModel.indexOf('/');
+    const url = `${OPENROUTER_ENDPOINT_API}/${encodeURIComponent(cleanModel.slice(0, splitAt))}/${encodeURIComponent(cleanModel.slice(splitAt + 1))}/endpoints`;
+    const authenticated = await requestOpenRouterModelEndpoints(url, { authenticated: true })
+        .then(({ trace }) => trace)
+        .catch(error => openRouterEndpointRequestTrace.at(-1) || { url, method: 'GET', authenticated: true, error: String(error?.message || error) });
+    const unauthenticated = await requestOpenRouterModelEndpoints(url, { authenticated: false })
+        .then(({ trace }) => trace)
+        .catch(error => openRouterEndpointRequestTrace.at(-1) || { url, method: 'GET', authenticated: false, error: String(error?.message || error) });
+    return { authenticated, unauthenticated };
 }
 
 function openRouterEndpointForSlug(slug, endpoints) {
@@ -887,7 +944,11 @@ window.HordeOpenRouterRouting = Object.freeze({
     readGlobal: () => readOpenRouterRoutingPanel('global') || normalizeOpenRouterRouting(null),
     apply: applyOpenRouterRouting,
     normalize: normalizeOpenRouterRouting,
-    install: installOpenRouterRoutingFetchHook
+    install: installOpenRouterRoutingFetchHook,
+    // Support-only evidence surface. It returns no credentials and never
+    // persists raw endpoint responses.
+    diagnoseEndpointAuth: diagnoseOpenRouterModelEndpointAuth,
+    endpointRequestTrace: () => openRouterEndpointRequestTrace.map(entry => ({ ...entry }))
 });
 
 installOpenRouterRoutingFetchHook();

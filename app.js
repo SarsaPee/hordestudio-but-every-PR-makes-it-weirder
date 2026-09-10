@@ -1213,6 +1213,7 @@ let state = {
     worldStudioTabsById: {},
     studioTabsByCharacterId: {},
     companionStudioTabsById: {},
+    companionSocialTabsById: {},
     settingsOpen: false,
     settingsSection: 'models',
     // Video Adventures are a separate product surface and persistence graph. They
@@ -2020,7 +2021,7 @@ function repairLoadedState() {
 // snapshot. Model/catalog refreshes may require a document reload, but that is
 // not permission to abandon an unsaved World or Virtual Human editor.
 const WORKSPACE_STATE_MIRROR_KEY = 'horde_workspace_state_v2';
-const WORKSPACE_STATE_VERSION = 3;
+const WORKSPACE_STATE_VERSION = 4;
 let workspaceRestoring = false;
 let workspacePersistTimer = null;
 let pendingWorkspaceState = null;
@@ -2064,13 +2065,18 @@ function captureWorkspaceState() {
         lastWorldStudioTab: workspaceString(state.lastWorldStudioTab),
         activeVideoWorldId: workspaceString(state.activeVideoWorldId),
         editingVideoWorldId: workspaceString(state.editingVideoWorldId),
+        activeVideoWorldSessionId: workspaceString(state.activeVideoWorldId
+            ? state.videoWorldSessions?.[state.activeVideoWorldId]?.activeSessionId : null),
         activeCompanionId: workspaceString(state.activeCompanionId),
         editingCompanionId: workspaceString(state.editingCompanionId),
+        activeCompanionSessionId: workspaceString(state.activeCompanionId
+            ? state.companionTimelines?.[state.activeCompanionId]?.activeSessionId : null),
         lastStudioTab: workspaceString(state.lastStudioTab),
         lastCompanionStudioTab: workspaceString(state.lastCompanionStudioTab),
         worldStudioTabsById: workspaceTabMap(state.worldStudioTabsById),
         studioTabsByCharacterId: workspaceTabMap(state.studioTabsByCharacterId),
         companionStudioTabsById: workspaceTabMap(state.companionStudioTabsById),
+        companionSocialTabsById: workspaceTabMap(state.companionSocialTabsById),
         settingsOpen: state.settingsOpen === true,
         settingsSection: SETTINGS_SECTION_LABELS?.[state.settingsSection]
             ? state.settingsSection : activeSettingsSection
@@ -2086,7 +2092,7 @@ function applyWorkspaceState(raw) {
         'lastStudioTab', 'lastCompanionStudioTab'].forEach(key => {
         if (raw[key] !== undefined) state[key] = workspaceString(raw[key]);
     });
-    ['worldStudioTabsById', 'studioTabsByCharacterId', 'companionStudioTabsById'].forEach(key => {
+    ['worldStudioTabsById', 'studioTabsByCharacterId', 'companionStudioTabsById', 'companionSocialTabsById'].forEach(key => {
         if (raw[key] !== undefined) state[key] = workspaceTabMap(raw[key]);
     });
     if (raw.settingsOpen !== undefined) state.settingsOpen = raw.settingsOpen === true;
@@ -2099,7 +2105,7 @@ function applyWorkspaceState(raw) {
 function readWorkspaceStateMirror() {
     try {
         const raw = JSON.parse(localStorage.getItem(WORKSPACE_STATE_MIRROR_KEY) || 'null');
-        return isPlainObject(raw) && [2, WORKSPACE_STATE_VERSION].includes(Number(raw.version)) ? raw : null;
+        return isPlainObject(raw) && [2, 3, WORKSPACE_STATE_VERSION].includes(Number(raw.version)) ? raw : null;
     } catch (_) {
         return null;
     }
@@ -2176,6 +2182,16 @@ function reconcileWorkspaceStateWithLoadedData(raw = pendingWorkspaceState) {
         && (state.worldInstances?.[state.activeWorldId]?.sessions || []).some(session => session?.id === worldSessionId)) {
         state.worldInstances[state.activeWorldId].activeSessionId = worldSessionId;
     }
+    const companionSessionId = workspaceString(raw.activeCompanionSessionId);
+    if (state.activeCompanionId && companionSessionId
+        && (state.companionTimelines?.[state.activeCompanionId]?.sessions || []).some(session => session?.id === companionSessionId)) {
+        state.companionTimelines[state.activeCompanionId].activeSessionId = companionSessionId;
+    }
+    const videoSessionId = workspaceString(raw.activeVideoWorldSessionId);
+    if (state.activeVideoWorldId && videoSessionId
+        && (state.videoWorldSessions?.[state.activeVideoWorldId]?.sessions || []).some(session => session?.id === videoSessionId)) {
+        state.videoWorldSessions[state.activeVideoWorldId].activeSessionId = videoSessionId;
+    }
 }
 
 function restoreLastWorkspace() {
@@ -2217,6 +2233,7 @@ function restoreLastWorkspace() {
                 : (workspaceEntityExists(state.companions, state.activeCompanionId) ? state.activeCompanionId : null);
             if (companionId) {
                 openCompanionStudio(companionId);
+                switchView('companionStudio');
                 const companionTab = workspaceTabFor(state.companionStudioTabsById, companionId, state.lastCompanionStudioTab);
                 if (companionTab) activateCompanionStudioTab(companionTab);
             } else switchView('companions');
@@ -38985,6 +39002,7 @@ function activateCompanionTimeline(companionId, timelineId) {
     store.activeSessionId = timeline.id;
     applyCompanionRuntime(companion, timeline.runtime);
     state.companionThreads[companionId] = timeline.messages;
+    persistWorkspaceSoon();
     return timeline;
 }
 
@@ -48576,6 +48594,8 @@ function renderCompanionSocialPanel(companion) {
     const panel = document.getElementById('companion-social-panel');
     const content = document.getElementById('companion-social-content');
     if (!button || !panel || !content) return;
+    const savedSocialTab = workspaceTabFor(state.companionSocialTabsById, companion?.id);
+    if (['feed', 'gallery', 'clips'].includes(savedSocialTab)) companionSocialTab = savedSocialTab;
     const panelKey = companionSocialPanelKey(companion);
     const open = companionSocialPanelVisibility.has(panelKey)
         ? companionSocialPanelVisibility.get(panelKey) : false;
@@ -48793,7 +48813,11 @@ function setupCompanionSocialPanel() {
         button.onclick = () => {
             companionSocialTab = button.dataset.companionSocialTab;
             const companion = getCompanion(state.activeCompanionId);
-            if (companion) renderCompanionSocialPanel(companion);
+            if (companion) {
+                state.companionSocialTabsById[companion.id] = companionSocialTab;
+                persistWorkspaceSoon();
+                renderCompanionSocialPanel(companion);
+            }
         };
     });
 }
