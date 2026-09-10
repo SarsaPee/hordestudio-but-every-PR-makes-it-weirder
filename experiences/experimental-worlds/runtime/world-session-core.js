@@ -2569,7 +2569,7 @@ function worldControlledPlayerIdentity(world, sess) {
 function getTimelinePersona(sess, world = null) {
     const persona = isPlainObject(sess?.personaSnapshot)
         ? sess.personaSnapshot
-        : ExperimentalWorldsState.personas.find(item => item.id === String(sess?.personaId || '')) || null;
+        : ExperimentalWorldsHost.sharedPersonas().find(item => item.id === String(sess?.personaId || '')) || null;
     if (!persona) return null;
     // Do not silently import a globally-active profile into a world whose
     // canonical protagonist is locked to somebody else. Older timelines did

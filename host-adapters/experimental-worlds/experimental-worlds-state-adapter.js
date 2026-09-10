@@ -13,8 +13,7 @@
     ]);
     const SHARED_KEYS = new Set([
         'globalSettings', 'roleplayOSSources', 'systemPresets', 'chatContinuities',
-        'characters', 'chats', 'personas', 'activePersonaId', 'activeSessionId',
-        'activeCharId', 'activeRoomId', 'rooms', 'theme', 'view'
+        'theme', 'view'
     ]);
     let binding = null;
     let experimental = Object.fromEntries([...EXPERIMENTAL_KEYS].map(key => [key,

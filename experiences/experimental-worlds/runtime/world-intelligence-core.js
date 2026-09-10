@@ -3770,8 +3770,8 @@ async function consolidateSessionEpisodicMemoryRun(session, config) {
         } else if (m.role === 'assistant' || m.role === 'dm') {
             prefix = configName;
             if (m.charId) {
-                const char = ExperimentalWorldsState.characters.find(c => c.id === m.charId);
-                if (char) prefix = char.name;
+                const name = ExperimentalWorldsHost.chatMemoryParticipantName(m.charId);
+                if (name) prefix = name;
             }
         }
         const content = (canonicalMsgText(m)).trim();
@@ -3858,7 +3858,7 @@ Begin your response with: [EPISODIC ARCHIVE]:`
                 sourceMessageIds,
                 startIndex: lastIdx,
                 endIndex: chunkEnd,
-                personaId: ExperimentalWorldsState.activePersonaId || ''
+                personaId: ExperimentalWorldsHost.activeSharedPersonaId()
             });
             pendingEmbeddings = inserted;
             totalMemories = continuity.records.filter(record => record.status !== 'superseded').length;
@@ -4099,9 +4099,9 @@ function setupVectorMemoryViewerEvents() {
                         await consolidateSessionEpisodicMemory(sess, world);
                     }
                 } else {
-                    const session = getCurrentSession();
-                    const config = ExperimentalWorldsState.characters.find(c => c.id === ExperimentalWorldsState.activeCharId)
-                                || ExperimentalWorldsState.rooms.find(r => r.id === ExperimentalWorldsState.activeRoomId);
+                    const chatMemory = ExperimentalWorldsHost.chatMemoryContext();
+                    const session = chatMemory?.session;
+                    const config = chatMemory?.config;
                     if (!session || !config) throw new Error('No active chat session');
                     // Full rebuild: clear stale memories and re-consolidate from scratch
                     // (otherwise we'd duplicate the entire archive on top of old entries).
@@ -4188,7 +4188,7 @@ async function renderVectorMemoryList(filterQuery = "") {
                 candidates = sess.episodicMemories.map(m => ({ text: m.text, embedding: m.embedding, source: 'episodic', ref: m }));
             }
         } else {
-            const session = getCurrentSession();
+            const session = ExperimentalWorldsHost.chatMemoryContext()?.session;
             if (session) {
                 const continuity = ensureChatContinuity(session, chatOwnerId());
                 currentEpisodicStore = continuity.records;
@@ -4251,19 +4251,18 @@ async function renderVectorMemoryList(filterQuery = "") {
                 });
             }
         } else {
-            const session = getCurrentSession();
+            const chatMemory = ExperimentalWorldsHost.chatMemoryContext();
+            const session = chatMemory?.session;
             if (session) {
-                const config = ExperimentalWorldsState.characters.find(c => c.id === ExperimentalWorldsState.activeCharId) ||
-                               ExperimentalWorldsState.rooms.find(r => r.id === ExperimentalWorldsState.activeRoomId);
+                const config = chatMemory?.config;
                 if (config) {
-                    if (ExperimentalWorldsState.activeRoomId) {
+                    if (chatMemory.isRoom) {
                         // Room Scenario Context
                         if (config.scenario) {
                             candidates.push({ text: `[ROOM SCENARIO] ${config.scenario}`, source: 'biography' });
                         }
                         // Room: collect all participant memories and bios
-                        (config.characterIds || []).forEach(cid => {
-                            const tc = ExperimentalWorldsState.characters.find(c => c.id === cid);
+                        (chatMemory.participants || []).forEach(tc => {
                             if (tc) {
                                 if (tc.desc) {
                                     candidates.push({ text: `[${tc.name} DESCRIPTION] ${tc.desc}`, source: 'biography' });

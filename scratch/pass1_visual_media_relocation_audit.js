@@ -51,7 +51,8 @@ const restoreHostContract = source => [
     ['ExperimentalWorldsHost.ensureSharedLibraryFresh', 'ensureSharedLibraryFreshForGeneration'],
     ['ExperimentalWorldsHost.recordSharedLibraryAssistantTurn', 'recordSharedLibraryAssistantTurn'],
     ['ExperimentalWorldsHost.labsProposal', 'labsProposal'],
-    ['ExperimentalWorldsHost.labsAvailable', 'window.HordeLabs']
+    ['ExperimentalWorldsHost.labsAvailable', 'window.HordeLabs'],
+    ['ExperimentalWorldsHost.sharedPersonas()', 'state.personas']
 ].reduce((next, [from, to]) => next.replaceAll(from, to), source)
     .replaceAll('ExperimentalWorldsSidecar', 'HordeSidecar')
     .replaceAll('ExperimentalWorldsRpgMechanics', 'HordeRpgMechanics')
@@ -130,7 +131,36 @@ const acceptedPlay = acceptedApp.slice(playStart, playEnd)
     // its own World context and must not carry either the stock marker or a
     // stock runtime call.
     .replace("    if (context.stockWorlds17Pass0) {\n        return window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context) || null;\n    }\n", '');
-const restoredPlay = restoreHostContract(relocatedPlay)
+function extractedFunction(source, name) {
+    const start = source.indexOf(`function ${name}(`);
+    assert(start >= 0, `Pass-0 source contains ${name}`);
+    const brace = source.indexOf('{', start);
+    let depth = 0;
+    for (let index = brace; index < source.length; index += 1) {
+        if (source[index] === '{') depth += 1;
+        else if (source[index] === '}') {
+            depth -= 1;
+            if (!depth) return source.slice(start, index + 1);
+        }
+    }
+    throw new Error(`Unclosed Pass-0 function ${name}`);
+}
+function restoreOptionalMultiplayerHostContract(source) {
+    // These functions are unchanged in behaviour, but their host-owned Chat
+    // and Multiplayer lookups now cross the explicit adapter.  Reconstitute
+    // precisely their Pass-0 bodies for the source-faithfulness comparison;
+    // the assertions below independently ensure the relocated copies use
+    // only that adapter and retain their Experimental World branch.
+    const names = [
+        'multiplayerSources', 'renderMultiplayerHub', 'setupMultiplayerHub',
+        'currentMultiplayerPersona', 'currentMultiplayerContext',
+        'multiplayerCurrentSession', 'buildChatMultiplayerSnapshot',
+        'buildMultiplayerSnapshot', 'buildMultiplayerCampaignTemplate',
+        'executeIsolatedMultiplayerTurn'
+    ];
+    return names.reduce((next, name) => next.replace(extractedFunction(next, name), extractedFunction(acceptedPlay, name)), source);
+}
+const restoredPlay = restoreOptionalMultiplayerHostContract(restoreHostContract(relocatedPlay))
     // Explicit Pass-1 lifecycle seam: provider work captures Experimental
     // ownership and cannot publish after a mode/world/timeline/restore change.
     // Strip it only for the source-body comparison below.
@@ -154,6 +184,13 @@ assert(relocatedPlay.includes('captureExperimentalTurnOwner') && relocatedPlay.i
     'Experimental World Play must capture and validate owner identity around provider completion');
 assert(!relocatedPlay.includes('StockWorlds17Pass0'),
     'Experimental World Play must not require a stock Worlds helper or record');
+assert(!/ExperimentalWorldsState\.(?:characters|rooms|chats|activeCharId|activeRoomId|personas|activePersonaId|activeSessionId)/.test(relocatedPlay),
+    'Experimental World Play must not read Chat or Persona host state directly');
+assert(!/window\.HordeMultiplayer(?:Engine)?/.test(relocatedPlay),
+    'Experimental World Play must reach optional Multiplayer only through its host adapter');
+assert(relocatedPlay.includes('ExperimentalWorldsHost.chatMultiplayerSources')
+    && relocatedPlay.includes('ExperimentalWorldsHost.multiplayerPromptState'),
+    'Experimental World Play records both optional Multiplayer adapter seams');
 assert(!fs.readFileSync('app.js', 'utf8').includes('// --- World Play & Engine ---'),
     'World Play core is no longer ambiguously retained in the host bootstrap');
 const playIndex = html.indexOf('experiences/experimental-worlds/runtime/world-play-core.js');
@@ -179,10 +216,43 @@ const intelligenceStart = acceptedApp.indexOf('// --- World Agent');
 const intelligenceEnd = acceptedApp.indexOf('// --- Data model', intelligenceStart);
 assert(intelligenceStart >= 0 && intelligenceEnd > intelligenceStart, 'Pass-0 World intelligence source unit is present');
 const relocatedIntelligence = fs.readFileSync('experiences/experimental-worlds/runtime/world-intelligence-core.js', 'utf8');
-assert.equal(compareSource(restoreExperimentalWarning(restoreHostContract(relocatedIntelligence))
+const restoredIntelligence = compareSource(restoreExperimentalWarning(restoreHostContract(relocatedIntelligence))
     .replace('await window.ExperimentalWorldsHost?.persistSharedContinuities?.(state.chatContinuities);', "await HordeDB.set('chatContinuities', state.chatContinuities);")
-    ), compareSource(acceptedApp.slice(intelligenceStart, intelligenceEnd)),
-    'World intelligence core differs from the Pass-0 oracle beyond the explicit shared-continuity host seam');
+    .replace(`                const name = ExperimentalWorldsHost.chatMemoryParticipantName(m.charId);
+                if (name) prefix = name;`, `                const char = state.characters.find(c => c.id === m.charId);
+                if (char) prefix = char.name;`)
+    .replace('personaId: ExperimentalWorldsHost.activeSharedPersonaId()', "personaId: state.activePersonaId || ''")
+    .replace(`                    const chatMemory = ExperimentalWorldsHost.chatMemoryContext();
+                    const session = chatMemory?.session;
+                    const config = chatMemory?.config;`, `                    const session = getCurrentSession();
+                    const config = state.characters.find(c => c.id === state.activeCharId)
+                                || state.rooms.find(r => r.id === state.activeRoomId);`)
+    .replace('const session = ExperimentalWorldsHost.chatMemoryContext()?.session;', 'const session = getCurrentSession();')
+    .replace(`            const chatMemory = ExperimentalWorldsHost.chatMemoryContext();
+            const session = chatMemory?.session;
+            if (session) {
+                const config = chatMemory?.config;
+                if (config) {
+                    if (chatMemory.isRoom) {`, `            const session = getCurrentSession();
+            if (session) {
+                const config = state.characters.find(c => c.id === state.activeCharId) ||
+                               state.rooms.find(r => r.id === state.activeRoomId);
+                if (config) {
+                    if (state.activeRoomId) {`)
+    .replace(`                        (chatMemory.participants || []).forEach(tc => {
+                            if (tc) {`, `                        (config.characterIds || []).forEach(cid => {
+                            const tc = state.characters.find(c => c.id === cid);
+                            if (tc) {`)
+    );
+const acceptedIntelligence = compareSource(acceptedApp.slice(intelligenceStart, intelligenceEnd));
+if (restoredIntelligence !== acceptedIntelligence) {
+    let firstDifference = 0;
+    while (restoredIntelligence[firstDifference] === acceptedIntelligence[firstDifference]
+        && firstDifference < Math.max(restoredIntelligence.length, acceptedIntelligence.length)) firstDifference += 1;
+    const windowStart = Math.max(0, firstDifference - 180);
+    const windowEnd = firstDifference + 280;
+    throw new Error(`World intelligence oracle mismatch at ${firstDifference}: actual=${JSON.stringify(restoredIntelligence.slice(windowStart, windowEnd))} expected=${JSON.stringify(acceptedIntelligence.slice(windowStart, windowEnd))}`);
+}
 assert(!fs.readFileSync('app.js', 'utf8').includes('// --- World Agent'),
     'World intelligence core is no longer ambiguously retained in the host bootstrap');
 const intelligenceIndex = html.indexOf('experiences/experimental-worlds/runtime/world-intelligence-core.js');

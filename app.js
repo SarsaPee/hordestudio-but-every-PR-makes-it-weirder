@@ -2373,7 +2373,84 @@ window.ExperimentalWorldsHost?.configure({
     ensureSharedLibraryFresh: () => ensureSharedLibraryFreshForGeneration(),
     recordSharedLibraryAssistantTurn: () => recordSharedLibraryAssistantTurn(),
     labsAvailable: () => Boolean(window.HordeLabs),
-    labsProposal: (...args) => labsProposal(...args)
+    labsProposal: (...args) => labsProposal(...args),
+    // Optional bridge for the host-owned Multiplayer experience.  These are
+    // intentionally functions rather than a host-state reference: the
+    // Experimental core remains usable in an Experimental-only installation,
+    // where this capability is simply absent.
+    sharedPersonas: () => Array.isArray(state.personas) ? state.personas : [],
+    chatMultiplayerSources: () => [
+        ...(Array.isArray(state.characters) ? state.characters : []).map(character => ({
+            type: 'chat', kind: 'character', id: character.id, name: character.name || 'Untitled Character',
+            description: character.desc || 'Character chat', image: character.avatar || ''
+        })),
+        ...(Array.isArray(state.rooms) ? state.rooms : []).map(room => ({
+            type: 'chat', kind: 'room', id: room.id, name: room.name || 'Untitled Room',
+            description: `${(room.characterIds || []).length} member group room`, image: room.avatar || room.bg || ''
+        }))
+    ],
+    chatMultiplayerContext: () => {
+        if (state.activeRoomId) {
+            const room = (state.rooms || []).find(item => item.id === state.activeRoomId);
+            if (room) return { type: 'chat', kind: 'room', id: room.id, name: room.name || 'Shared Room' };
+        }
+        const character = (state.characters || []).find(item => item.id === state.activeCharId);
+        return character ? { type: 'chat', kind: 'character', id: character.id, name: character.name || 'Shared Chat' } : null;
+    },
+    chatMultiplayerSession: context => {
+        const sessions = Array.isArray(state.chats?.[context?.id]) ? state.chats[context.id] : [];
+        return sessions.find(item => item.id === state.activeSessionId?.[context?.id]) || sessions[0] || { id: '', name: 'New multiplayer campaign', messages: [] };
+    },
+    chatMultiplayerSnapshot: context => {
+        const sessions = Array.isArray(state.chats?.[context?.id]) ? state.chats[context.id] : [];
+        const session = sessions.find(item => item.id === state.activeSessionId?.[context?.id]) || sessions[0];
+        if (!context || !session) return {};
+        return {
+            experienceType: 'chat', experienceName: context.name,
+            sessionName: String(session.name || 'Shared Session').slice(0, 120), location: 'Chat',
+            turn: (session.messages || []).filter(message => message.role === 'assistant').length,
+            history: (session.messages || []).slice(-120).map(message => ({
+                role: message.role === 'assistant' ? 'dm' : message.role === 'user' ? 'user' : 'system',
+                text: canonicalMsgText(message).slice(0, 12000)
+            }))
+        };
+    },
+    chatMultiplayerCampaignTemplate: context => {
+        if (!context?.id) return null;
+        const room = context.kind === 'room' ? (state.rooms || []).find(item => item.id === context.id) : null;
+        const characters = room
+            ? (room.characterIds || []).map(id => (state.characters || []).find(item => item.id === id)).filter(Boolean)
+            : [(state.characters || []).find(item => item.id === context.id)].filter(Boolean);
+        if (!characters.length) return null;
+        const provider = normalizedProviderId();
+        const cast = characters.map(character => `${character.name}: ${character.persona || character.description || 'No authored description.'}`).join('\n\n');
+        return {
+            source: { type: 'chat', kind: context.kind || 'character', id: context.id, name: context.name },
+            model: characters[0].model || state.globalSettings.defaultModel,
+            provider: normalizedProviderId(characters[0].textProvider || provider),
+            systemPrompt: `You are the facilitator for a multiplayer character-driven tabletop session. Every player is a separate person; never merge their identities or choose actions for them. Portray only the authored cast and neutral scene consequences.\n\nCAST\n${cast}\n\nROOM GUIDANCE\n${room?.systemPrompt || room?.description || 'Keep the scene responsive, coherent and open-ended.'}`,
+            opening: characters[0].intro || '', snapshot: window.ExperimentalWorldsHost.chatMultiplayerSnapshot(context)
+        };
+    },
+    multiplayerCampaigns: () => window.HordeMultiplayer?.campaigns?.() || [],
+    prepareMultiplayerCampaign: (...args) => window.HordeMultiplayer?.prepareCampaign?.(...args),
+    prepareMultiplayerSource: (...args) => window.HordeMultiplayer?.prepare?.(...args),
+    joinMultiplayerInvite: (...args) => window.HordeMultiplayer?.joinInvite?.(...args),
+    multiplayerPromptState: (...args) => window.HordeMultiplayerEngine?.promptState?.(...args) || '',
+    currentMultiplayerPersona: sessionPersonaId => (state.personas || []).find(item => item.id === (sessionPersonaId || state.activePersonaId)) || null,
+    chatMemoryParticipantName: charId => (state.characters || []).find(character => character.id === charId)?.name || '',
+    chatMemoryContext: () => {
+        const session = getCurrentSession();
+        const room = (state.rooms || []).find(item => item.id === state.activeRoomId);
+        const character = (state.characters || []).find(item => item.id === state.activeCharId);
+        const config = character || room || null;
+        if (!session || !config) return null;
+        return {
+            session, config, isRoom: Boolean(room && room.id === config.id),
+            participants: room ? (room.characterIds || []).map(id => (state.characters || []).find(item => item.id === id)).filter(Boolean) : []
+        };
+    },
+    activeSharedPersonaId: () => state.activePersonaId || ''
 });
 
 // The relocated Experimental core is never given the host state object.  Its

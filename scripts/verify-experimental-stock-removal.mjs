@@ -22,15 +22,19 @@ const ownedRuntime = files.filter(file => /\/(?:runtime|visuals|mechanics)\//.te
 const hostStateLeak = /\bstate\.(?:worlds|worldInstances|activeWorldId|worldRecoverySnapshots|editingWorld|lastWorldStudioId|lastWorldStudioTab)\b/;
 const hostWholeSave = /\bsaveState\s*\(/;
 const ambientExperimentalRuntime = /\b(?:HordeSidecar(?:Hooks|Mode|Timeline|Promotion|Traversal|MemoryGraph|Reader|ReaderBackfill)|HordeRpgMechanics|worldMediaDirty|resizeWorldMessageInput|resetWorldMessageInput|setWorldMessageInputManualHeight|installWorldMessageResizeHandle)\b|(?<![.\w])switchView\s*\(/;
+const hostExperienceLeak = /\bExperimentalWorldsState\.(?:characters|chats|personas|activePersonaId|activeSessionId|activeCharId|activeRoomId|rooms)\b|\bwindow\.HordeMultiplayer(?:Engine)?\b|\bgetCurrentSession\s*\(/;
 for (const file of ownedRuntime) {
     const source = readFileSync(file, 'utf8');
     assert(!hostStateLeak.test(source), `${file} reaches Experimental World state through the host object`);
     assert(!hostWholeSave.test(source), `${file} reaches the host whole-state writer`);
     assert(!ambientExperimentalRuntime.test(source), `${file} reaches an ambient World runtime instead of its Experimental-owned implementation or adapter`);
+    assert(!hostExperienceLeak.test(source), `${file} reaches a removed host experience instead of an optional adapter capability`);
 }
 
 const adapter = readFileSync('host-adapters/experimental-worlds/experimental-worlds-host-adapter.js', 'utf8');
 assert(!forbidden.test(adapter), 'Experimental Worlds host adapter reaches stock Worlds');
+assert(adapter.includes('chatMultiplayerSources') && adapter.includes('chatMemoryContext'),
+    'optional Chat and Multiplayer links are declared only at the host boundary');
 const html = readFileSync('index.html', 'utf8');
 assert.equal((html.match(/<script[^>]+src="app\.js/g) || []).length, 1,
     'the one application document must load exactly one app bootstrap');

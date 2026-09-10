@@ -51,6 +51,28 @@
         ensureSharedLibraryFresh: () => requireHost().ensureSharedLibraryFresh(),
         recordSharedLibraryAssistantTurn: () => requireHost().recordSharedLibraryAssistantTurn(),
         labsAvailable: () => requireHost().labsAvailable(),
-        labsProposal: (...args) => requireHost().labsProposal(...args)
+        labsProposal: (...args) => requireHost().labsProposal(...args),
+        // Multiplayer is a host integration, not an ambient runtime
+        // dependency.  Experimental Worlds supplies its own World source; the
+        // current Horde host may additionally supply Chat sources and a
+        // campaign service.  A minimal Experimental-only host supplies no
+        // shared sources and the mode continues to run normally.
+        sharedPersonas: () => requireHost().sharedPersonas?.() || [],
+        chatMultiplayerSources: () => requireHost().chatMultiplayerSources?.() || [],
+        chatMultiplayerContext: () => requireHost().chatMultiplayerContext?.() || null,
+        chatMultiplayerSession: context => requireHost().chatMultiplayerSession?.(context) || null,
+        chatMultiplayerSnapshot: context => requireHost().chatMultiplayerSnapshot?.(context) || {},
+        chatMultiplayerCampaignTemplate: context => requireHost().chatMultiplayerCampaignTemplate?.(context) || null,
+        multiplayerCampaigns: () => requireHost().multiplayerCampaigns?.() || [],
+        prepareMultiplayerCampaign: (...args) => requireHost().prepareMultiplayerCampaign?.(...args),
+        prepareMultiplayerSource: (...args) => requireHost().prepareMultiplayerSource?.(...args),
+        joinMultiplayerInvite: (...args) => requireHost().joinMultiplayerInvite?.(...args),
+        multiplayerPromptState: (...args) => requireHost().multiplayerPromptState?.(...args) || '',
+        currentMultiplayerPersona: sessionPersonaId => requireHost().currentMultiplayerPersona?.(sessionPersonaId) || null,
+        // The retained Chat memory surface is likewise optional.  The
+        // Experimental World memory engine never reads Chat state directly.
+        chatMemoryParticipantName: charId => requireHost().chatMemoryParticipantName?.(charId) || '',
+        chatMemoryContext: () => requireHost().chatMemoryContext?.() || null,
+        activeSharedPersonaId: () => requireHost().activeSharedPersonaId?.() || ''
     });
 })(window);
