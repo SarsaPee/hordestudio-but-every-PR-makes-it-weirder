@@ -1,0 +1,18 @@
+# Sorted Experimental Worlds domain files. Excludes adapters, registration,
+# migrations, tests, evidence, docs and packaging by design.
+experiences/experimental-worlds/mechanics/world-mechanics.js
+experiences/experimental-worlds/runtime/dossier-claims.js
+experiences/experimental-worlds/runtime/sidecar-core.js
+experiences/experimental-worlds/runtime/world-intelligence-core.js
+experiences/experimental-worlds/runtime/world-play-core.js
+experiences/experimental-worlds/runtime/world-protocol-core.js
+experiences/experimental-worlds/runtime/world-session-core.js
+experiences/experimental-worlds/runtime/world-studio-core.js
+experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js
+experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js
+experiences/experimental-worlds/styles/scene-pulse-worlds.css
+experiences/experimental-worlds/styles/world-visuals-and-sidecar.css
+experiences/experimental-worlds/visuals/world-portrait-prompt.js
+experiences/experimental-worlds/visuals/world-visual-editor-core.js
+experiences/experimental-worlds/visuals/world-visual-media-core.js
+experiences/experimental-worlds/visuals/world-visual-provider-core.js
