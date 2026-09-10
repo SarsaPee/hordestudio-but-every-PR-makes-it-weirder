@@ -25,12 +25,12 @@ the launcher opens the existing app instead of starting a duplicate bridge.
 If another program owns that port, it reports the conflict rather than opening
 the wrong service.
 
-Open `http://127.0.0.1:43127`, then use **Settings → Creative MCP providers**.
+Open `http://localhost:42069`, then use **Settings → Creative MCP providers**.
 Web browsers deliberately cannot execute a local `.command`, `.bat`, or shell
 script. The Settings page detects the platform and supplies the appropriate
 download; the launcher must be run by the operating system.
 
-The local app and bridge share `127.0.0.1:43127`, so startup cannot leave the
+The local app and bridge share `localhost:42069`, so startup cannot leave the
 page running without its image-provider bridge. Credentials are stored with
 owner-only permissions in:
 

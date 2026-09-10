@@ -8,7 +8,7 @@ schemas, and converts returned image URLs/content into stable data URLs.
 Environment variables (also loaded from .env if present):
   HORDE_SERVER_LISTEN_HOST — interface to bind (default: 127.0.0.1)
   HORDE_SERVER_HOST        — URL used by Horde Studio / OAuth (default: 127.0.0.1)
-  HORDE_SERVER_PORT        — listening port (default: 43127)
+  HORDE_SERVER_PORT        — listening port (default: 42069)
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ ALLOWED_ORIGINS = allowed_origins(PORT)
 
 
 def select_runtime_port(port: int) -> None:
-    """Keep URLs and origin checks aligned when a stale release owns 43127."""
+    """Keep URLs and origin checks aligned for this one local runtime."""
     global PORT, CALLBACK_URL, ALLOWED_ORIGINS
     PORT = port
     CALLBACK_URL = f"http://{HOST}:{PORT}/oauth/callback"

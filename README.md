@@ -245,7 +245,7 @@ python3 horde_mcp_bridge.py --open
 Horde Studio opens at:
 
 ```text
-http://127.0.0.1:43127
+http://localhost:42069
 ```
 
 Running the launcher again is safe. If Horde Studio already owns the port, it opens the existing instance rather than starting a duplicate bridge.
