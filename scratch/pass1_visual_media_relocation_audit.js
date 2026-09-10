@@ -257,6 +257,11 @@ const restoredPlay = restoreOptionalMultiplayerHostContract(restoreHostContract(
     .replace('    let turnOwner = null;\n', '')
     .replace('        turnOwner = captureExperimentalTurnOwner(world, sess);\n', '')
     .replace(/^\s*assertExperimentalTurnOwner\(turnOwner\);\n/gm, '')
+    // The source-faithful lore matcher moved into the private Experimental
+    // compatibility closure. Compare its semantics to the accepted ambient
+    // calls without pretending a host lookup remains an allowed dependency.
+    .replaceAll('experimentalParseLoreKeywords', 'parseLoreKeywords')
+    .replaceAll('experimentalLoreKeywordMatches', 'loreKeywordMatches')
     .replace('        saveState().catch(() => {});\n        saveState();', '        saveState().catch(() => {});\n        persistWorkspaceSoon();')
     .replace(`    document.getElementById('world-persona-btn').onclick = () => {
         if (ExperimentalWorldsHost.openSharedPersonaManager()) {
