@@ -144,8 +144,7 @@ function multiplayerSources(type = multiplayerHubType) {
             sourceKey: `experimental-worlds-pass0:${world.id}`,
             name: world.name || 'Untitled World',
             description: world.description || 'Persistent World', image: world.image || world.banner || ''
-            })),
-            ...(window.ExperimentalWorldsHost?.listStockMultiplayerSources?.() || [])
+            }))
         ];
     }
     return [
@@ -286,10 +285,6 @@ function currentMultiplayerContext(preferredType = '') {
         if (character) return { type: 'chat', kind: 'character', id: character.id, name: character.name || 'Shared Chat' };
     }
     if (preferredType === 'world' || !preferredType) {
-        if (state.view === 'stockWorlds') {
-            const stockContext = window.ExperimentalWorldsHost?.currentStockMultiplayerContext?.();
-            if (stockContext) return stockContext;
-        }
         const world = state.worlds.find(item => item.id === state.activeWorldId);
         if (world) return { type: 'world', id: world.id, name: world.name || 'Shared World' };
     }
@@ -327,9 +322,10 @@ function buildMultiplayerSnapshot(context) {
 
 function buildMultiplayerCampaignTemplate(context) {
     if (!context?.id) return null;
-    if (context.stockWorlds17Pass0) {
-        return window.ExperimentalWorldsHost?.stockMultiplayerCampaignTemplate?.(context) || null;
-    }
+    // This runtime owns Experimental Worlds only. Stock Worlds has its own
+    // multiplayer source surface; no stock record or helper can cross this
+    // boundary into an Experimental campaign.
+    if (context.stockWorlds17Pass0) return null;
     const provider = normalizedProviderId();
     if (context.type === 'chat') {
         const room = context.kind === 'room' ? state.rooms.find(item => item.id === context.id) : null;

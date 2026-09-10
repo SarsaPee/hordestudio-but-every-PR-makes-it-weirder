@@ -2300,12 +2300,9 @@ window.ExperimentalWorldsVisualMediaHost?.configure({
     }
 });
 
-// The one host owns inter-experience multiplayer discovery. Experimental
-// Worlds sees stock only through this explicit, optional contract.
+// The host owns only the shared continuity persistence seam. Experimental
+// Worlds never reads stock World records or invokes stock World helpers.
 window.ExperimentalWorldsHost?.configure({
-    listStockMultiplayerSources: () => window.StockWorlds17Pass0?.listMultiplayerSources?.() || [],
-    currentStockMultiplayerContext: () => window.StockWorlds17Pass0?.currentMultiplayerContext?.() || null,
-    stockMultiplayerCampaignTemplate: context => window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context) || null,
     persistSharedContinuities: continuities => HordeDB.set('chatContinuities', continuities)
 });
 

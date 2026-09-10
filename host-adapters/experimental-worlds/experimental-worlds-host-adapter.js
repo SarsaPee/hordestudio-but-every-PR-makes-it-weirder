@@ -12,9 +12,6 @@
     }
     global.ExperimentalWorldsHost = Object.freeze({
         configure(nextHost) { host = Object.freeze({ ...nextHost }); },
-        listStockMultiplayerSources: () => requireHost().listStockMultiplayerSources(),
-        currentStockMultiplayerContext: () => requireHost().currentStockMultiplayerContext(),
-        stockMultiplayerCampaignTemplate: context => requireHost().stockMultiplayerCampaignTemplate(context),
         persistSharedContinuities: continuities => requireHost().persistSharedContinuities(continuities)
     });
 })(window);

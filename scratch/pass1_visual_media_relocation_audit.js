@@ -65,11 +65,14 @@ const playStart = acceptedApp.indexOf('// --- World Play & Engine ---');
 const playEnd = acceptedApp.indexOf('// --- Narrated outfit', playStart);
 assert(playStart >= 0 && playEnd > playStart, 'Pass-0 World Play source unit is present');
 const relocatedPlay = fs.readFileSync('experiences/experimental-worlds/runtime/world-play-core.js', 'utf8');
-assert.equal(relocatedPlay
-    .replace('window.ExperimentalWorldsHost?.listStockMultiplayerSources?.() || []', 'window.StockWorlds17Pass0?.listMultiplayerSources?.() || []')
-    .replace('window.ExperimentalWorldsHost?.currentStockMultiplayerContext?.()', 'window.StockWorlds17Pass0?.currentMultiplayerContext?.()')
-    .replace('window.ExperimentalWorldsHost?.stockMultiplayerCampaignTemplate?.(context)', 'window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context)').trimEnd(), acceptedApp.slice(playStart, playEnd).trimEnd(),
-    'World Play core differs from the Pass-0 oracle beyond the explicit host multiplayer contract');
+const acceptedPlay = acceptedApp.slice(playStart, playEnd)
+    .replace("            })),\n            ...(window.StockWorlds17Pass0?.listMultiplayerSources?.() || [])", '            }))')
+    .replace("        if (state.view === 'stockWorlds') {\n            const stockContext = window.StockWorlds17Pass0?.currentMultiplayerContext?.();\n            if (stockContext) return stockContext;\n        }\n", '')
+    .replace("    if (context.stockWorlds17Pass0) {\n        return window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context) || null;\n    }", "    // This runtime owns Experimental Worlds only. Stock Worlds has its own\n    // multiplayer source surface; no stock record or helper can cross this\n    // boundary into an Experimental campaign.\n    if (context.stockWorlds17Pass0) return null;");
+assert.equal(relocatedPlay.trimEnd(), acceptedPlay.trimEnd(),
+    'World Play core differs from the Pass-0 oracle beyond the explicit stock-removal compatibility boundary');
+assert(!relocatedPlay.includes('StockWorlds17Pass0'),
+    'Experimental World Play must not require a stock Worlds helper or record');
 assert(!fs.readFileSync('app.js', 'utf8').includes('// --- World Play & Engine ---'),
     'World Play core is no longer ambiguously retained in the host bootstrap');
 const playIndex = html.indexOf('experiences/experimental-worlds/runtime/world-play-core.js');
