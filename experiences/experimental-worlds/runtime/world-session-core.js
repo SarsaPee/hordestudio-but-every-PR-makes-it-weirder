@@ -1269,13 +1269,6 @@ async function renderWorldMap() {
     }
 }
 
-// Start
-init().catch(error => {
-    console.error('Initialization failed:', error);
-    window.__hordeRuntimeErrors.push({ message: `Initialization failed: ${String(error?.message || error)}`, stack: String(error?.stack || '') });
-    showToast(`Unable to start Horde Studio: ${error.message || error}`, 'error');
-});
-
 /** --- REFERENCE SANITIZER & SCHEDULER MODULE --- **/
 
 function getLocationRef(world, ref) {
@@ -4064,4 +4057,3 @@ function getLivingWorldPrompt(world, sess, presentNPCs = [], options = {}) {
     }
     return lines.length > 1 ? `\n${lines.join('\n')}` : '';
 }
-

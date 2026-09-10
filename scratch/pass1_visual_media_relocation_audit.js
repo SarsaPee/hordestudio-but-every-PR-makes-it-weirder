@@ -80,8 +80,11 @@ const sessionStart = acceptedApp.indexOf('// --- Narrated outfit');
 const sessionEnd = acceptedApp.indexOf('// --- World Agent', sessionStart);
 assert(sessionStart >= 0 && sessionEnd > sessionStart, 'Pass-0 World session source unit is present');
 const relocatedSession = fs.readFileSync('experiences/experimental-worlds/runtime/world-session-core.js', 'utf8');
-assert.equal(relocatedSession.trimEnd(), acceptedApp.slice(sessionStart, sessionEnd).trimEnd(),
-    'World session core differs from the Pass-0 oracle');
+const hostBootstrapCall = `// Start\ninit().catch(error => {\n    console.error('Initialization failed:', error);\n    window.__hordeRuntimeErrors.push({ message: \`Initialization failed: \${String(error?.message || error)}\`, stack: String(error?.stack || '') });\n    showToast(\`Unable to start Horde Studio: \${error.message || error}\`, 'error');\n});`;
+assert.equal(relocatedSession.trimEnd(), acceptedApp.slice(sessionStart, sessionEnd).replace(`${hostBootstrapCall}\n\n`, '').trimEnd(),
+    'World session core differs from the Pass-0 oracle beyond moving the sole host bootstrap to app.js');
+assert(fs.readFileSync('app.js', 'utf8').includes(hostBootstrapCall),
+    'the one host bootstrap runs only after the current host file has loaded');
 assert(!fs.readFileSync('app.js', 'utf8').includes('// --- Narrated outfit'),
     'World session core is no longer ambiguously retained in the host bootstrap');
 const sessionIndex = html.indexOf('experiences/experimental-worlds/runtime/world-session-core.js');

@@ -28167,3 +28167,14 @@ function endCompanionCall() {
         }).catch(error => console.error('Could not save call transcript:', error));
     }
 }
+
+// The Experimental World source units load before this one host bootstrap.
+// Their former in-block `init()` call must therefore run only after this file
+// has declared the current host's complete navigation, provider and storage
+// surface.  This remains one application bootstrap, not a second runtime.
+// Start
+init().catch(error => {
+    console.error('Initialization failed:', error);
+    window.__hordeRuntimeErrors.push({ message: `Initialization failed: ${String(error?.message || error)}`, stack: String(error?.stack || '') });
+    showToast(`Unable to start Horde Studio: ${error.message || error}`, 'error');
+});
