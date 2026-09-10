@@ -8,7 +8,11 @@ const { buildContext } = require('./app_source.js');
 
 const context = {
     console: { log() {}, warn() {}, error() {} },
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    window: {
+        ExperimentalWorldsSidecarHooks: { isSidecarWorld: () => false },
+        ExperimentalWorldsMechanics: { isEnabled: () => false }
+    },
     FACTION_WAR_AT: -70
 };
 buildContext(vm, [

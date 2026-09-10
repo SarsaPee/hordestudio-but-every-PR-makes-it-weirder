@@ -22,7 +22,11 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { app, functionSource, buildContext } = require('./app_source.js');
 
-const context = { console: { warn() {}, log() {} } };
+const context = {
+    console: { warn() {}, log() {} },
+    experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    experimentalCssColor: (value, fallback) => value || fallback
+};
 buildContext(vm, ['normalizeAuthoredWorld', 'normalizeWorldShops', 'normalizeWorldFactions',
     'normalizeWorldRelationships', 'calibrateStructuralFindings', 'estimateWorldPromptTokens',
     'relationshipKey', 'livingClamp', 'removeWorldLocationRecord'], context);
@@ -194,11 +198,11 @@ test('the repair runs on load, import, save, export and delete', () => {
     // pinned against the file with enough context to be unambiguous.
     assert(/world\.lorebook = Array\.isArray\(world\.lorebook\) \? world\.lorebook : \[\];\s*(\/\/[^\n]*\n\s*)*normalizeAuthoredWorld\(world\);/.test(app),
         'an imported world is never repaired — the crash that motivated this is back');
-    assert(/normalizeAuthoredWorld\(state\.editingWorld\);[\s\S]{0,700}?const data = JSON\.stringify\(exportedWorld/.test(app),
+    assert(/normalizeAuthoredWorld\(ExperimentalWorldsState\.editingWorld\);[\s\S]{0,700}?const data = JSON\.stringify\(exportedWorld/.test(app),
         'an exported world is never repaired, so damage travels to whoever opens it');
     assert(/entities\.splice\(idx, 1\);[\s\S]{0,200}?normalizeAuthoredWorld/.test(app),
         'deleting a person leaves their standings behind');
-    assert(/removeWorldLocationRecord\(state\.editingWorld, loc\.id\);[\s\S]{0,300}?normalizeAuthoredWorld/.test(app),
+    assert(/removeWorldLocationRecord\(ExperimentalWorldsState\.editingWorld, loc\.id\);[\s\S]{0,300}?normalizeAuthoredWorld/.test(app),
         'deleting a place bypasses the canonical-link cleanup transaction');
 });
 

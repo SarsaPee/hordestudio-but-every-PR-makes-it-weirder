@@ -19,9 +19,16 @@ const { app, functionSource, buildContext } = require('./app_source.js');
 const context = {
     console: { log() {}, warn() {}, error() {} },
     __ruleModules: {},
+    window: {
+        ExperimentalWorldsSidecarHooks: {
+            normalizeWorldTimeline: () => null,
+            isSidecarWorld: () => false
+        },
+        ExperimentalWorldsMechanics: { isEnabled: () => false }
+    },
     normalizeWorldGameRules() { return { modules: context.__ruleModules }; },
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
-    safeJsonClone: value => JSON.parse(JSON.stringify(value))
+    experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    experimentalSafeJsonClone: value => JSON.parse(JSON.stringify(value))
 };
 
 // What this suite is about. Everything else these reach is resolved for us.
@@ -1383,9 +1390,9 @@ test('place drift is deterministic and skipped on a clock catch-up', () => {
 // ------------------------------------------------------------- world agent
 
 test('the world agent is off unless deliberately enabled, and bounded when on', () => {
-    assert.deepEqual(context.normalizeWorldAgentConfig({}), { enabled: false, intervalTurns: 24, model: '' });
+    assert.deepEqual(context.normalizeWorldAgentConfig({}), { enabled: false, intervalTurns: 24, model: '', openRouterRouting: null, proposalOnly: false });
     assert.deepEqual(context.normalizeWorldAgentConfig({ worldAgent: 'nonsense' }),
-        { enabled: false, intervalTurns: 24, model: '' });
+        { enabled: false, intervalTurns: 24, model: '', openRouterRouting: null, proposalOnly: false });
     assert.equal(context.normalizeWorldAgentConfig({ worldAgent: { enabled: true, intervalTurns: 1 } }).intervalTurns, 8,
         'an absurdly small interval was not floored');
     assert.equal(context.normalizeWorldAgentConfig({ worldAgent: { enabled: true, intervalTurns: 99999 } }).intervalTurns, 200,

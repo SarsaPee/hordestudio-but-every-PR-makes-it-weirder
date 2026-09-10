@@ -7,7 +7,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const root = path.join(__dirname, '..');
+const app = [
+    'app.js',
+    'experiences/experimental-worlds/runtime/world-protocol-core.js'
+].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
 function sourceOf(name) {
     const start = app.indexOf(`function ${name}(`);
     assert(start >= 0, `missing ${name}`);
@@ -23,12 +27,15 @@ function sourceOf(name) {
 const context = {};
 vm.createContext(context);
 vm.runInContext([
-    'function isPlainObject(value) { return !!value && typeof value === "object" && !Array.isArray(value); }',
+    'function experimentalIsPlainObject(value) { return !!value && typeof value === "object" && !Array.isArray(value); }',
     'const SIDECAR_MAX_EXPLICIT_TIME_SKIP_MINUTES = 1440;',
     sourceOf('sidecarTemporalStatement'),
     sourceOf('parseSidecarClockEndpoint'),
     sourceOf('sidecarEndpointMinuteOfDay'),
     sourceOf('deriveSidecarExplicitTimeSkip'),
+    sourceOf('deriveSidecarTwoPhaseTemporal'),
+    sourceOf('deriveSidecarReaderTemporalResolution'),
+    'function experimentalSafeJsonClone(value) { return JSON.parse(JSON.stringify(value)); }',
     sourceOf('applySidecarTemporalAuthority'),
     'this.derive = deriveSidecarExplicitTimeSkip; this.apply = applySidecarTemporalAuthority;'
 ].join('\n'), context);

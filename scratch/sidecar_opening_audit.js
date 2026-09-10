@@ -6,7 +6,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const root = path.join(__dirname, '..');
+const app = [
+    'app.js',
+    'experiences/experimental-worlds/runtime/sidecar-core.js',
+    'experiences/experimental-worlds/runtime/world-play-core.js',
+    'experiences/experimental-worlds/runtime/world-protocol-core.js'
+].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
 function sourceOf(name, prefix = 'function') {
     const start = app.indexOf(`${prefix} ${name}(`);
     assert(start >= 0, `missing ${name}`);
@@ -40,7 +46,7 @@ assert.match(turn, /ensureHierarchy\(protocol, sess, \{ createWhenMissing: true 
 assert.match(turn, /await bootstrapSidecarOpeningTurn\(world, sess, String\(opening\.text \|\| ''\)\)/,
     'an orphaned opening must be reconciled before the next player action');
 const conversation = sourceOf('runSidecarConversation', 'async function');
-assert.match(conversation, /const next = window\.HordeSidecarTimeline\?\.ensureHierarchy\(protocol, sess, \{ createWhenMissing: true \}\)/,
+assert.match(conversation, /const next = window\.ExperimentalWorldsSidecarTimeline\?\.ensureHierarchy\(protocol, sess, \{ createWhenMissing: true \}\)/,
     'closing a scene must create its replacement while retaining the sequence');
 assert.match(conversation, /nextSceneId: next\?\.scene\?\.id \|\| ''/,
     'the scene transition receipt must identify the replacement scene');

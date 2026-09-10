@@ -7,26 +7,30 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
-const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+const app = [
+    'experiences/experimental-worlds/runtime/world-message-input.js',
+    'experiences/experimental-worlds/runtime/world-play-core.js',
+    'experiences/experimental-worlds/runtime/world-protocol-core.js'
+].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
 const css = fs.readFileSync(path.join(root, 'style.css'), 'utf8');
 
-assert.match(app, /function resizeWorldMessageInput\(input = document\.getElementById\('world-user-input'\)\)/,
+assert.match(app, /function resizeExperimentalWorldMessageInput\(input = document\.getElementById\('world-user-input'\)\)/,
     'world input must have a dedicated auto-grow helper');
 assert.match(app, /const maximumHeight = defaultHeight \* 5;/,
     'auto-grow must stop at five times the default height');
-assert.match(app, /function resetWorldMessageInput\(input = document\.getElementById\('world-user-input'\)\)/,
+assert.match(app, /function resetExperimentalWorldMessageInput\(input = document\.getElementById\('world-user-input'\)\)/,
     'world input must have a dedicated reset helper');
-assert.match(app, /input\.addEventListener\('input', \(\) => resizeWorldMessageInput\(input\)\)/,
+assert.match(app, /input\.addEventListener\('input', \(\) => resizeExperimentalWorldMessageInput\(input\)\)/,
     'typing must resize the world input');
-assert.match(app, /function installWorldMessageResizeHandle\(input, handle\)/,
+assert.match(app, /function installExperimentalWorldMessageResizeHandle\(input, handle\)/,
     'world input must have a dedicated top-edge drag handler');
 assert.match(app, /drag\.startHeight \+ drag\.startY - event\.clientY/,
     'dragging upward from the top edge must increase composer height');
 assert.match(app, /delete input\.dataset\.manualHeight;/,
     'sending must clear a manual resize');
-assert.match(app, /resetWorldMessageInput\(input\);/,
+assert.match(app, /resetExperimentalWorldMessageInput\(input\);/,
     'Sidecar message send must reset the input');
-assert.match(app, /if \(!command\) resetWorldMessageInput\(\);/,
+assert.match(app, /if \(!command\) resetExperimentalWorldMessageInput\(\);/,
     'narrator message send must reset the input');
 assert.match(css, /\.world-message-resize-handle\s*\{[^}]*top:\s*-8px;[^}]*cursor:\s*ns-resize;/s,
     'the world input must expose a dedicated top-edge drag anchor');

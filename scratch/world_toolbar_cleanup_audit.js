@@ -25,7 +25,7 @@ assert.match(html, /world-v3-gm-btn/, 'World GM must remain the Sidecar entry po
 assert.match(app, /timeline-fork-btn/, 'selected-turn timeline forking must remain available');
 assert.match(app, /protocol\.inputMode = 'sidecar';/, 'World GM must enter Sidecar conversation mode directly');
 assert.match(app, /protocol\.inputMode = 'narrator';/, 'closing World GM must return input to the narrator');
-assert.match(app, /function returnToWorldNarrator\(\)[\s\S]*?const activeSession = getCurrentWorldSession\(\);[\s\S]*?activeProtocol\.inputMode = 'narrator';[\s\S]*?activeProtocol\.workspace = \{\};[\s\S]*?renderWorldPlayState\(\);[\s\S]*?saveState\(\)\.catch/,
+assert.match(app, /function returnToWorldNarrator\(\)[\s\S]*?const activeSession = getCurrentWorldSession\(\);[\s\S]*?activeProtocol\.inputMode = 'narrator';[\s\S]*?activeProtocol\.workspace = \{\};[\s\S]*?renderWorldPlayState\(\);[\s\S]*?ExperimentalWorldsHost\.persist\(\)\.catch/,
     'returning from World GM must resolve the active timeline, rerender narrator mode, then persist it');
 assert.match(app, /closeSidecarConversation\.onclick = returnToWorldNarrator;/,
     'the return control must use the active-timeline transition handler');

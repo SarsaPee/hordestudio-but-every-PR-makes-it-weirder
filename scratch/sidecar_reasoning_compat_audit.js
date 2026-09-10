@@ -1,7 +1,12 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const app = fs.readFileSync(require('path').join(__dirname, '..', 'app.js'), 'utf8');
+const root = require('path').join(__dirname, '..');
+const app = [
+    'app.js',
+    'experiences/experimental-worlds/runtime/world-studio-core.js',
+    'experiences/experimental-worlds/runtime/world-protocol-core.js'
+].map(file => fs.readFileSync(require('path').join(root, file), 'utf8')).join('\n');
 const html = fs.readFileSync(require('path').join(__dirname, '..', 'index.html'), 'utf8');
 const policy = app.match(/function sidecarReasoningPolicy\(tracker = \{\}, world = \{\}\) \{[\s\S]*?\n\}/)?.[0] || '';
 const helper = app.match(/function applySidecarReasoning\(body, provider, tracker = \{\}, world = \{\}, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] || '';
@@ -18,7 +23,7 @@ assert.match(helper, /options\.withoutReasoning === true/,
     'the retry path must omit optional reasoning');
 assert.match(app, /runSidecarQuestionRepair[\s\S]*?fetchSidecarCompletion\(body,/,
     'narrow question repairs must use the compatibility-safe completion helper');
-assert.match(app, /sidecarTokenLimitIncomplete\(payload\)[\s\S]*?showToast\('Sidecar thought too hard, retrying without reasoning\.', 'info'\)[\s\S]*?return request\(true\);/,
+assert.match(app, /sidecarTokenLimitIncomplete\(payload\)[\s\S]*?ExperimentalWorldsHost\.notify\('Sidecar thought too hard, retrying without reasoning\.', 'info'\)[\s\S]*?return request\(true\);/,
     'an incomplete token-limited Sidecar reply must visibly retry once without reasoning');
 assert.match(app, /w-sidecar-reasoning-mode/,
     'the Sidecar editor must expose narrator-inherited and explicit reasoning modes');

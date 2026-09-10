@@ -8,7 +8,10 @@ const { app, buildContext } = require('./app_source.js');
 
 const context = {
     console: { warn() {}, log() {}, error() {} },
-    crypto: { randomUUID: () => 'test-uuid' }
+    crypto: { randomUUID: () => 'test-uuid' },
+    experimentalSafeJsonClone: value => JSON.parse(JSON.stringify(value)),
+    experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    experimentalCssColor: (value, fallback) => value || fallback
 };
 buildContext(vm, ['upgradeWorldSchemaData', 'worldSchemaVersion'], context);
 

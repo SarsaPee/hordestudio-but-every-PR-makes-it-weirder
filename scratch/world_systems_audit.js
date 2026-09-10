@@ -17,9 +17,10 @@ const toasts = [];
 const context = {
     console: { log() {}, warn() {}, error() {} },
     showToast: (m, t) => toasts.push({ m, t }),
-    isPlainObject: v => !!v && typeof v === 'object' && !Array.isArray(v),
-    cssColor: (v, fallback) => v || fallback,
-    safeJsonClone: v => JSON.parse(JSON.stringify(v))
+    experimentalIsPlainObject: v => !!v && typeof v === 'object' && !Array.isArray(v),
+    experimentalCssColor: (v, fallback) => v || fallback,
+    experimentalSafeJsonClone: v => JSON.parse(JSON.stringify(v)),
+    ExperimentalWorldsHost: { notify: (m, t) => toasts.push({ m, t }) }
 };
 
 // What this suite is about: does a world an ordinary user makes actually work?

@@ -3,7 +3,11 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { app, buildContext } = require('./app_source.js');
 
-const context = { console: { log() {}, warn() {}, error() {} } };
+const context = {
+    console: { log() {}, warn() {}, error() {} },
+    experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    experimentalCssColor: (value, fallback) => value || fallback
+};
 buildContext(vm, [
     'normalizeWorldGameRules', 'resolveWorldCheckCapability', 'applyWorldCapabilityProgress', 'normalizeNpcKnowledgeEntry', 'addNpcKnowledge',
     'createWorldConsequence', 'advanceWorldConsequences', 'simulateWorldAutonomyHealth'
