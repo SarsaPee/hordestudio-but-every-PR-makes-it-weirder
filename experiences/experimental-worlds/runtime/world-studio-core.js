@@ -7515,7 +7515,10 @@ function renderWorlds() {
         card.querySelector('.recover-world-card-btn').onclick = async () => {
             if (state.worlds.some(item => item.id === world.id)) return;
             const restored = safeJsonClone(world);
-            const storedMedia = await HordeDB.get('worldMediaAssets') || {};
+            // World recovery belongs to the Experimental authority.  Reading
+            // the host database here would make a stock-host cleanup or a
+            // future upstream store change silently break this mode.
+            const storedMedia = (await window.ExperimentalWorldsRepository?.snapshot?.())?.worldMediaAssets || {};
             if (Array.isArray(storedMedia[restored.id])) restored.mediaAssets = storedMedia[restored.id];
             state.worlds.push(restored);
             delete state.worldRecoverySnapshots[restored.id];
@@ -7534,4 +7537,3 @@ function renderWorlds() {
         if (clear) clear.onclick = () => { document.getElementById('world-search').value = ''; renderWorlds(); };
     }
 }
-

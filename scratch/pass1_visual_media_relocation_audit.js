@@ -50,8 +50,11 @@ const studioStart = acceptedApp.indexOf('// --- World Engine ---');
 const studioEnd = acceptedApp.indexOf('// --- World Play & Engine ---', studioStart);
 assert(studioStart >= 0 && studioEnd > studioStart, 'Pass-0 World Studio source unit is present');
 const relocatedStudio = fs.readFileSync('experiences/experimental-worlds/runtime/world-studio-core.js', 'utf8');
-assert.equal(relocatedStudio.trimEnd(), acceptedApp.slice(studioStart, studioEnd).trimEnd(),
-    'World Studio core differs from the Pass-0 oracle');
+assert.equal(relocatedStudio
+    .replace(`            // World recovery belongs to the Experimental authority.  Reading\n            // the host database here would make a stock-host cleanup or a\n            // future upstream store change silently break this mode.\n            const storedMedia = (await window.ExperimentalWorldsRepository?.snapshot?.())?.worldMediaAssets || {};`,
+        "            const storedMedia = await HordeDB.get('worldMediaAssets') || {};")
+    .trimEnd(), acceptedApp.slice(studioStart, studioEnd).trimEnd(),
+    'World Studio core differs from the Pass-0 oracle beyond the explicit Experimental-repository recovery seam');
 assert(!fs.readFileSync('app.js', 'utf8').includes('// --- World Engine ---'),
     'World Studio core is no longer ambiguously retained in the host bootstrap');
 const studioIndex = html.indexOf('experiences/experimental-worlds/runtime/world-studio-core.js');
@@ -89,8 +92,10 @@ const intelligenceStart = acceptedApp.indexOf('// --- World Agent');
 const intelligenceEnd = acceptedApp.indexOf('// --- Data model', intelligenceStart);
 assert(intelligenceStart >= 0 && intelligenceEnd > intelligenceStart, 'Pass-0 World intelligence source unit is present');
 const relocatedIntelligence = fs.readFileSync('experiences/experimental-worlds/runtime/world-intelligence-core.js', 'utf8');
-assert.equal(relocatedIntelligence.trimEnd(), acceptedApp.slice(intelligenceStart, intelligenceEnd).trimEnd(),
-    'World intelligence core differs from the Pass-0 oracle');
+assert.equal(relocatedIntelligence
+    .replace('await window.ExperimentalWorldsHost?.persistSharedContinuities?.(state.chatContinuities);', "await HordeDB.set('chatContinuities', state.chatContinuities);")
+    .trimEnd(), acceptedApp.slice(intelligenceStart, intelligenceEnd).trimEnd(),
+    'World intelligence core differs from the Pass-0 oracle beyond the explicit shared-continuity host seam');
 assert(!fs.readFileSync('app.js', 'utf8').includes('// --- World Agent'),
     'World intelligence core is no longer ambiguously retained in the host bootstrap');
 const intelligenceIndex = html.indexOf('experiences/experimental-worlds/runtime/world-intelligence-core.js');

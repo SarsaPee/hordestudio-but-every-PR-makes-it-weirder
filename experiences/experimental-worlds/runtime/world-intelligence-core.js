@@ -3884,7 +3884,7 @@ Begin your response with: [EPISODIC ARCHIVE]:`
                 try { await hydrateChatMemoryEmbedding(record); }
                 catch (error) { console.warn('Memory vector enrichment failed; hybrid text recall remains active.', error); }
             }
-            await HordeDB.set('chatContinuities', state.chatContinuities);
+            await window.ExperimentalWorldsHost?.persistSharedContinuities?.(state.chatContinuities);
         }
 
         // FIX 4: Visible feedback so you know it actually ran
@@ -4543,4 +4543,3 @@ async function renderVectorMemoryList(filterQuery = "") {
    consolidation — so the whole brain can be exercised without a network
    call, the same discipline the World engine holds itself to.
    ═══════════════════════════════════════════════════════════════════════ */
-

@@ -41,6 +41,17 @@
             transaction.onabort = () => reject(transaction.error || new Error('Experimental Worlds write was aborted'));
         });
     }
+    async function removeMany(keys) {
+        await init();
+        await new Promise((resolve, reject) => {
+            const transaction = db.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            keys.forEach(key => store.delete(key));
+            transaction.oncomplete = resolve;
+            transaction.onerror = () => reject(transaction.error || new Error('Experimental Worlds delete failed'));
+            transaction.onabort = () => reject(transaction.error || new Error('Experimental Worlds delete was aborted'));
+        });
+    }
     async function snapshot() {
         return {
             worlds: await get('worlds') || [],
@@ -65,25 +76,94 @@
         await setMany(next);
         return next;
     }
-    function canonical(value) { return JSON.stringify(value); }
+    // JSON's insertion order is not a migration checksum.  The Worlds schema is
+    // data-only, so a sorted recursive representation gives import/restore a
+    // reproducible digest without changing the saved object itself.
+    function canonical(value) {
+        if (value === null) return 'null';
+        if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+        if (typeof value === 'object') {
+            return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+        }
+        return JSON.stringify(value);
+    }
+    async function digest(value) {
+        if (!global.crypto?.subtle) throw new Error('Web Crypto is required to verify Experimental Worlds migration data.');
+        const bytes = new TextEncoder().encode(canonical(value));
+        const hash = await global.crypto.subtle.digest('SHA-256', bytes);
+        return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+    function snapshotData(value) {
+        return {
+            worlds: clone(value?.worlds || []),
+            worldInstances: clone(value?.worldInstances || {}),
+            activeWorldId: value?.activeWorldId || null,
+            worldRecoverySnapshots: clone(value?.worldRecoverySnapshots || {}),
+            worldMediaAssets: clone(value?.worldMediaAssets || {})
+        };
+    }
+    async function verifiedSnapshot(expected, label) {
+        const expectedData = snapshotData(expected);
+        const actual = snapshotData(await snapshot());
+        const [expectedDigest, actualDigest] = await Promise.all([digest(expectedData), digest(actual)]);
+        if (expectedDigest !== actualDigest) {
+            throw new Error(`Experimental Worlds ${label} did not read back exactly; the prior data remains recoverable.`);
+        }
+        return actualDigest;
+    }
     async function stageLegacyImport(legacy) {
         const current = await snapshot();
         if (current.worlds.length || await get('migrationJournal')) return { imported: false, snapshot: current };
-        const preimage = clone(legacy);
-        const staged = await writeSnapshot(legacy, 'legacy-import-stage');
-        const readback = await snapshot();
-        if (canonical({ ...readback, generation: undefined, lastWrite: undefined })
-            !== canonical({ ...staged, generation: undefined, lastWrite: undefined })) {
-            throw new Error('Experimental Worlds staged import did not read back exactly; legacy records were left untouched.');
-        }
+        const preimage = snapshotData(legacy);
+        const staged = await writeSnapshot(preimage, 'legacy-import-stage');
+        const stagedDigest = await verifiedSnapshot(preimage, 'legacy import');
         await setMany({ migrationJournal: {
             version: 1, status: 'staged-and-verified', at: new Date().toISOString(),
-            legacyPreimage: preimage, importedGeneration: staged.generation
+            legacyPreimage: preimage, legacyPreimageDigest: await digest(preimage),
+            stagedDigest, importedGeneration: staged.generation
         } });
         return { imported: true, snapshot: staged };
     }
+    async function stageRestore(value) {
+        const next = snapshotData(value);
+        const preimage = snapshotData(await snapshot());
+        const stageDigest = await digest(next);
+        await setMany({
+            restoreStage: { snapshot: next, digest: stageDigest, stagedAt: new Date().toISOString() },
+            restoreJournal: {
+                version: 1, status: 'staged', at: new Date().toISOString(),
+                preimage, preimageDigest: await digest(preimage), stageDigest
+            }
+        });
+        const staged = await get('restoreStage');
+        if (!staged || staged.digest !== stageDigest || await digest(staged.snapshot) !== stageDigest) {
+            throw new Error('Experimental Worlds restore stage failed verification; active data was not replaced.');
+        }
+        return staged;
+    }
+    async function applyStagedRestore() {
+        const stage = await get('restoreStage');
+        const journal = await get('restoreJournal');
+        if (!stage || !journal || journal.status !== 'staged') throw new Error('No verified Experimental Worlds restore stage is available.');
+        if (await digest(stage.snapshot) !== stage.digest) throw new Error('Experimental Worlds restore stage checksum changed before apply.');
+        const applied = await writeSnapshot(stage.snapshot, 'global-backup-restore');
+        const readbackDigest = await verifiedSnapshot(stage.snapshot, 'restore');
+        await setMany({ restoreJournal: {
+            ...journal, status: 'applied-and-verified', appliedAt: new Date().toISOString(),
+            appliedGeneration: applied.generation, readbackDigest
+        } });
+        await removeMany(['restoreStage']);
+        return { snapshot: await snapshot(), generation: applied.generation, readbackDigest };
+    }
+    async function recoverInterruptedRestore() {
+        const stage = await get('restoreStage');
+        const journal = await get('restoreJournal');
+        if (!stage || !journal || journal.status !== 'staged') return { recovered: false };
+        return { recovered: true, ...(await applyStagedRestore()) };
+    }
     async function migrationJournal() { return await get('migrationJournal') || null; }
     global.ExperimentalWorldsRepository = Object.freeze({
-        DB_NAME, init, get, setMany, snapshot, writeSnapshot, stageLegacyImport, migrationJournal
+        DB_NAME, init, get, setMany, removeMany, snapshot, writeSnapshot, stageLegacyImport,
+        stageRestore, applyStagedRestore, recoverInterruptedRestore, migrationJournal, digest
     });
 })(window);

@@ -81,6 +81,7 @@ cp "$ROOT_DIR/experiences/experimental-worlds/visuals/world-portrait-prompt.js" 
   "$ROOT_DIR/experiences/experimental-worlds/visuals/world-visual-editor-core.js" \
   "$APP_DIR/experiences/experimental-worlds/visuals/"
 cp "$ROOT_DIR/host-adapters/experimental-worlds/visual-media-host-adapter.js" \
+  "$ROOT_DIR/host-adapters/experimental-worlds/experimental-worlds-host-adapter.js" \
   "$APP_DIR/host-adapters/experimental-worlds/"
 cp "$ROOT_DIR/experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js" \
   "$ROOT_DIR/experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js" \

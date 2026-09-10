@@ -2288,10 +2288,11 @@ window.ExperimentalWorldsVisualMediaHost?.configure({
 
 // The one host owns inter-experience multiplayer discovery. Experimental
 // Worlds sees stock only through this explicit, optional contract.
-window.ExperimentalWorldsHost = Object.freeze({
+window.ExperimentalWorldsHost?.configure({
     listStockMultiplayerSources: () => window.StockWorlds17Pass0?.listMultiplayerSources?.() || [],
     currentStockMultiplayerContext: () => window.StockWorlds17Pass0?.currentMultiplayerContext?.() || null,
-    stockMultiplayerCampaignTemplate: context => window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context) || null
+    stockMultiplayerCampaignTemplate: context => window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context) || null,
+    persistSharedContinuities: continuities => HordeDB.set('chatContinuities', continuities)
 });
 
 let lastPersistedWorldManifests = [];
@@ -2824,10 +2825,19 @@ function validatePass0StockWorldsBackup(value) {
     });
 }
 
+function validateExperimentalWorldsBackup(value) {
+    requirePlainObject(value, 'Backup Experimental Worlds');
+    requireArray(value.worlds, 'Backup Experimental Worlds worlds', { max: 1000 });
+    requirePlainObject(value.worldInstances || {}, 'Backup Experimental Worlds instances');
+    requirePlainObject(value.worldRecoverySnapshots || {}, 'Backup Experimental Worlds recovery snapshots');
+    requirePlainObject(value.worldMediaAssets || {}, 'Backup Experimental Worlds media');
+    value.worlds.forEach((world, index) => validateWorldData(world, `Backup Experimental World ${index + 1}`));
+}
+
 function validateBackupData(value) {
     requirePlainObject(value, 'Backup');
     if (value._format !== 'horde-studio-backup') throw new Error('Not a Horde Studio backup file');
-    if (value._version !== 1) throw new Error(`Unsupported backup version: ${value._version ?? 'missing'}`);
+    if (![1, 2].includes(value._version)) throw new Error(`Unsupported backup version: ${value._version ?? 'missing'}`);
     requireArray(value.characters, 'Backup characters', { optional: true, max: 5000 });
     requireArray(value.personas, 'Backup personas', { optional: true, max: 1000 });
     requireArray(value.rooms, 'Backup rooms', { optional: true, max: 1000 });
@@ -2837,6 +2847,7 @@ function validateBackupData(value) {
     requireArray(value.videoWorlds, 'Backup Video Adventures', { optional: true, max: 1000 });
     requireArray(value.companions, 'Backup Virtual Humans', { optional: true, max: 1000 });
     if (value.stockWorlds17Pass0 !== undefined) validatePass0StockWorldsBackup(value.stockWorlds17Pass0);
+    if (value.experimentalWorlds !== undefined) validateExperimentalWorldsBackup(value.experimentalWorlds);
     (value.characters || []).forEach((item, index) => validateCharacterData(item, `Backup character ${index + 1}`));
     (value.rooms || []).forEach((item, index) => validateRoomData(item, `Backup room ${index + 1}`));
     (value.personas || []).forEach((item, index) => {
@@ -3418,6 +3429,13 @@ function restoreLastWorkspace() {
 async function loadState() {
     await HordeDB.init();
     await window.ExperimentalWorldsRepository?.init?.();
+    // A power loss after a verified restore stage leaves the stage, not an
+    // ambiguous half-applied World.  Recover it before any World startup or
+    // normal host migration has a chance to inspect the old records.
+    const interruptedExperimentalRestore = await window.ExperimentalWorldsRepository?.recoverInterruptedRestore?.();
+    if (interruptedExperimentalRestore?.recovered) {
+        console.info('Recovered an interrupted Experimental Worlds restore from its verified stage.');
+    }
     const experimentalStored = await window.ExperimentalWorldsRepository?.snapshot?.() || null;
     const experimentalJournal = await window.ExperimentalWorldsRepository?.migrationJournal?.() || null;
     const hasExperimentalAuthority = !!(experimentalJournal || experimentalStored?.worlds?.length);
@@ -12236,6 +12254,59 @@ function redactGlobalSettingsCredentials(settings) {
     return copy;
 }
 
+async function makeFullBackupManifest(payload) {
+    const digest = window.ExperimentalWorldsRepository?.digest;
+    if (!digest) throw new Error('Experimental Worlds backup coordinator is unavailable.');
+    const partitions = [
+        ['host', {
+            globalSettings: payload.globalSettings, characters: payload.characters, chats: payload.chats,
+            chatContinuities: payload.chatContinuities, activeSessionId: payload.activeSessionId,
+            personas: payload.personas, activePersonaId: payload.activePersonaId, rooms: payload.rooms,
+            theme: payload.theme, systemPresets: payload.systemPresets, regexScripts: payload.regexScripts,
+            roleplayOSSources: payload.roleplayOSSources, videoWorlds: payload.videoWorlds,
+            videoWorldSessions: payload.videoWorldSessions, activeVideoWorldId: payload.activeVideoWorldId,
+            companions: payload.companions, companionThreads: payload.companionThreads,
+            companionTimelines: payload.companionTimelines, activeCompanionId: payload.activeCompanionId,
+            companionVideoAssets: payload.companionVideoAssets
+        }],
+        ['experimentalWorlds', payload.experimentalWorlds],
+        ['stockWorlds17Pass0', payload.stockWorlds17Pass0]
+    ];
+    return {
+        version: 1,
+        restoreProtocol: 'validate-stage-preimage-apply-reload-readback',
+        partitions: await Promise.all(partitions.map(async ([name, value]) => ({ name, sha256: await digest(value) })))
+    };
+}
+
+async function verifyFullBackupManifest(data) {
+    if (data._version === 1) return; // Historical archives predate partition checksums.
+    const manifest = data._manifest;
+    if (!isPlainObject(manifest) || manifest.version !== 1 || !Array.isArray(manifest.partitions)) {
+        throw new Error('Backup is missing its versioned recovery manifest.');
+    }
+    const expected = new Map(manifest.partitions.map(partition => [partition?.name, partition?.sha256]));
+    for (const [name, value] of [['experimentalWorlds', data.experimentalWorlds], ['stockWorlds17Pass0', data.stockWorlds17Pass0]]) {
+        if (typeof expected.get(name) !== 'string' || await window.ExperimentalWorldsRepository.digest(value) !== expected.get(name)) {
+            throw new Error(`Backup ${name} checksum does not match its manifest.`);
+        }
+    }
+    const host = {
+        globalSettings: data.globalSettings, characters: data.characters, chats: data.chats,
+        chatContinuities: data.chatContinuities, activeSessionId: data.activeSessionId,
+        personas: data.personas, activePersonaId: data.activePersonaId, rooms: data.rooms,
+        theme: data.theme, systemPresets: data.systemPresets, regexScripts: data.regexScripts,
+        roleplayOSSources: data.roleplayOSSources, videoWorlds: data.videoWorlds,
+        videoWorldSessions: data.videoWorldSessions, activeVideoWorldId: data.activeVideoWorldId,
+        companions: data.companions, companionThreads: data.companionThreads,
+        companionTimelines: data.companionTimelines, activeCompanionId: data.activeCompanionId,
+        companionVideoAssets: data.companionVideoAssets
+    };
+    if (typeof expected.get('host') !== 'string' || await window.ExperimentalWorldsRepository.digest(host) !== expected.get('host')) {
+        throw new Error('Backup host-data checksum does not match its manifest.');
+    }
+}
+
 async function exportFullBackup() {
     (state.companions || []).forEach(companion => persistCompanionRuntime(companion));
     const companionVideoAssets = {};
@@ -12249,9 +12320,13 @@ async function exportFullBackup() {
         throw new Error('Cannot create a complete backup: stock Worlds 17.0 is unavailable.');
     }
     const stockWorlds17Pass0 = await window.StockWorlds17Pass0.exportState();
+    // Read the authority itself, rather than the currently mounted view.  This
+    // makes a full recovery archive complete even when Experimental Worlds is
+    // disabled or has not been opened in the current session.
+    const experimentalWorlds = await window.ExperimentalWorldsRepository.snapshot();
     const payload = {
         _format: 'horde-studio-backup',
-        _version: 1,
+        _version: 2,
         _exportedAt: new Date().toISOString(),
         // API keys are credentials, not application data. They are intentionally
         // excluded so a shared backup cannot leak account access.
@@ -12267,9 +12342,7 @@ async function exportFullBackup() {
         systemPresets: state.systemPresets,
             regexScripts: state.regexScripts,
         roleplayOSSources: state.roleplayOSSources || [],
-        worlds: state.worlds,
-        worldInstances: state.worldInstances,
-        activeWorldId: state.activeWorldId,
+        experimentalWorlds,
         stockWorlds17Pass0,
         videoWorlds: state.videoWorlds,
         videoWorldSessions: state.videoWorldSessions,
@@ -12280,6 +12353,7 @@ async function exportFullBackup() {
         activeCompanionId: state.activeCompanionId,
         companionVideoAssets
     };
+    payload._manifest = await makeFullBackupManifest(payload);
     const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -12301,8 +12375,9 @@ function importFullBackup(file) {
     reader.onload = async (e) => {
         try {
             const data = validateBackupData(JSON.parse(e.target.result));
+            await verifyFullBackupManifest(data);
             showConfirmModal('Restore Backup',
-                `This will REPLACE all current data with the backup from ${data._exportedAt ? data._exportedAt.slice(0, 10) : 'unknown date'} (${(data.characters || []).length} chat characters, ${(data.companions || []).length} virtual humans, ${(data.worlds || []).length} worlds). Continue?`,
+                `This will REPLACE all current data with the backup from ${data._exportedAt ? data._exportedAt.slice(0, 10) : 'unknown date'} (${(data.characters || []).length} chat characters, ${(data.companions || []).length} virtual humans, ${(data.experimentalWorlds?.worlds || data.worlds || []).length} Experimental Worlds). Continue?`,
                 async () => {
                     if (data.companions === undefined) data.companions = [];
                     if (data.companionThreads === undefined) data.companionThreads = {};
@@ -12314,9 +12389,20 @@ function importFullBackup(file) {
                     if (data.globalSettings) data.globalSettings = redactGlobalSettingsCredentials(data.globalSettings);
                     if (data.chatContinuities === undefined) data.chatContinuities = {};
                     if (data.roleplayOSSources === undefined) data.roleplayOSSources = [];
+                    // Version 1 archives predate the separate authority.  They
+                    // are imported exactly once through the same staged route,
+                    // preserving identifiers and the old archive as evidence.
+                    const experimentalSnapshot = data.experimentalWorlds || {
+                        worlds: data.worlds || [],
+                        worldInstances: data.worldInstances || {},
+                        activeWorldId: data.activeWorldId || null,
+                        worldRecoverySnapshots: data.worldRecoverySnapshots || {},
+                        worldMediaAssets: data.worldMediaAssets || {}
+                    };
+                    const stagedExperimentalRestore = await window.ExperimentalWorldsRepository.stageRestore(experimentalSnapshot);
                     const keys = ['globalSettings', 'characters', 'chats', 'chatContinuities', 'activeSessionId',
                         'personas', 'activePersonaId', 'rooms', 'theme', 'systemPresets', 'regexScripts', 'roleplayOSSources',
-                        'worlds', 'worldInstances', 'activeWorldId', 'companions',
+                        'companions',
                         'companionThreads', 'companionTimelines', 'activeCompanionId',
                         'videoWorlds', 'videoWorldSessions', 'activeVideoWorldId'];
                     keys.forEach(k => { if (data[k] !== undefined) state[k] = data[k]; });
@@ -12334,6 +12420,20 @@ function importFullBackup(file) {
                         // unrelated stock sessions from the current profile.
                         await window.StockWorlds17Pass0.purgeState();
                     }
+                    const appliedExperimentalRestore = await window.ExperimentalWorldsRepository.applyStagedRestore();
+                    state.worlds = appliedExperimentalRestore.snapshot.worlds || [];
+                    state.worldInstances = appliedExperimentalRestore.snapshot.worldInstances || {};
+                    state.activeWorldId = appliedExperimentalRestore.snapshot.activeWorldId || null;
+                    state.worldRecoverySnapshots = appliedExperimentalRestore.snapshot.worldRecoverySnapshots || {};
+                    const restoredMedia = appliedExperimentalRestore.snapshot.worldMediaAssets || {};
+                    state.worlds.forEach(world => {
+                        world.mediaAssets = Array.isArray(restoredMedia[world.id]) ? restoredMedia[world.id] : [];
+                    });
+                    // An incremented generation is captured by every owned
+                    // asynchronous World request.  Completion code compares it
+                    // before publishing, so a pre-restore response cannot land
+                    // in an identically named restored timeline.
+                    window.ExperimentalWorldsRestoreGeneration = appliedExperimentalRestore.generation;
                     worldMediaDirty = true;
                     await saveState();
                     showToast('Backup restored! Reloading...', 'success');
