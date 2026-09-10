@@ -322,10 +322,6 @@ function buildMultiplayerSnapshot(context) {
 
 function buildMultiplayerCampaignTemplate(context) {
     if (!context?.id) return null;
-    // This runtime owns Experimental Worlds only. Stock Worlds has its own
-    // multiplayer source surface; no stock record or helper can cross this
-    // boundary into an Experimental campaign.
-    if (context.stockWorlds17Pass0) return null;
     const provider = normalizedProviderId();
     if (context.type === 'chat') {
         const room = context.kind === 'room' ? state.rooms.find(item => item.id === context.id) : null;

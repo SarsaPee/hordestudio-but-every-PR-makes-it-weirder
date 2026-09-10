@@ -6981,7 +6981,11 @@ async function init() {
         currentContext: currentMultiplayerContext,
         currentSession: multiplayerCurrentSession,
         snapshot: buildMultiplayerSnapshot,
-        campaignTemplate: buildMultiplayerCampaignTemplate,
+        // The host routes a stock source to its private pristine runtime.
+        // Experimental World code never inspects stock mode metadata.
+        campaignTemplate: context => context?.stockWorlds17Pass0
+            ? window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context) || null
+            : buildMultiplayerCampaignTemplate(context),
         currentPersona: currentMultiplayerPersona,
         executeTurn: executeIsolatedMultiplayerTurn,
         enterSession: () => switchView('multiplayerSession'),
