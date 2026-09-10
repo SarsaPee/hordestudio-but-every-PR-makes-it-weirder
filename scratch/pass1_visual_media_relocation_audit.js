@@ -82,6 +82,18 @@ const sessionIndex = html.indexOf('experiences/experimental-worlds/runtime/world
 assert(sessionIndex >= 0 && sessionIndex < appIndex,
     'relocated World session core loads before the single host bootstrap');
 
+const intelligenceStart = acceptedApp.indexOf('// --- World Agent');
+const intelligenceEnd = acceptedApp.indexOf('// --- Data model', intelligenceStart);
+assert(intelligenceStart >= 0 && intelligenceEnd > intelligenceStart, 'Pass-0 World intelligence source unit is present');
+const relocatedIntelligence = fs.readFileSync('experiences/experimental-worlds/runtime/world-intelligence-core.js', 'utf8');
+assert.equal(relocatedIntelligence.trimEnd(), acceptedApp.slice(intelligenceStart, intelligenceEnd).trimEnd(),
+    'World intelligence core differs from the Pass-0 oracle');
+assert(!fs.readFileSync('app.js', 'utf8').includes('// --- World Agent'),
+    'World intelligence core is no longer ambiguously retained in the host bootstrap');
+const intelligenceIndex = html.indexOf('experiences/experimental-worlds/runtime/world-intelligence-core.js');
+assert(intelligenceIndex >= 0 && intelligenceIndex < appIndex,
+    'relocated World intelligence core loads before the single host bootstrap');
+
 const acceptedStyle = execFileSync('git', ['show', `${sourceRevision}:style.css`], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
 const visualStyleStart = acceptedStyle.lastIndexOf('/* ─── WORLD ENGINE ─── */');
 const visualStyleEnd = acceptedStyle.indexOf('/* ScenePulse-inspired in-place Scene Intelligence Workspace.', visualStyleStart);
