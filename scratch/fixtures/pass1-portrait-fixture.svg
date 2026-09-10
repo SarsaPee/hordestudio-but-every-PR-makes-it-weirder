@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <rect width="96" height="96" fill="#26354a"/>
+  <circle cx="48" cy="36" r="18" fill="#f0b68d"/>
+  <path d="M18 90c4-24 20-34 30-34s26 10 30 34" fill="#b6566c"/>
+  <text x="48" y="18" text-anchor="middle" fill="white" font-size="9" font-family="sans-serif">PASS1</text>
+</svg>
