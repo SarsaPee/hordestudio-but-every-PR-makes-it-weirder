@@ -1008,16 +1008,17 @@
     };
     function debugRows(state) {
         const rows = [];
+        const diagnostics = global.ExperimentalWorldsHost?.diagnostics?.() || { apiCalls: [], runtimeErrors: [] };
         if (state.mode !== 'accepted_live') rows.push({ level: 'info', text: '[INFO] Accepted ScenePulse TOUR_EXAMPLE_DATA fixture mounted; no Reader, provider, or Horde registry field was read.' });
         (state.history || []).forEach(item => {
             const a = item.analytics || {};
             rows.push({ level: 'audit', text: `[AUDIT] ${item.createdAt || item.label} · ${item.label} accepted · ${a.mode || 'delta'} · ${a.changedFields ?? '—'} changed fields · ${Number.isFinite(Number(a.deltaBytes)) ? `${a.deltaBytes} B` : 'delta bytes unavailable'}` });
         });
-        (global.__hordeApiCallTraces || []).slice(-20).forEach(trace => {
+        (diagnostics.apiCalls || []).slice(-20).forEach(trace => {
             const request = trace?.request || {}, response = trace?.response || {};
             rows.push({ level: trace?.status === 'ok' ? 'info' : 'warn', text: `[${trace?.status === 'ok' ? 'INFO' : 'WARN'}] Provider call · ${trace?.completedAt || trace?.startedAt || 'time unavailable'} · ${request.method || 'REQUEST'} ${debugRedact(request.url || 'endpoint unavailable')} · ${response.status || trace?.status || 'pending'}` });
         });
-        (global.__hordeRuntimeErrors || []).slice(-20).forEach(error => {
+        (diagnostics.runtimeErrors || []).slice(-20).forEach(error => {
             const message = typeof error === 'string' ? error : error?.message || JSON.stringify(error);
             rows.push({ level: 'error', text: `[ERROR] ${debugRedact(message)}` });
         });
@@ -1049,8 +1050,9 @@
         const query = String(state.debugQuery || '').trim().toLowerCase();
         const filtered = rows.filter(row => (state.debugLevel === 'all' || row.level === state.debugLevel) && (!query || row.text.toLowerCase().includes(query)));
         const packet = debugPacket(state);
-        const calls = (global.__hordeApiCallTraces || []).slice(-30).reverse();
-        const crashes = (global.__hordeRuntimeErrors || []).slice(-30).reverse();
+        const diagnostics = global.ExperimentalWorldsHost?.diagnostics?.() || { apiCalls: [], runtimeErrors: [] };
+        const calls = (diagnostics.apiCalls || []).slice(-30).reverse();
+        const crashes = (diagnostics.runtimeErrors || []).slice(-30).reverse();
         const capture = state.debugCaptureResult;
         const animationCount = (() => { try { return document.getAnimations?.().length || 0; } catch (_) { return 0; } })();
         const sceneLayerCount = document.querySelectorAll('#sp-panel [style*="transform"], #sp-thought-panel, #sp-weather-overlay, #sp-time-tint').length;

@@ -2374,6 +2374,10 @@ window.ExperimentalWorldsHost?.configure({
     humanizeApiError: (...args) => humanizeApiError(...args),
     localGenerationIdleTimeoutMs: (...args) => localGenerationIdleTimeoutMs(...args),
     cloudGenerationIdleTimeoutMs: (...args) => cloudGenerationIdleTimeoutMs(...args),
+    diagnostics: () => ({
+        apiCalls: Array.isArray(window.__hordeApiCallTraces) ? window.__hordeApiCallTraces : [],
+        runtimeErrors: Array.isArray(window.__hordeRuntimeErrors) ? window.__hordeRuntimeErrors : []
+    }),
     applyRegexScripts: (...args) => applyRegexScripts(...args),
     replaceMacros: (...args) => replaceMacros(...args),
     getAllPresets: (...args) => getAllPresets(...args),

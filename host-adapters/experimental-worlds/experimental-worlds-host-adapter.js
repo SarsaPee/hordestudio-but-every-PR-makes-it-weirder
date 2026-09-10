@@ -41,6 +41,7 @@
         humanizeApiError: (...args) => requireHost().humanizeApiError(...args),
         localGenerationIdleTimeoutMs: (...args) => requireHost().localGenerationIdleTimeoutMs(...args),
         cloudGenerationIdleTimeoutMs: (...args) => requireHost().cloudGenerationIdleTimeoutMs(...args),
+        diagnostics: () => requireHost().diagnostics?.() || { apiCalls: [], runtimeErrors: [] },
         applyRegexScripts: (...args) => requireHost().applyRegexScripts(...args),
         replaceMacros: (...args) => requireHost().replaceMacros(...args),
         getAllPresets: (...args) => requireHost().getAllPresets(...args),

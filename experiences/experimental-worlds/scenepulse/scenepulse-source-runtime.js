@@ -712,8 +712,8 @@
                 chatPanels: clone((handoff?.uiPreferences?.customPanels || [])),
                 ...(graphCache ? { relationshipGraph: graphCache } : {})
             },
-            __hordeCurrentKey: currentKey,
-            __hordeCurrentSnapshot: clone(current)
+            __experimentalWorldsCurrentKey: currentKey,
+            __experimentalWorldsCurrentSnapshot: clone(current)
         };
     }
 
@@ -800,7 +800,7 @@
             mountedAt: now(),
             nativeTracker,
             sidecarTracker: clone(handoff?.sidecarScenePulse || handoff?.scenePulse || {}),
-            currentKey: metadata.__hordeCurrentKey,
+            currentKey: metadata.__experimentalWorldsCurrentKey,
             epoch: runtime.epoch
         };
     }
