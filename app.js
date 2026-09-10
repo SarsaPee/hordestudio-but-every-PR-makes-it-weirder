@@ -1208,6 +1208,11 @@ let state = {
     lastWorldStudioTab: null,
     lastStudioTab: null,
     lastCompanionStudioTab: null,
+    // Workspace-only navigation: these maps never alter the authored object.
+    // They let each editor reopen on its own last section after a refresh.
+    worldStudioTabsById: {},
+    studioTabsByCharacterId: {},
+    companionStudioTabsById: {},
     settingsOpen: false,
     settingsSection: 'models',
     // Video Adventures are a separate product surface and persistence graph. They
@@ -2015,7 +2020,7 @@ function repairLoadedState() {
 // snapshot. Model/catalog refreshes may require a document reload, but that is
 // not permission to abandon an unsaved World or Virtual Human editor.
 const WORKSPACE_STATE_MIRROR_KEY = 'horde_workspace_state_v2';
-const WORKSPACE_STATE_VERSION = 2;
+const WORKSPACE_STATE_VERSION = 3;
 let workspaceRestoring = false;
 let workspacePersistTimer = null;
 let pendingWorkspaceState = null;
@@ -2030,6 +2035,18 @@ function workspaceString(value) {
     return typeof value === 'string' && value.length <= 200 ? value : null;
 }
 
+function workspaceTabMap(value) {
+    if (!isPlainObject(value)) return {};
+    return Object.fromEntries(Object.entries(value)
+        .filter(([ownerId, tab]) => workspaceString(ownerId) && workspaceString(tab))
+        .slice(0, 500)
+        .map(([ownerId, tab]) => [ownerId, tab]));
+}
+
+function workspaceTabFor(map, ownerId, fallback = null) {
+    return workspaceString(map?.[ownerId]) || fallback;
+}
+
 function captureWorkspaceState() {
     return {
         version: WORKSPACE_STATE_VERSION,
@@ -2041,6 +2058,8 @@ function captureWorkspaceState() {
         activeWorldId: workspaceString(state.activeWorldId),
         activeWorldSessionId: workspaceString(state.activeWorldId
             ? state.worldInstances?.[state.activeWorldId]?.activeSessionId : null),
+        activeChatSessionId: workspaceString((state.activeRoomId || state.activeCharId)
+            ? state.activeSessionId?.[state.activeRoomId || state.activeCharId] : null),
         lastWorldStudioId: workspaceString(state.lastWorldStudioId),
         lastWorldStudioTab: workspaceString(state.lastWorldStudioTab),
         activeVideoWorldId: workspaceString(state.activeVideoWorldId),
@@ -2049,6 +2068,9 @@ function captureWorkspaceState() {
         editingCompanionId: workspaceString(state.editingCompanionId),
         lastStudioTab: workspaceString(state.lastStudioTab),
         lastCompanionStudioTab: workspaceString(state.lastCompanionStudioTab),
+        worldStudioTabsById: workspaceTabMap(state.worldStudioTabsById),
+        studioTabsByCharacterId: workspaceTabMap(state.studioTabsByCharacterId),
+        companionStudioTabsById: workspaceTabMap(state.companionStudioTabsById),
         settingsOpen: state.settingsOpen === true,
         settingsSection: SETTINGS_SECTION_LABELS?.[state.settingsSection]
             ? state.settingsSection : activeSettingsSection
@@ -2064,6 +2086,9 @@ function applyWorkspaceState(raw) {
         'lastStudioTab', 'lastCompanionStudioTab'].forEach(key => {
         if (raw[key] !== undefined) state[key] = workspaceString(raw[key]);
     });
+    ['worldStudioTabsById', 'studioTabsByCharacterId', 'companionStudioTabsById'].forEach(key => {
+        if (raw[key] !== undefined) state[key] = workspaceTabMap(raw[key]);
+    });
     if (raw.settingsOpen !== undefined) state.settingsOpen = raw.settingsOpen === true;
     if (SETTINGS_SECTION_LABELS?.[raw.settingsSection]) {
         state.settingsSection = raw.settingsSection;
@@ -2074,7 +2099,7 @@ function applyWorkspaceState(raw) {
 function readWorkspaceStateMirror() {
     try {
         const raw = JSON.parse(localStorage.getItem(WORKSPACE_STATE_MIRROR_KEY) || 'null');
-        return isPlainObject(raw) && Number(raw.version) === WORKSPACE_STATE_VERSION ? raw : null;
+        return isPlainObject(raw) && [2, WORKSPACE_STATE_VERSION].includes(Number(raw.version)) ? raw : null;
     } catch (_) {
         return null;
     }
@@ -2118,12 +2143,44 @@ function workspaceEntityExists(list, id) {
     return !!id && Array.isArray(list) && list.some(item => item && item.id === id);
 }
 
+// Workspace state is loaded before the larger IndexedDB records. Reapply only
+// valid navigation selections after those records arrive; otherwise the older
+// activeWorldId/activeCompanionId records overwrite the page the author was
+// actually working on just before refresh.
+function reconcileWorkspaceStateWithLoadedData(raw = pendingWorkspaceState) {
+    if (!isPlainObject(raw)) return;
+    const roomId = workspaceEntityExists(state.rooms, raw.activeRoomId) ? raw.activeRoomId : null;
+    const charId = workspaceEntityExists(state.characters, raw.activeCharId) ? raw.activeCharId : null;
+    if (roomId) {
+        state.activeRoomId = roomId;
+        state.activeCharId = null;
+    } else if (charId) {
+        state.activeCharId = charId;
+        state.activeRoomId = null;
+    }
+    if (workspaceEntityExists(state.characters, raw.editingCharId)) state.editingCharId = raw.editingCharId;
+    if (workspaceEntityExists(state.worlds, raw.activeWorldId)) state.activeWorldId = raw.activeWorldId;
+    if (workspaceEntityExists(state.worlds, raw.lastWorldStudioId)) state.lastWorldStudioId = raw.lastWorldStudioId;
+    if (workspaceEntityExists(state.videoWorlds, raw.activeVideoWorldId)) state.activeVideoWorldId = raw.activeVideoWorldId;
+    if (workspaceEntityExists(state.videoWorlds, raw.editingVideoWorldId)) state.editingVideoWorldId = raw.editingVideoWorldId;
+    if (workspaceEntityExists(state.companions, raw.activeCompanionId)) state.activeCompanionId = raw.activeCompanionId;
+    if (workspaceEntityExists(state.companions, raw.editingCompanionId)) state.editingCompanionId = raw.editingCompanionId;
+
+    const chatOwnerId = roomId || charId;
+    const chatSessionId = workspaceString(raw.activeChatSessionId);
+    if (chatOwnerId && chatSessionId && (state.chats?.[chatOwnerId] || []).some(session => session?.id === chatSessionId)) {
+        state.activeSessionId[chatOwnerId] = chatSessionId;
+    }
+    const worldSessionId = workspaceString(raw.activeWorldSessionId);
+    if (state.activeWorldId && worldSessionId
+        && (state.worldInstances?.[state.activeWorldId]?.sessions || []).some(session => session?.id === worldSessionId)) {
+        state.worldInstances[state.activeWorldId].activeSessionId = worldSessionId;
+    }
+}
+
 function restoreLastWorkspace() {
     const lastView = state.view;
-    const lastWorldTab = state.lastWorldStudioTab;
     const lastWorldSessionId = workspaceString(pendingWorkspaceState?.activeWorldSessionId);
-    const lastStudioTab = state.lastStudioTab;
-    const lastCompanionTab = state.lastCompanionStudioTab;
     const lastWorldStudioId = state.lastWorldStudioId;
     workspaceRestoring = true;
     try {
@@ -2137,7 +2194,8 @@ function restoreLastWorkspace() {
                 : (workspaceEntityExists(state.worlds, state.activeWorldId) ? state.activeWorldId : null);
             if (worldId) {
                 openWorldStudio(worldId);
-                document.querySelector(`.world-studio-tab[data-tab="${lastWorldTab || 'w-overview'}"]`)?.click();
+                const worldTab = workspaceTabFor(state.worldStudioTabsById, worldId, state.lastWorldStudioTab || 'w-overview');
+                document.querySelector(`.world-studio-tab[data-tab="${worldTab}"]`)?.click();
             } else switchView('worlds');
             return;
         }
@@ -2148,7 +2206,8 @@ function restoreLastWorkspace() {
                 state.activeCharId = characterId;
                 editCharacter(characterId);
                 switchView('studio');
-                if (lastStudioTab) document.querySelector(`#studio-view .studio-tab[data-tab="${lastStudioTab}"]`)?.click();
+                const studioTab = workspaceTabFor(state.studioTabsByCharacterId, characterId, state.lastStudioTab);
+                if (studioTab) document.querySelector(`#studio-view .studio-tab[data-tab="${studioTab}"]`)?.click();
             } else switchView('library');
             return;
         }
@@ -2158,7 +2217,8 @@ function restoreLastWorkspace() {
                 : (workspaceEntityExists(state.companions, state.activeCompanionId) ? state.activeCompanionId : null);
             if (companionId) {
                 openCompanionStudio(companionId);
-                if (lastCompanionTab) activateCompanionStudioTab(lastCompanionTab);
+                const companionTab = workspaceTabFor(state.companionStudioTabsById, companionId, state.lastCompanionStudioTab);
+                if (companionTab) activateCompanionStudioTab(companionTab);
             } else switchView('companions');
             return;
         }
@@ -2826,6 +2886,8 @@ async function loadState() {
         });
         if (changed) await saveState();
     }
+
+    reconcileWorkspaceStateWithLoadedData();
 }
 
 let saveStateInFlight = null;
@@ -5840,6 +5902,9 @@ function setupStudioTabs() {
             const target = document.getElementById(`tab-${tab.dataset.tab}`);
             if (target) target.classList.remove('hidden');
             state.lastStudioTab = tab.dataset.tab || null;
+            if (state.editingCharId && state.lastStudioTab) {
+                state.studioTabsByCharacterId[state.editingCharId] = state.lastStudioTab;
+            }
             persistWorkspaceSoon();
         };
     });
@@ -6379,7 +6444,8 @@ function editCharacter(id) {
     state.editingCharId = char.id;
     persistWorkspaceSoon();
     loadStudioData();
-    document.querySelector('#studio-view .studio-tab[data-tab="overview"]')?.click();
+    const tab = workspaceTabFor(state.studioTabsByCharacterId, id, 'overview');
+    document.querySelector(`#studio-view .studio-tab[data-tab="${tab}"]`)?.click();
 }
 
 async function autoSaveStudioChanges() {
@@ -13281,6 +13347,8 @@ function setupWorldStudioTabs() {
             // panel the author actually opens.
             renderWorldStudioPanel(target);
             state.lastWorldStudioTab = target;
+            const worldId = state.editingWorld?.id || state.lastWorldStudioId;
+            if (worldId && target) state.worldStudioTabsById[worldId] = target;
             persistWorkspaceSoon();
         };
     });
@@ -13772,7 +13840,10 @@ function openWorldStudio(worldId = null) {
     updateWorldTokenCount();
     switchView('worldStudio');
 
-    if (worldId) document.querySelector('.world-studio-tab[data-tab="w-overview"]')?.click();
+    if (worldId) {
+        const tab = workspaceTabFor(state.worldStudioTabsById, worldId, 'w-overview');
+        document.querySelector(`.world-studio-tab[data-tab="${tab}"]`)?.click();
+    }
 
     // Preserve the selected authoring tab, but hydrate only that tab. Basics,
     // AI Config, HUD and notes are plain controls already populated above.
@@ -22239,7 +22310,7 @@ function openNpcDossier(npcId) {
     overlay.classList.remove('hidden');
 }
 
-function enterWorld(worldId) {
+function enterWorld(worldId, requestedSessionId = null) {
     const world = state.worlds.find(w => w.id === worldId);
     if (!world) return;
     
@@ -22252,6 +22323,9 @@ function enterWorld(worldId) {
             activeSessionId: null
         };
         // This will trigger migration/init in getCurrentWorldSession()
+    }
+    if (requestedSessionId && state.worldInstances[worldId].sessions?.some(session => session?.id === requestedSessionId)) {
+        state.worldInstances[worldId].activeSessionId = requestedSessionId;
     }
     
     const sess = getCurrentWorldSession();
@@ -43977,7 +44051,7 @@ function openCompanionStudio(id) {
     state.editingCompanionId = id;
     persistWorkspaceSoon();
     renderCompanionStudioForm();
-    activateCompanionStudioTab('cs-overview');
+    activateCompanionStudioTab(workspaceTabFor(state.companionStudioTabsById, id, 'cs-overview'));
 }
 
 function resetNewCompanionStudioState() {
@@ -44064,6 +44138,9 @@ function setupCompanionStudioTabs() {
 
 function activateCompanionStudioTab(tabName) {
     state.lastCompanionStudioTab = tabName || null;
+    if (state.editingCompanionId && state.lastCompanionStudioTab) {
+        state.companionStudioTabsById[state.editingCompanionId] = state.lastCompanionStudioTab;
+    }
     persistWorkspaceSoon();
     document.querySelectorAll('.companion-studio-tab').forEach(tab => {
         tab.classList.toggle('active', tab.dataset.tab === tabName);
