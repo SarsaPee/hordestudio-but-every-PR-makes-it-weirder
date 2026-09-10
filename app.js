@@ -4831,6 +4831,8 @@ async function init() {
     }
 
     await loadState();
+    await recoverInterruptedHostBackupRestore();
+    registerHostBackupDomain();
     setupNavigation();
     setupStudioTabs();
     setupStudioLogic();
@@ -11753,7 +11755,7 @@ function redactGlobalSettingsCredentials(settings) {
     return copy;
 }
 
-async function exportFullBackup() {
+async function serializeHostBackupPayload() {
     (state.companions || []).forEach(companion => persistCompanionRuntime(companion));
     const companionVideoAssets = {};
     const assetIds = new Set((state.companions || []).flatMap(companion =>
@@ -11802,13 +11804,93 @@ async function exportFullBackup() {
         companionVideoAssets,
         chatAssets
     };
-    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    return payload;
+}
+
+async function exportFullBackup() {
+    const manifest = window.HordeBackupDomains?.registered?.().includes('horde-studio-host')
+        ? await window.HordeBackupDomains.export()
+        : await serializeHostBackupPayload();
+    const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `horde_backup_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
     showToast('Full backup exported!', 'success');
+}
+
+async function applyHostBackupPayload(data) {
+    if (data.companions === undefined) data.companions = [];
+    if (data.companionThreads === undefined) data.companionThreads = {};
+    if (data.companionTimelines === undefined) data.companionTimelines = {};
+    if (data.activeCompanionId === undefined) data.activeCompanionId = null;
+    if (data.videoWorlds === undefined) data.videoWorlds = [];
+    if (data.videoWorldSessions === undefined) data.videoWorldSessions = {};
+    if (data.activeVideoWorldId === undefined) data.activeVideoWorldId = null;
+    if (data.globalSettings) data.globalSettings = redactGlobalSettingsCredentials(data.globalSettings);
+    if (data.chatContinuities === undefined) data.chatContinuities = {};
+    const keys = ['globalSettings', 'characters', 'chats', 'chatContinuities', 'activeSessionId',
+        'personas', 'activePersonaId', 'rooms', 'theme', 'systemPresets', 'regexScripts',
+        'worlds', 'worldInstances', 'activeWorldId', 'companions',
+        'companionThreads', 'companionTimelines', 'activeCompanionId',
+        'videoWorlds', 'videoWorldSessions', 'activeVideoWorldId'];
+    keys.forEach(key => { if (data[key] !== undefined) state[key] = data[key]; });
+    for (const [assetId, source] of Object.entries(data.companionVideoAssets || {})) {
+        if (!/^data:video\/[a-z0-9.+-]+;base64,/i.test(source)) continue;
+        await HordeDB.set(`companionVideoAsset:${assetId}`, await fetch(source).then(response => response.blob()));
+    }
+    for (const [assetId, source] of Object.entries(data.chatAssets || {})) {
+        if (!/^data:(?:image|video|audio|application\/pdf)/i.test(source)) continue;
+        await HordeDB.set(`chatAsset:${assetId}`, await fetch(source).then(response => response.blob()));
+    }
+    worldMediaDirty = true;
+    await saveState();
+}
+
+async function recoverInterruptedHostBackupRestore() {
+    const journal = await HordeDB.get('globalBackupRestoreJournal').catch(() => null);
+    if (!journal || typeof journal !== 'object') return false;
+    if (journal.phase === 'prepared' || journal.phase === 'committed') {
+        if (!journal.preimage || typeof journal.preimage !== 'object') {
+            throw new Error('A previous backup restore was interrupted without a recoverable preimage.');
+        }
+        await applyHostBackupPayload(journal.preimage);
+    }
+    await HordeDB.delete('globalBackupRestoreJournal').catch(() => {});
+    return true;
+}
+
+function registerHostBackupDomain() {
+    if (!window.HordeBackupDomains || window.HordeBackupDomains.registered().includes('horde-studio-host')) return;
+    window.HordeBackupDomains.register({
+        id: 'horde-studio-host',
+        schemaVersion: 1,
+        serialize: serializeHostBackupPayload,
+        validate: async payload => validateBackupData(safeJsonClone(payload)),
+        stage: async payload => safeJsonClone(payload),
+        capturePreimage: serializeHostBackupPayload,
+        commit: applyHostBackupPayload,
+        rollback: applyHostBackupPayload,
+        readback: async payload => {
+            const current = await serializeHostBackupPayload();
+            if ((current.characters || []).length !== (payload.characters || []).length
+                || (current.worlds || []).length !== (payload.worlds || []).length
+                || (current.companions || []).length !== (payload.companions || []).length) {
+                throw new Error('Host backup readback did not match the restored records.');
+            }
+        },
+        journal: async (phase, transaction, preimage) => {
+            if (phase === 'complete' || phase === 'rolled-back') {
+                await HordeDB.delete('globalBackupRestoreJournal').catch(() => {});
+                return;
+            }
+            await HordeDB.set('globalBackupRestoreJournal', {
+                phase, transactionId: transaction.id, updatedAt: new Date().toISOString(),
+                preimage
+            });
+        }
+    });
 }
 
 function importFullBackup(file) {
@@ -11822,7 +11904,21 @@ function importFullBackup(file) {
     const reader = new FileReader();
     reader.onload = async (e) => {
         try {
-            const data = validateBackupData(JSON.parse(e.target.result));
+            const parsed = JSON.parse(e.target.result);
+            if (parsed?._format === 'horde-studio-domain-backup') {
+                await window.HordeBackupDomains?.validate?.(parsed);
+                const data = parsed.domains?.['horde-studio-host']?.payload;
+                if (!data) throw new Error('The host backup domain is missing.');
+                showConfirmModal('Restore Backup',
+                    `This will atomically replace all registered data domains with the backup from ${parsed._exportedAt ? parsed._exportedAt.slice(0, 10) : 'unknown date'}. Continue?`,
+                    async () => {
+                        await window.HordeBackupDomains.restore(parsed);
+                        showToast('Backup restored! Reloading...', 'success');
+                        setTimeout(() => window.location.reload(), 800);
+                    }, 'Restore & Reload', 'Cancel');
+                return;
+            }
+            const data = validateBackupData(parsed);
             showConfirmModal('Restore Backup',
                 `This will REPLACE all current data with the backup from ${data._exportedAt ? data._exportedAt.slice(0, 10) : 'unknown date'} (${(data.characters || []).length} chat characters, ${(data.companions || []).length} virtual humans, ${(data.worlds || []).length} worlds). Continue?`,
                 async () => {

@@ -117,6 +117,7 @@ STATIC_FILES = {
     "/index.html": ("index.html", "text/html"),
     "/style.css": ("style.css", "text/css"),
     "/app.js": ("app.js", "text/javascript"),
+    "/backup-domain-coordinator.js": ("backup-domain-coordinator.js", "text/javascript"),
     "/global-openrouter-routing.js": ("global-openrouter-routing.js", "text/javascript"),
     "/video-worlds.js": ("video-worlds.js", "text/javascript"),
     "/presets.js": ("presets.js", "text/javascript"),
