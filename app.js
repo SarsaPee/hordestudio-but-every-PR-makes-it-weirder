@@ -1853,6 +1853,9 @@ function repairLoadedState() {
     state.globalSettings.openRouterRouting = window.HordeOpenRouterRouting?.normalize(
         state.globalSettings.openRouterRouting
     ) || { order: [], allowFallbacks: true, fallbackSort: 'throughput' };
+    state.globalSettings.openRouterModelCatalog = normalizeStoredOpenRouterModelCatalog(
+        state.globalSettings.openRouterModelCatalog
+    );
     // Blank is meaningful here: it means "fall back to the world's own model".
     state.globalSettings.structuredModel = typeof state.globalSettings.structuredModel === 'string'
         ? state.globalSettings.structuredModel.trim().slice(0, 200) : '';
@@ -3685,8 +3688,76 @@ let openRouterModels = [];
 let modelCatalogSource = null; // which base URL the cached catalog came from
 let modelCatalogFetchedAt = 0;
 
-async function getOpenRouterModels() {
-    if (openRouterModels.length > 0 && modelCatalogSource === apiBase()) return openRouterModels;
+function normalizeStoredOpenRouterModelCatalog(value) {
+    const source = Array.isArray(value?.models) ? value.models : [];
+    const seen = new Set();
+    const models = source.map(raw => {
+        if (!isPlainObject(raw) || typeof raw.id !== 'string') return null;
+        const id = raw.id.trim().slice(0, 300);
+        if (!id || seen.has(id)) return null;
+        seen.add(id);
+        const architecture = isPlainObject(raw.architecture) ? raw.architecture : {};
+        const pricing = isPlainObject(raw.pricing) ? raw.pricing : {};
+        const topProvider = isPlainObject(raw.top_provider) ? raw.top_provider : {};
+        return {
+            id,
+            name: String(raw.name || id).trim().slice(0, 500),
+            description: String(raw.description || '').slice(0, 4000),
+            context_length: Number(raw.context_length) || 0,
+            architecture: {
+                input_modalities: Array.isArray(architecture.input_modalities) ? architecture.input_modalities.slice(0, 12) : ['text'],
+                output_modalities: Array.isArray(architecture.output_modalities) ? architecture.output_modalities.slice(0, 12) : ['text']
+            },
+            supported_parameters: Array.isArray(raw.supported_parameters) ? raw.supported_parameters.slice(0, 100) : [],
+            pricing: {
+                prompt: String(pricing.prompt ?? ''), completion: String(pricing.completion ?? ''),
+                internal_reasoning: String(pricing.internal_reasoning ?? ''),
+                input_cache_read: String(pricing.input_cache_read ?? '')
+            },
+            top_provider: {
+                max_completion_tokens: Number(topProvider.max_completion_tokens) || 0
+            }
+        };
+    }).filter(Boolean).slice(0, 2000);
+    return {
+        version: 1,
+        fetchedAt: Number.isFinite(Number(value?.fetchedAt)) ? Number(value.fetchedAt) : 0,
+        models
+    };
+}
+
+async function getSharedOpenRouterModelCatalog(force = false) {
+    const stored = normalizeStoredOpenRouterModelCatalog(state.globalSettings?.openRouterModelCatalog);
+    if (!force && stored.models.length) return stored.models;
+    const response = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: { ...providerAuthHeaders('openrouter'), ...providerAttributionHeaders('openrouter') }
+    });
+    if (!response.ok) throw new Error(`OpenRouter model catalog request failed (${response.status})`);
+    const payload = await response.json();
+    const catalog = Array.isArray(payload?.data) ? payload.data : [];
+    const normalized = normalizeStoredOpenRouterModelCatalog({ models: catalog, fetchedAt: Date.now() });
+    if (!normalized.models.length) throw new Error('OpenRouter returned an empty model catalog');
+    state.globalSettings.openRouterModelCatalog = normalized;
+    openRouterModels = normalized.models;
+    modelCatalogSource = 'https://openrouter.ai/api/v1';
+    modelCatalogFetchedAt = normalized.fetchedAt;
+    // This is public catalog metadata only; credentials remain in their own
+    // Settings field and are never copied into the transferable catalog.
+    try { await saveState(); }
+    catch (error) { console.warn('OpenRouter model metadata loaded but could not be cached locally:', error); }
+    return normalized.models;
+}
+
+async function getOpenRouterModels(force = false) {
+    if (isOpenRouterProvider()) {
+        try { return await getSharedOpenRouterModelCatalog(force); }
+        catch (error) {
+            const stored = normalizeStoredOpenRouterModelCatalog(state.globalSettings?.openRouterModelCatalog);
+            if (stored.models.length) return stored.models;
+            throw error;
+        }
+    }
+    if (!force && openRouterModels.length > 0 && modelCatalogSource === apiBase()) return openRouterModels;
     openRouterModels = [];
     modelCatalogSource = apiBase();
     try {
@@ -35958,6 +36029,8 @@ function normalizeCompanion(raw) {
         // This is a person-owned OpenRouter endpoint preference. It is never
         // a copy of, or write through to, the shared Settings route.
         openRouterRouting: window.HordeOpenRouterRouting?.normalize?.(c.openRouterRouting, { allowNull: true }) ?? null,
+        observerOpenRouterRouting: window.HordeOpenRouterRouting?.normalize?.(c.observerOpenRouterRouting, { allowNull: true }) ?? null,
+        lifeBuilderOpenRouterRouting: window.HordeOpenRouterRouting?.normalize?.(c.lifeBuilderOpenRouterRouting, { allowNull: true }) ?? null,
         temp: Number.isFinite(Number(c.temp)) ? livingClamp(Number(c.temp), 0, 2) : 0.75,
         topP: Number.isFinite(Number(c.topP)) ? livingClamp(Number(c.topP), 0, 1) : 1,
         minP: Number.isFinite(Number(c.minP)) ? livingClamp(Number(c.minP), 0, 1) : 0,
@@ -39173,7 +39246,7 @@ Call commit_human_turn once for the response immediately above. Preserve what it
         }, companion, { maxTokens: Math.min(2400, companionProviderOutputBudget(companion)) });
         body = VHConversationEngine.fitRequest(body, { contextSize: companionRequestContextSize(companion, body.model), tailMessages: 3 }).body;
         body = window.HordeOpenRouterRouting?.apply?.(body, companion, {
-            scope: 'companion', providerId: textProvider
+            scope: options.observer ? 'companionObserver' : 'companion', providerId: textProvider
         }) || body;
         let response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
             method: 'POST',
@@ -39195,7 +39268,7 @@ Call commit_human_turn once for the response immediately above. Preserve what it
             }, companion, { maxTokens: Math.min(2400, companionProviderOutputBudget(companion)) });
             jsonBody = VHConversationEngine.fitRequest(jsonBody, { contextSize: companionRequestContextSize(companion, jsonBody.model), tailMessages: 4 }).body;
             jsonBody = window.HordeOpenRouterRouting?.apply?.(jsonBody, companion, {
-                scope: 'companion', providerId: textProvider
+            scope: 'companionObserver', providerId: textProvider
             }) || jsonBody;
             response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
                 method: 'POST',
@@ -40653,6 +40726,21 @@ async function getCompanionOutputModels(modality, force = false, providerId = st
     if (force) companionOutputModelCache.delete(key);
     if (companionOutputModelCache.has(key)) return companionOutputModelCache.get(key);
     let models = [];
+    if (provider === 'openrouter' && modality === 'text') {
+        try {
+            models = await getSharedOpenRouterModelCatalog(force);
+        } catch (error) {
+            // A manual refresh must not empty every OpenRouter selector just
+            // because the metadata endpoint is briefly unavailable. Keep the
+            // last verified shared catalog as the common read model.
+            const stored = normalizeStoredOpenRouterModelCatalog(state.globalSettings?.openRouterModelCatalog);
+            if (!stored.models.length) throw error;
+            console.warn('Could not refresh the OpenRouter catalog; using the saved global catalog:', error);
+            models = stored.models;
+        }
+        companionOutputModelCache.set(key, models);
+        return models;
+    }
     if (provider === 'fal') {
         models = modality === 'image' ? FAL_IMAGE_MODELS.map(model => safeJsonClone(model)) : [];
         companionOutputModelCache.set(key, models);
@@ -43274,6 +43362,7 @@ function setupCompanionSearchableFields() {
             if (companion) companion.lifeBuilderModel = option.value;
             setCompanionSearchOpen(lifeBuilderInput, lifeBuilderResults, false);
             updateCompanionLifeBuilderModelStatus(companion);
+            window.HordeOpenRouterRouting?.initialize?.('companionLifeBuilder', { force: true });
         }, 'No text model matches. You can still enter an exact custom model ID.');
         lifeBuilderInput.setAttribute('aria-expanded', 'true');
         updateCompanionLifeBuilderModelStatus(companion);
@@ -43316,6 +43405,7 @@ function setupCompanionSearchableFields() {
         lifeBuilderInput.addEventListener('input', () => {
             const companion = getCompanion(state.editingCompanionId);
             if (companion) companion.lifeBuilderModel = lifeBuilderInput.value.trim();
+            window.HordeOpenRouterRouting?.initialize?.('companionLifeBuilder', { force: true });
             renderLifeBuilderModels();
         });
         lifeBuilderInput.addEventListener('keydown', event => {
@@ -44707,6 +44797,8 @@ function renderCompanionStudioForm() {
     if (textProviderSelect) textProviderSelect.value = companion.textProvider || 'provider';
     populateCompanionTextModelPicker(companion);
     window.HordeOpenRouterRouting?.initialize?.('companion');
+    window.HordeOpenRouterRouting?.initialize?.('companionObserver');
+    window.HordeOpenRouterRouting?.initialize?.('companionLifeBuilder');
     if (!['higgsfield', 'magnific', 'comfyui'].includes(companion.imageSource)) populateCompanionImageModelPicker(companion);
     else populateCompanionMcpTools(companion);
     populateCompanionTTSModelPicker(companion);
@@ -44939,6 +45031,7 @@ function updateCompanionObserverModelOptions(companion, catalog = companionTextM
     const list = document.getElementById('cs-observer-model-options');
     const input = document.getElementById('cs-observer-model');
     const hint = document.getElementById('cs-observer-model-hint');
+    const picker = document.getElementById('cs-observer-model-picker');
     if (!list || !input || !hint) return;
     const ranked = rankCompanionObserverModels(catalog);
     const recommended = ranked.find(model => model.supportsTools || model.supportsJSON) || ranked[0] || null;
@@ -44948,10 +45041,29 @@ function updateCompanionObserverModelOptions(companion, catalog = companionTextM
             .filter(Boolean).join(' · ');
         return `<option value="${escapeHTML(model.id)}" label="${escapeHTML(`${model.name}${traits ? ` · ${traits}` : ''}`)}"></option>`;
     }).join('');
+    if (picker) {
+        picker.innerHTML = `<option value="">Use Life Architect or conversation model</option>${ranked.slice(0, 160).map(model => {
+            const price = companionTextModelPriceLabel(model.promptPrice);
+            const traits = [model.supportsTools ? 'Tools' : '', model.supportsJSON ? 'JSON' : '', price].filter(Boolean).join(' · ');
+            return `<option value="${escapeHTML(model.id)}">${escapeHTML(`${model.name}${traits ? ` · ${traits}` : ''}`)}</option>`;
+        }).join('')}`;
+        picker.value = ranked.some(model => model.id === companion.observerModel) ? companion.observerModel : '';
+    }
     if (!companion.observerModel && recommended) input.placeholder = `Recommended: ${recommended.id}`;
     hint.textContent = recommended
         ? `Recommended for private state: ${recommended.name}. Structured-output models are ranked first, then lower input cost and size. Blank inherits the Life Architect or conversation model.`
         : 'Use a small, fast model with reliable tool/JSON output. Blank inherits the Life Architect or conversation model.';
+}
+
+function updateCompanionLifeBuilderModelPicker(companion, catalog = companionTextModelCatalog) {
+    const picker = document.getElementById('cs-life-builder-model-picker');
+    if (!picker) return;
+    picker.innerHTML = `<option value="">Use conversation model</option>${catalog.slice(0, 160).map(model => {
+        const price = companionTextModelPriceLabel(model.promptPrice);
+        const traits = [model.supportsJSON ? 'JSON' : '', price].filter(Boolean).join(' · ');
+        return `<option value="${escapeHTML(model.id)}">${escapeHTML(`${model.name}${traits ? ` · ${traits}` : ''}`)}</option>`;
+    }).join('')}`;
+    picker.value = catalog.some(model => model.id === companion.lifeBuilderModel) ? companion.lifeBuilderModel : '';
 }
 
 function companionTextModelPriceLabel(price) {
@@ -45118,7 +45230,10 @@ async function populateCompanionTextModelPicker(companion, force = false) {
     if (search) search.value = '';
     renderCompanionTextModelResults(companion);
     updateCompanionTextModelStatus(companion, ranked);
+    updateCompanionLifeBuilderModelPicker(companion, ranked);
     window.HordeOpenRouterRouting?.initialize?.('companion', { force: true });
+    window.HordeOpenRouterRouting?.initialize?.('companionObserver', { force: true });
+    window.HordeOpenRouterRouting?.initialize?.('companionLifeBuilder', { force: true });
 }
 
 const companionCapabilityRefreshes = new Map();
@@ -46120,10 +46235,13 @@ async function buildCompanionLifeWithAI(companion, options = {}) {
     if (textProvider !== 'local' && modelInfo?.supported_parameters?.includes('response_format')) {
         body.response_format = { type: 'json_object' };
     }
+    const routedBody = window.HordeOpenRouterRouting?.apply?.(body, companion, {
+        scope: 'companionLifeBuilder', providerId: textProvider
+    }) || body;
     const response = await fetch(providerApiBase(textProvider) + '/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
-        body: JSON.stringify(body)
+        body: JSON.stringify(routedBody)
     });
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -46421,6 +46539,35 @@ function setupCompanionsLogic() {
         const selected = companionTextModelCatalog.find(model => model.id === companion.observerModel);
         companion.observerInputModalities = selected?.inputModalities?.length
             ? [...selected.inputModalities] : ['text'];
+        window.HordeOpenRouterRouting?.initialize?.('companionObserver', { force: true });
+    };
+    document.getElementById('cs-observer-model-picker').onchange = event => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (!companion) return;
+        companion.observerModel = event.target.value;
+        const input = document.getElementById('cs-observer-model');
+        if (input) input.value = companion.observerModel;
+        const selected = companionTextModelCatalog.find(model => model.id === companion.observerModel);
+        companion.observerInputModalities = selected?.inputModalities?.length
+            ? [...selected.inputModalities] : ['text'];
+        window.HordeOpenRouterRouting?.initialize?.('companionObserver', { force: true });
+    };
+    document.getElementById('cs-refresh-observer-models').onclick = () => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) populateCompanionTextModelPicker(companion, true);
+    };
+    document.getElementById('cs-life-builder-model-picker').onchange = event => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (!companion) return;
+        companion.lifeBuilderModel = event.target.value;
+        const input = document.getElementById('cs-life-builder-model');
+        if (input) input.value = companion.lifeBuilderModel;
+        updateCompanionLifeBuilderModelStatus(companion);
+        window.HordeOpenRouterRouting?.initialize?.('companionLifeBuilder', { force: true });
+    };
+    document.getElementById('cs-refresh-life-builder-models').onclick = () => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) populateCompanionTextModelPicker(companion, true);
     };
     Object.values(COMPANION_PARAMETER_FIELDS).forEach(([inputId, field]) => {
         document.getElementById(inputId).oninput = (event) => {

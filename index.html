@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=17.4.0-global-host-2">
+    <link rel="stylesheet" href="style.css?v=17.4.0-global-host-3">
 </head>
 <body>
 <div id="app">
@@ -2732,10 +2732,15 @@
                                         <p class="form-hint">Used only when generating or regenerating Active Life. It does not change the model used in chat.</p>
                                     </div>
                                     <div class="searchable-dropdown-wrap vh-searchable-field">
-                                        <input id="cs-life-builder-model" class="form-input" type="search" placeholder="Search models · blank uses conversation model" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="cs-life-builder-model-results" aria-expanded="false">
-                                        <div id="cs-life-builder-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="Active Life generator model suggestions"></div>
-                                    </div>
-                                    <p id="cs-life-builder-model-status" class="form-hint" aria-live="polite">Uses this human’s conversation model unless you choose a dedicated generator.</p>
+                                    <input id="cs-life-builder-model" class="form-input" type="search" placeholder="Search models · blank uses conversation model" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="cs-life-builder-model-results" aria-expanded="false">
+                                    <div id="cs-life-builder-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="Active Life generator model suggestions"></div>
+                                </div>
+                                <p id="cs-life-builder-model-status" class="form-hint" aria-live="polite">Uses this human’s conversation model unless you choose a dedicated generator.</p>
+                                <div class="vh-compact-model-controls">
+                                    <button id="cs-refresh-life-builder-models" class="btn btn-ghost" type="button">↻ Refresh models</button>
+                                    <label><span>Choose generator model</span><select id="cs-life-builder-model-picker" class="form-select"><option value="">Use conversation model</option></select></label>
+                                </div>
+                                <div id="cs-life-builder-openrouter-routing" class="openrouter-routing-host hidden"></div>
                                 </div>
                                 <div class="vh-life-source-map">
                                     <div><span>Source</span><strong>Identity</strong><small>work, home, personality and social world</small></div>
@@ -3084,6 +3089,11 @@
                                     <input id="cs-observer-model" class="form-input" type="text" list="cs-observer-model-options" placeholder="Blank = Life Architect or conversation model">
                                     <datalist id="cs-observer-model-options"></datalist>
                                     <p id="cs-observer-model-hint" class="form-hint">Use a small, fast model with reliable tool/JSON output. It never writes dialogue. The Life Architect remains responsible for schedules and off-screen life.</p>
+                                    <div class="vh-compact-model-controls">
+                                        <button id="cs-refresh-observer-models" class="btn btn-ghost" type="button">↻ Refresh models</button>
+                                        <label><span>Choose observer model</span><select id="cs-observer-model-picker" class="form-select"><option value="">Use Life Architect or conversation model</option></select></label>
+                                    </div>
+                                    <div id="cs-observer-openrouter-routing" class="openrouter-routing-host hidden"></div>
                                 </div>
                             </section>
 
@@ -5241,7 +5251,7 @@
 <script src="vh-simulation-core.js?v=20260908-reply-cleanup"></script>
 <script src="backup-domain-coordinator.js?v=17.4.0-backup-domains-1"></script>
 <script src="rolling-recovery.js?v=17.4.0-rolling-recovery-1"></script>
-<script src="global-openrouter-routing.js?v=17.4.0-global-routing-3"></script>
-    <script src="app.js?v=17.4.0-global-recovery-5"></script>
+<script src="global-openrouter-routing.js?v=17.4.0-global-routing-4"></script>
+    <script src="app.js?v=17.4.0-global-recovery-6"></script>
 </body>
 </html>

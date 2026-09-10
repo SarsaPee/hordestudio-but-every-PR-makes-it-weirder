@@ -68,6 +68,8 @@ const OPENROUTER_ROUTE_CHAINS = Object.freeze({
     // Virtual Human conversation traffic may pin a route for that person
     // without changing the shared Settings policy.
     companion: ['companion', 'global'],
+    companionObserver: ['companionObserver', 'global'],
+    companionLifeBuilder: ['companionLifeBuilder', 'global'],
     utility: ['availability']
 });
 
@@ -89,6 +91,12 @@ function storedOpenRouterRoutingForLink(link, owner) {
     if (link === 'companion') {
         return normalizeOpenRouterRouting(owner?.openRouterRouting, { allowNull: true });
     }
+    if (link === 'companionObserver') {
+        return normalizeOpenRouterRouting(owner?.observerOpenRouterRouting, { allowNull: true });
+    }
+    if (link === 'companionLifeBuilder') {
+        return normalizeOpenRouterRouting(owner?.lifeBuilderOpenRouterRouting, { allowNull: true });
+    }
     if (link === 'worldAgent') {
         return normalizeOpenRouterRouting(owner?.worldAgent?.openRouterRouting, { allowNull: true });
     }
@@ -107,7 +115,7 @@ function effectiveOpenRouterRouting(owner = null, scope = 'default') {
     for (const link of chain) {
         // Owner-scoped links are unavailable on ownerless calls; skip to the
         // next link rather than collapsing straight to global.
-        if (!owner && ['world', 'worldAgent', 'sidecar', 'receiptRepair', 'companion'].includes(link)) continue;
+        if (!owner && ['world', 'worldAgent', 'sidecar', 'receiptRepair', 'companion', 'companionObserver', 'companionLifeBuilder'].includes(link)) continue;
         const resolved = storedOpenRouterRoutingForLink(link, owner);
         if (resolved) return resolved;
     }
@@ -184,6 +192,22 @@ function openRouterRoutingPanelDefinition(scope) {
             owner: () => getCompanion(state.editingCompanionId),
             stored: () => getCompanion(state.editingCompanionId)?.openRouterRouting
         },
+        companionObserver: {
+            hostId: 'cs-observer-openrouter-routing',
+            modelId: 'cs-observer-model',
+            inheritLabel: 'Inherit global routing',
+            compact: true,
+            owner: () => getCompanion(state.editingCompanionId),
+            stored: () => getCompanion(state.editingCompanionId)?.observerOpenRouterRouting
+        },
+        companionLifeBuilder: {
+            hostId: 'cs-life-builder-openrouter-routing',
+            modelId: 'cs-life-builder-model',
+            inheritLabel: 'Inherit global routing',
+            compact: true,
+            owner: () => getCompanion(state.editingCompanionId),
+            stored: () => getCompanion(state.editingCompanionId)?.lifeBuilderOpenRouterRouting
+        },
         character: {
             hostId: 'character-openrouter-routing',
             modelId: 'studio-model',
@@ -243,6 +267,14 @@ function openRouterRoutingModel(scope) {
         const companion = definition?.owner?.();
         return String(companion?.model || state.globalSettings.defaultModel || '').trim();
     }
+    if (scope === 'companionObserver') {
+        const companion = definition?.owner?.();
+        return String(companion?.observerModel || companion?.lifeBuilderModel || companion?.model || state.globalSettings.defaultModel || '').trim();
+    }
+    if (scope === 'companionLifeBuilder') {
+        const companion = definition?.owner?.();
+        return String(companion?.lifeBuilderModel || companion?.model || state.globalSettings.defaultModel || '').trim();
+    }
     if (scope === 'worldAgent') {
         return String(document.getElementById('w-studio-model')?.value
             || state.editingWorld?.model || state.globalSettings.defaultModel || '').trim();
@@ -264,7 +296,7 @@ function openRouterRoutingVisible(scope) {
     }
     const selected = scope === 'global'
         ? document.getElementById('global-api-provider')?.value
-        : scope === 'companion'
+        : ['companion', 'companionObserver', 'companionLifeBuilder'].includes(scope)
             ? companionTextProviderId(openRouterRoutingPanelDefinition(scope)?.owner?.())
         : scope === 'sidecar'
             ? (document.getElementById('w-sidecar-provider')?.value || state.globalSettings.apiProvider)
@@ -315,9 +347,15 @@ function readOpenRouterRoutingPanel(scope) {
 // like its other studio controls. It is persisted only when the user saves the
 // human, never by writing through to the shared Settings route.
 function persistOpenRouterRoutingDraft(scope) {
-    if (scope !== 'companion') return;
+    const fieldByScope = {
+        companion: 'openRouterRouting',
+        companionObserver: 'observerOpenRouterRouting',
+        companionLifeBuilder: 'lifeBuilderOpenRouterRouting'
+    };
+    const field = fieldByScope[scope];
+    if (!field) return;
     const owner = openRouterRoutingPanelDefinition(scope)?.owner?.();
-    if (owner) owner.openRouterRouting = readOpenRouterRoutingPanel(scope);
+    if (owner) owner[field] = readOpenRouterRoutingPanel(scope);
 }
 
 function markOpenRouterRoutingModelChanged(scope) {
@@ -543,7 +581,12 @@ function renderOpenRouterRoutingPanel(scope) {
             <span class="or-routing-model">${escapeHTML(openRouterRoutingModel(scope) || 'No model selected')}</span>
         </div>
         <p class="form-hint">Preferred providers are tried in this order. If they fail, OpenRouter ranks the remaining endpoints by the fallback strategy below.</p>
+        ${definition.compact ? `<div class="or-routing-quick"><label><span>Preferred endpoint</span><select class="form-select" data-or-quick-provider>
+            <option value="">Inherit global routing</option>
+            ${providers.filter(provider => provider.available !== false).map(provider => `<option value="${escapeHTML(provider.slug)}" ${route.order[0] === provider.slug ? 'selected' : ''}>${escapeHTML(provider.name)} · ${escapeHTML(provider.slug)}</option>`).join('')}
+        </select></label><button type="button" class="btn btn-ghost" data-or-refresh ${draft.loading ? 'disabled' : ''}>${draft.loading ? 'Refreshing…' : '↻ Refresh providers'}</button></div>` : ''}
         ${definition.inheritLabel ? `<label class="or-inherit-toggle"><input type="checkbox" data-or-inherit ${draft.inherit ? 'checked' : ''}> ${escapeHTML(definition.inheritLabel)}</label>` : ''}
+        ${definition.compact ? '<details class="or-routing-details"><summary>Provider routing</summary>' : ''}
         <div class="or-routing-body ${draft.inherit ? 'is-inherited' : ''}">
             <label class="form-label">Preferred provider order</label>
             <div class="or-selected-providers" data-or-selected>
@@ -571,17 +614,34 @@ function renderOpenRouterRoutingPanel(scope) {
                 </select></label>
             </div>
             <div class="or-routing-actions">
-                <button type="button" class="btn btn-ghost" data-or-refresh ${draft.loading ? 'disabled' : ''}>${draft.loading ? 'Refreshing…' : '↻ Refresh Providers'}</button>
+                ${definition.compact ? '' : `<button type="button" class="btn btn-ghost" data-or-refresh ${draft.loading ? 'disabled' : ''}>${draft.loading ? 'Refreshing…' : '↻ Refresh Providers'}</button>`}
                 <button type="button" class="btn btn-ghost" data-or-test ${draft.loading || !route.order.length ? 'disabled' : ''}>${draft.loading ? 'Please wait…' : '⚡ Test Selected Providers'}</button>
             </div>
             <div class="or-routing-status ${escapeHTML(draft.statusKind)}" aria-live="polite">${escapeHTML(draft.status || 'Metadata is advisory. A live test result overrides catalog warnings for this session.')}</div>
         </div>
+        ${definition.compact ? '</details>' : ''}
     </section>`;
 
     const inherit = host.querySelector('[data-or-inherit]');
     if (inherit) inherit.onchange = () => {
         draft.inherit = inherit.checked;
         if (!draft.inherit) draft.routing = normalizeOpenRouterRouting(openRouterRoutingParent(scope));
+        draft.tests.clear();
+        persistOpenRouterRoutingDraft(scope);
+        renderOpenRouterRoutingPanel(scope);
+    };
+    const quickProvider = host.querySelector('[data-or-quick-provider]');
+    if (quickProvider) quickProvider.onchange = () => {
+        const selected = String(quickProvider.value || '').trim();
+        if (!selected) {
+            draft.inherit = true;
+        } else {
+            draft.inherit = false;
+            draft.routing = normalizeOpenRouterRouting({
+                ...draft.routing,
+                order: [selected, ...draft.routing.order.filter(slug => slug !== selected)]
+            });
+        }
         draft.tests.clear();
         persistOpenRouterRoutingDraft(scope);
         renderOpenRouterRoutingPanel(scope);
@@ -745,7 +805,7 @@ function renderAllOpenRouterRoutingPanels() {
 function setupOpenRouterRouting() {
     const provider = document.getElementById('global-api-provider');
     if (provider) provider.addEventListener('change', renderAllOpenRouterRoutingPanels);
-    ['global', 'character', 'room', 'world', 'worldAgent', 'companion'].forEach(scope => {
+    ['global', 'character', 'room', 'world', 'worldAgent', 'companion', 'companionObserver', 'companionLifeBuilder'].forEach(scope => {
         const definition = openRouterRoutingPanelDefinition(scope);
         const modelInput = document.getElementById(definition?.modelId);
         if (modelInput) modelInput.addEventListener('change', () => {
