@@ -6,9 +6,18 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-
 const root = path.resolve(__dirname, '..');
-const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+// Prefer the owning Experimental files for World assertions. The ordinary
+// host still follows so this mixed historical audit retains its host checks.
+const experimentalFiles = [
+    'runtime/experimental-runtime-compat.js', 'runtime/world-play-core.js',
+    'runtime/world-session-core.js', 'runtime/world-intelligence-core.js',
+    'runtime/world-protocol-core.js', 'runtime/world-studio-core.js'
+];
+const app = [
+    ...experimentalFiles.map(file => fs.readFileSync(path.join(root, 'experiences', 'experimental-worlds', file), 'utf8')),
+    fs.readFileSync(path.join(root, 'app.js'), 'utf8')
+].join('\n');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'style.css'), 'utf8');
 const presetsSource = fs.readFileSync(path.join(root, 'presets.js'), 'utf8');
@@ -176,7 +185,7 @@ test('world ledger has deterministic fallbacks and snapshot-safe manual saves', 
     assert(actionSource.includes('buildStructuredLedgerFallback'));
     assert(app.includes('Chronicle recovered locally'));
     assert(html.includes('id="world-ledger-status"'));
-    assert(app.includes('await saveState();\n            renderWorldPlayState();'));
+    assert(app.includes('await ExperimentalWorldsHost.persist(); renderWorldPlayState();'));
     assert(functionSource('stripChatLedgerEntry').includes('worldLedgerEntryKey'));
 });
 
@@ -236,7 +245,7 @@ test('world rule profiles make every mechanical subsystem optional', () => {
 });
 
 test('world clock cannot produce negative days or hours', () => {
-    const context = {};
+    const context = { window: { ExperimentalWorldsSidecarHooks: { isSidecarWorld: () => false } } };
     vm.runInNewContext(`${functionSource('getWorldTimeData')}\nthis.getWorldTimeData = getWorldTimeData;`, context);
     const result = context.getWorldTimeData({ hudConfig: { startTimeHours: 1, timeStep: 5 } }, { turnCount: 1, bonusTimeMinutes: -9999 });
     assert.strictEqual(result.days, 1);
@@ -247,8 +256,8 @@ test('world clock cannot produce negative days or hours', () => {
 test('turn snapshots restore timeline state without replacing shared authored geography', () => {
     const context = {};
     vm.runInNewContext([
-        functionSource('isPlainObject'),
-        functionSource('safeJsonClone'),
+        'function experimentalIsPlainObject(value) { return !!value && typeof value === "object" && !Array.isArray(value); }',
+        'function experimentalSafeJsonClone(value) { return JSON.parse(JSON.stringify(value)); }',
         functionSource('captureWorldTurnState'),
         functionSource('restoreWorldTurnState'),
         'function bumpMemoryEpoch() {}',
@@ -288,32 +297,28 @@ test('turn snapshots restore timeline state without replacing shared authored ge
 });
 
 test('streamed tool calls are accumulated and answered in parallel-safe order', () => {
-    const start = app.indexOf('async function executeWorldTurn');
-    const end = app.indexOf('function processStructuredActions', start);
-    const source = app.slice(start, end);
+    const source = functionSource('executeWorldTurn');
     assert(source.includes('const streamedToolCalls = new Map()'));
     assert(source.includes('incomingCalls.forEach(tc => accumulateWorldToolCall'));
     assert(source.includes('if (buffer.trim()) processWorldStreamLine(buffer)'));
     assert(app.includes('function parseWorldToolArguments'));
-    assert(source.includes('for (const call of toolCalls)'));
+    assert(source.includes('toolCalls.map(call => experimentalSafeJsonClone(call))'));
     assert(source.includes('...toolResponses'));
     assert(source.includes('signal: controller.signal'));
 });
 
 test('quest engine is authoritative across prompts, tools, fallbacks, resets, and rewards', () => {
-    const executeStart = app.indexOf('async function executeWorldTurn');
-    const executeEnd = app.indexOf('function processStructuredActions', executeStart);
-    const executeSource = app.slice(executeStart, executeEnd);
+    const executeSource = functionSource('executeWorldTurn');
     const actionsStart = app.indexOf('function processStructuredActions');
     const actionsEnd = app.indexOf('// (removed: processAIActions', actionsStart);
     const actionsSource = app.slice(actionsStart, actionsEnd);
     const setupStart = app.indexOf('function setupWorldPlayLogic');
     const setupEnd = app.indexOf('function getCurrentWorldSession', setupStart);
     const setupSource = app.slice(setupStart, setupEnd);
-    assert(executeSource.includes('const questPrompt = getQuestPrompt(world, sess)'));
+    assert(executeSource.includes('const questPrompt = getQuestPrompt(world, sess, { sidecar: sidecarMode })'));
     assert(executeSource.includes('${questPrompt}${npcContext}'));
     assert(executeSource.includes('evaluateQuestProgress(world, sess)'));
-    assert(executeSource.includes('tool_choice: "auto"'));
+    assert(executeSource.includes("requestBody.tool_choice = 'auto'"));
     assert(executeSource.includes('name: "commit_world_turn"'));
     assert(executeSource.includes('objectives: {'));
     assert(executeSource.includes('faction_reputation: {'));
@@ -323,7 +328,7 @@ test('quest engine is authoritative across prompts, tools, fallbacks, resets, an
     assert(!actionsSource.includes("'q_' + Date.now()"));
     assert(app.includes('if (!quest || quest.status !== \'completed\' || quest.rewardsGranted) return false'));
     assert(setupSource.includes('quests: []'));
-    assert(setupSource.includes('scheduledEvents: safeJsonClone'));
+    assert(setupSource.includes('scheduledEvents: experimentalSafeJsonClone'));
     assert(setupSource.includes('inventory: []'));
     assert(html.includes('id="world-quest-modal-overlay"'));
     assert(html.includes('id="m-quest-reward-items"'));
@@ -408,7 +413,7 @@ test('New Session Setup has explicit commit and reversible dismissal paths', () 
     const source = app.slice(start, end);
     assert(source.includes('closeButton.onclick = dismiss'));
     assert(source.includes("saveButton.onclick = () => saveAndFinish(true)"));
-    assert(source.includes("switchView('worlds')"));
+    assert(source.includes('const close = () => overlay.classList.add(\'hidden\')'));
     assert(source.includes("saveStatus.textContent = 'Saved'"));
     assert(html.includes('class="modal modal-md session-zero-modal"'));
     assert(css.includes('.modal-sm .modal-ft-row { padding: 0; }'));
@@ -416,7 +421,7 @@ test('New Session Setup has explicit commit and reversible dismissal paths', () 
 });
 
 test('world API errors do not consume the same response body twice', () => {
-    const start = app.indexOf("let response = await fetch(apiBase() + '/chat/completions'");
+    const start = app.indexOf("let response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions'");
     const end = app.indexOf("if (!response.body)", start);
     const source = app.slice(start, end);
     assert(source.includes('let errBody = await response.text()'));
