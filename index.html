@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=17.4.0-global-host-3">
+    <link rel="stylesheet" href="style.css?v=17.4.0-global-host-4">
 </head>
 <body>
 <div id="app">
@@ -3009,7 +3009,6 @@
                             </div>
                             <div class="vh-model-header-actions">
                                 <button id="cs-unlock-all-params" class="btn btn-ghost" type="button" title="Show every control even when the provider catalog does not advertise it.">🔓 Unlock all parameters</button>
-                                <button id="cs-refresh-text-models" class="btn btn-ghost" type="button" title="Fetch the current OpenRouter model catalog and refresh capability, context, and price metadata.">↻ Fetch new models</button>
                             </div>
                         </div>
                         <div class="form-body vh-models-body">
@@ -3048,9 +3047,12 @@
                                     </div>
                                     <span id="cs-model-provider-badge" class="vh-provider-badge">Provider</span>
                                 </div>
-                                <div class="vh-model-search-wrap">
-                                    <span aria-hidden="true">⌕</span>
-                                    <input id="cs-text-model-search" class="form-input" type="search" autocomplete="off" placeholder="Search by model name or ID…">
+                                <div class="vh-model-search-row">
+                                    <button id="cs-refresh-text-models" class="btn btn-ghost" type="button" title="Fetch the current shared OpenRouter catalog and refresh capability, context, and price metadata.">↻ Refresh models</button>
+                                    <div class="vh-model-search-wrap">
+                                        <span aria-hidden="true">⌕</span>
+                                        <input id="cs-text-model-search" class="form-input" type="search" autocomplete="off" placeholder="Search by model name or ID…">
+                                    </div>
                                 </div>
                                 <input id="cs-text-model" type="hidden" value="">
                                 <div id="cs-text-model-results" class="vh-model-results" role="listbox" aria-label="Conversation models"></div>
@@ -3086,12 +3088,14 @@
                                 </label>
                                 <div id="cs-observer-model-row" class="vh-config-field">
                                     <label class="form-label" for="cs-observer-model">Observer model ID <span class="optional">optional</span></label>
-                                    <input id="cs-observer-model" class="form-input" type="text" list="cs-observer-model-options" placeholder="Blank = Life Architect or conversation model">
-                                    <datalist id="cs-observer-model-options"></datalist>
                                     <p id="cs-observer-model-hint" class="form-hint">Use a small, fast model with reliable tool/JSON output. It never writes dialogue. The Life Architect remains responsible for schedules and off-screen life.</p>
-                                    <div class="vh-compact-model-controls">
+                                    <div class="vh-model-search-row vh-compact-model-search-row">
                                         <button id="cs-refresh-observer-models" class="btn btn-ghost" type="button">↻ Refresh models</button>
-                                        <label><span>Choose observer model</span><select id="cs-observer-model-picker" class="form-select"><option value="">Use Life Architect or conversation model</option></select></label>
+                                        <div class="vh-model-search-wrap">
+                                            <span aria-hidden="true">⌕</span>
+                                            <input id="cs-observer-model" class="form-input" type="search" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="cs-observer-model-results" aria-expanded="false" placeholder="Search observer models · blank inherits">
+                                            <div id="cs-observer-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="State Observer models"></div>
+                                        </div>
                                     </div>
                                     <div id="cs-observer-openrouter-routing" class="openrouter-routing-host hidden"></div>
                                 </div>
@@ -5252,6 +5256,6 @@
 <script src="backup-domain-coordinator.js?v=17.4.0-backup-domains-1"></script>
 <script src="rolling-recovery.js?v=17.4.0-rolling-recovery-1"></script>
 <script src="global-openrouter-routing.js?v=17.4.0-global-routing-4"></script>
-    <script src="app.js?v=17.4.0-global-recovery-7"></script>
+    <script src="app.js?v=17.4.0-global-recovery-8"></script>
 </body>
 </html>

@@ -6321,6 +6321,16 @@ input[type=number].form-input::-webkit-inner-spin-button {
     font-size: .65rem;
     font-weight: 750;
 }
+.vh-model-search-row {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    width: min(760px, 100%);
+    margin-top: 14px;
+}
+.vh-model-search-row > .btn { flex: 0 0 auto; min-height: 52px; white-space: nowrap; }
+.vh-model-search-row .vh-model-search-wrap { flex: 1 1 420px; min-width: 0; margin: 0; }
+.vh-compact-model-search-row { width: min(680px, 100%); }
 .vh-model-search-wrap { position: relative; margin-top: 14px; }
 .vh-model-search-wrap > span {
     position: absolute;
@@ -6394,6 +6404,14 @@ input[type=number].form-input::-webkit-inner-spin-button {
 }
 .vh-model-option .vh-model-check { color: var(--accent); font-size: .75rem; opacity: 0; }
 .vh-model-option.selected .vh-model-check { opacity: 1; }
+.model-catalog-dropdown-item { display: block; padding: 10px 13px; }
+.model-catalog-dropdown-copy { display: grid; gap: 3px; min-width: 0; }
+.model-catalog-dropdown-copy strong,
+.model-catalog-dropdown-copy code,
+.model-catalog-dropdown-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-catalog-dropdown-copy strong { color: var(--text); font-size: .78rem; }
+.model-catalog-dropdown-copy code { color: var(--text-3); font-size: .64rem; }
+.model-catalog-dropdown-meta { color: var(--text-2); font-size: .65rem; }
 .vh-model-status { display: block; margin-top: 11px; }
 .vh-model-empty {
     grid-column: 1 / -1;
@@ -6506,6 +6524,8 @@ input[type=number].form-input::-webkit-inner-spin-button {
     .vh-models-header .btn,
     .vh-model-hero .btn { width: 100%; }
     .vh-model-header-actions { width: 100%; flex-direction: column; }
+    .vh-model-search-row { align-items: stretch; width: 100%; }
+    .vh-model-search-row > .btn { min-height: 48px; }
     .vh-model-results { grid-template-columns: minmax(0, 1fr); max-height: 360px; }
     .vh-custom-model .form-input { flex-basis: auto; width: 100%; }
     .vh-ai-config-heading { align-items: stretch; flex-direction: column; }

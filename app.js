@@ -43315,6 +43315,38 @@ function openCompanionDiscoveryClips() {
     renderCompanionDiscoveryClips();
 }
 
+function modelCatalogTraits(model) {
+    if (!model) return [];
+    const price = companionTextModelPriceLabel(model.promptPrice);
+    return [
+        model.supportsTools ? 'Tools' : '',
+        model.supportsJSON ? 'JSON' : '',
+        model.inputModalities?.includes('image') ? 'Vision' : '',
+        model.inputModalities?.includes('audio') ? 'Audio input' : '',
+        model.contextLength ? `${Math.round(model.contextLength / 1000)}k context` : '',
+        price
+    ].filter(Boolean);
+}
+
+function appendModelCatalogOption(button, model, fallbackLabel = '') {
+    button.classList.add('model-catalog-dropdown-item');
+    const copy = document.createElement('span');
+    copy.className = 'model-catalog-dropdown-copy';
+    const name = document.createElement('strong');
+    name.textContent = model?.name || fallbackLabel || model?.id || '';
+    const id = document.createElement('code');
+    id.textContent = model?.id || fallbackLabel || '';
+    const traits = modelCatalogTraits(model);
+    copy.append(name, id);
+    if (traits.length) {
+        const meta = document.createElement('span');
+        meta.className = 'model-catalog-dropdown-meta';
+        meta.textContent = traits.join(' · ');
+        copy.append(meta);
+    }
+    button.append(copy);
+}
+
 function renderCompanionSearchResults(results, items, onSelect, emptyText) {
     if (!results) return;
     results.innerHTML = '';
@@ -43329,13 +43361,17 @@ function renderCompanionSearchResults(results, items, onSelect, emptyText) {
             button.type = 'button';
             button.className = 'searchable-dropdown-item';
             button.setAttribute('role', 'option');
-            const label = document.createElement('span');
-            label.className = 'model-display-name';
-            label.textContent = item.label;
-            const meta = document.createElement('span');
-            meta.className = 'model-display-id';
-            meta.textContent = item.meta || item.value || '';
-            button.append(label, meta);
+            if (item.model) {
+                appendModelCatalogOption(button, item.model, item.label);
+            } else {
+                const label = document.createElement('span');
+                label.className = 'model-display-name';
+                label.textContent = item.label;
+                const meta = document.createElement('span');
+                meta.className = 'model-display-id';
+                meta.textContent = item.meta || item.value || '';
+                button.append(label, meta);
+            }
             button.onclick = () => onSelect(item);
             results.appendChild(button);
         });
@@ -43670,6 +43706,10 @@ function setupCompanionSearchableFields() {
 
 async function getSettingsProviderCatalog() {
     const provider = document.getElementById('global-api-provider')?.value || state.globalSettings.apiProvider;
+    // OpenRouter is one shared, persisted catalog throughout the host. Settings
+    // reads the same normalized records as Virtual Human rather than keeping a
+    // separate transient dropdown cache.
+    if (provider === 'openrouter') return getSharedOpenRouterModelCatalog(false);
     const value = id => document.getElementById(id)?.value.trim() || '';
     let base = '';
     let headers = {};
@@ -43722,7 +43762,7 @@ function setupCatalogModelSearchFields() {
     const definitions = [
         { inputId: 'w-agent-model', resultsId: 'w-agent-model-results', blankLabel: 'Use this world’s DM model', kind: 'text' },
         { inputId: 'video-world-director-model', resultsId: 'video-world-director-model-results', kind: 'text', providerAware: true },
-        { inputId: 'global-default-model', resultsId: 'global-default-model-results', kind: 'text' },
+        { inputId: 'global-default-model', resultsId: 'global-default-model-results', kind: 'text', rich: true },
         { inputId: 'global-consolidation-model', resultsId: 'global-consolidation-model-results', kind: 'text' },
         { inputId: 'global-embedding-model', resultsId: 'global-embedding-model-results', kind: 'embedding' },
         { inputId: 'room-model', resultsId: 'room-model-results', kind: 'text' }
@@ -43754,7 +43794,8 @@ function setupCatalogModelSearchFields() {
                 ...models.map(model => ({
                     value: model.id,
                     label: model.name || model.id,
-                    meta: model.id
+                    meta: model.id,
+                    model: definition.rich ? model : null
                 }))
             ].filter(option =>
                 !query || `${option.label} ${option.meta}`.toLowerCase().includes(query)).slice(0, 60);
@@ -45248,31 +45289,45 @@ function rankCompanionObserverModels(models) {
 }
 
 function updateCompanionObserverModelOptions(companion, catalog = companionTextModelCatalog) {
-    const list = document.getElementById('cs-observer-model-options');
     const input = document.getElementById('cs-observer-model');
     const hint = document.getElementById('cs-observer-model-hint');
-    const picker = document.getElementById('cs-observer-model-picker');
-    if (!list || !input || !hint) return;
+    if (!input || !hint) return;
     const ranked = rankCompanionObserverModels(catalog);
     const recommended = ranked.find(model => model.supportsTools || model.supportsJSON) || ranked[0] || null;
-    list.innerHTML = ranked.slice(0, 80).map(model => {
-        const traits = [model.supportsTools ? 'Tools' : '', model.supportsJSON ? 'JSON' : '',
-            model.inputModalities.includes('image') ? 'Vision' : '', companionTextModelPriceLabel(model.promptPrice)]
-            .filter(Boolean).join(' · ');
-        return `<option value="${escapeHTML(model.id)}" label="${escapeHTML(`${model.name}${traits ? ` · ${traits}` : ''}`)}"></option>`;
-    }).join('');
-    if (picker) {
-        picker.innerHTML = `<option value="">Use Life Architect or conversation model</option>${ranked.slice(0, 160).map(model => {
-            const price = companionTextModelPriceLabel(model.promptPrice);
-            const traits = [model.supportsTools ? 'Tools' : '', model.supportsJSON ? 'JSON' : '', price].filter(Boolean).join(' · ');
-            return `<option value="${escapeHTML(model.id)}">${escapeHTML(`${model.name}${traits ? ` · ${traits}` : ''}`)}</option>`;
-        }).join('')}`;
-        picker.value = ranked.some(model => model.id === companion.observerModel) ? companion.observerModel : '';
-    }
     if (!companion.observerModel && recommended) input.placeholder = `Recommended: ${recommended.id}`;
     hint.textContent = recommended
         ? `Recommended for private state: ${recommended.name}. Structured-output models are ranked first, then lower input cost and size. Blank inherits the Life Architect or conversation model.`
         : 'Use a small, fast model with reliable tool/JSON output. Blank inherits the Life Architect or conversation model.';
+    const results = document.getElementById('cs-observer-model-results');
+    if (results && !results.classList.contains('hidden')) {
+        renderCompanionObserverModelResults(companion);
+    }
+}
+
+function renderCompanionObserverModelResults(companion, open = true) {
+    const input = document.getElementById('cs-observer-model');
+    const results = document.getElementById('cs-observer-model-results');
+    if (!input || !results || !companion) return;
+    const query = String(input.value || '').trim().toLowerCase();
+    const ranked = rankCompanionObserverModels(companionTextModelCatalog).filter(model =>
+        !query || `${model.name} ${model.id} ${model.description}`.toLowerCase().includes(query)
+    ).slice(0, 80);
+    const items = [
+        { value: '', label: 'Use Life Architect or conversation model', meta: 'Automatic' },
+        ...ranked.map(model => ({ value: model.id, label: model.name || model.id, meta: model.id, model }))
+    ];
+    renderCompanionSearchResults(results, items, item => {
+        const liveCompanion = getCompanion(state.editingCompanionId);
+        if (!liveCompanion) return;
+        liveCompanion.observerModel = item.value || '';
+        const selected = companionTextModelCatalog.find(model => model.id === liveCompanion.observerModel);
+        liveCompanion.observerInputModalities = selected?.inputModalities?.length
+            ? [...selected.inputModalities] : ['text'];
+        input.value = liveCompanion.observerModel;
+        setCompanionSearchOpen(input, results, false);
+        window.HordeOpenRouterRouting?.initialize?.('companionObserver', { force: true });
+    }, 'No State Observer model matches. You can still type an exact model ID.');
+    setCompanionSearchOpen(input, results, open);
 }
 
 function updateCompanionLifeBuilderModelPicker(companion, catalog = companionTextModelCatalog) {
@@ -46732,7 +46787,7 @@ function setupCompanionsLogic() {
         button.textContent = '↻ Fetching models…';
         populateCompanionTextModelPicker(companion, true).finally(() => {
             button.disabled = false;
-            button.textContent = '↻ Fetch new models';
+            button.textContent = '↻ Refresh models';
         });
     };
     document.getElementById('cs-unlock-all-params').onclick = (event) => {
@@ -46760,22 +46815,39 @@ function setupCompanionsLogic() {
         companion.observerInputModalities = selected?.inputModalities?.length
             ? [...selected.inputModalities] : ['text'];
         window.HordeOpenRouterRouting?.initialize?.('companionObserver', { force: true });
+        renderCompanionObserverModelResults(companion);
     };
-    document.getElementById('cs-observer-model-picker').onchange = event => {
+    document.getElementById('cs-observer-model').onfocus = () => {
         const companion = getCompanion(state.editingCompanionId);
-        if (!companion) return;
-        companion.observerModel = event.target.value;
-        const input = document.getElementById('cs-observer-model');
-        if (input) input.value = companion.observerModel;
-        const selected = companionTextModelCatalog.find(model => model.id === companion.observerModel);
-        companion.observerInputModalities = selected?.inputModalities?.length
-            ? [...selected.inputModalities] : ['text'];
-        window.HordeOpenRouterRouting?.initialize?.('companionObserver', { force: true });
+        if (companion) renderCompanionObserverModelResults(companion);
+    };
+    document.getElementById('cs-observer-model').onkeydown = event => {
+        if (event.key !== 'Escape') return;
+        setCompanionSearchOpen(
+            document.getElementById('cs-observer-model'),
+            document.getElementById('cs-observer-model-results'),
+            false
+        );
     };
     document.getElementById('cs-refresh-observer-models').onclick = () => {
         const companion = getCompanion(state.editingCompanionId);
-        if (companion) populateCompanionTextModelPicker(companion, true);
+        if (!companion) return;
+        const button = document.getElementById('cs-refresh-observer-models');
+        button.disabled = true;
+        button.textContent = '↻ Refreshing…';
+        populateCompanionTextModelPicker(companion, true).finally(() => {
+            button.disabled = false;
+            button.textContent = '↻ Refresh models';
+            renderCompanionObserverModelResults(companion);
+        });
     };
+    document.addEventListener('click', event => {
+        const input = document.getElementById('cs-observer-model');
+        const results = document.getElementById('cs-observer-model-results');
+        if (input && results && !input.contains(event.target) && !results.contains(event.target)) {
+            setCompanionSearchOpen(input, results, false);
+        }
+    });
     document.getElementById('cs-life-builder-model-picker').onchange = event => {
         const companion = getCompanion(state.editingCompanionId);
         if (!companion) return;
