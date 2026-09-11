@@ -38661,6 +38661,32 @@ async function fetchCompanionCompletion(url, init, companion, repair = false) {
     }
 }
 
+async function companionProviderHttpError(response, providerId, model) {
+    // Never put the request body or credential in an error: the deferred
+    // agency loop writes it to the console and can surface it in the chat.
+    // The response status, provider/model identity and request id are enough
+    // to distinguish a credential/configuration error from an upstream
+    // endpoint rejection or temporary service failure.
+    const raw = await response.text().catch(() => '');
+    let payload = null;
+    try { payload = raw ? JSON.parse(raw) : null; } catch (_) {}
+    const message = String(payload?.error?.message || payload?.message || raw
+        || `Request failed (${response.status})`).replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]').slice(0, 800);
+    const requestId = response.headers.get('x-request-id')
+        || response.headers.get('x-openrouter-request-id') || '';
+    const provider = normalizedProviderId(providerId);
+    const readable = humanizeApiError(new Error(message), provider);
+    const error = new Error(`${providerDisplayName(provider)} rejected ${model || 'the selected model'} (HTTP ${response.status})${requestId ? ` · request ${requestId}` : ''}: ${readable}`);
+    error.hordeProviderDiagnostic = {
+        provider,
+        model: String(model || ''),
+        status: response.status,
+        requestId: requestId || null,
+        providerCode: String(payload?.error?.code || payload?.code || '') || null
+    };
+    return error;
+}
+
 /**
  * Turn a raw tool_calls array into the normalized actions the send loop
  * applies. Pure and separately testable — the actual fetch response shape
@@ -40460,8 +40486,7 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         body: JSON.stringify(body)
     }, companion);
     if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        throw new Error(humanizeApiError(new Error(errText || `Request failed (${response.status})`)));
+        throw await companionProviderHttpError(response, textProvider, body.model);
     }
     const choice = (await response.json())?.choices?.[0] || {};
     if (choice.finish_reason === 'length') {
