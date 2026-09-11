@@ -38644,6 +38644,86 @@ function companionRequestTimeoutMs(companion, repair = false) {
     return companion?.reasoning ? 10 * 60 * 1000 : 3 * 60 * 1000;
 }
 
+// A short-lived comparison trail for provider failures. The user has opted in
+// to retaining the complete request/response payload in DevTools so a normal
+// companion turn can be compared with a successful social post. Credentials
+// and HTTP headers remain excluded, and this is never persisted with Horde.
+const companionProviderRequestDiagnostics = [];
+const COMPANION_PROVIDER_REQUEST_DIAGNOSTIC_LIMIT = 40;
+
+function companionProviderRequestShape(body, audit, options = {}) {
+    const tools = Array.isArray(body?.tools) ? body.tools : [];
+    const requestHeaders = options.headers || {};
+    const hasAuthorization = Object.entries(requestHeaders).some(([name, value]) =>
+        name.toLowerCase() === 'authorization' && /^bearer\s+\S+/i.test(String(value || '')));
+    const toolChoice = typeof body?.tool_choice === 'object'
+        ? body.tool_choice?.function?.name ? `function:${body.tool_choice.function.name}` : 'object'
+        : String(body?.tool_choice || 'unspecified');
+    return {
+        at: Date.now(),
+        kind: String(options.kind || 'companion'),
+        attempt: String(options.attempt || 'primary'),
+        endpoint: String(options.endpoint || ''),
+        provider: normalizedProviderId(options.providerId),
+        model: String(body?.model || ''),
+        authorizationAttached: hasAuthorization,
+        messageCount: Array.isArray(body?.messages) ? body.messages.length : 0,
+        messageRoles: Array.isArray(body?.messages) ? body.messages.map(message => String(message?.role || 'unknown')) : [],
+        toolNames: tools.map(tool => String(tool?.function?.name || tool?.type || 'unknown')),
+        toolChoice,
+        maxToolCalls: Number.isFinite(Number(body?.max_tool_calls)) ? Number(body.max_tool_calls) : null,
+        outputAllowance: Number.isFinite(Number(body?.max_tokens)) ? Number(body.max_tokens) : null,
+        reasoning: body?.reasoning && typeof body.reasoning === 'object'
+            ? { effort: String(body.reasoning.effort || ''), maxTokens: Number(body.reasoning.max_tokens) || null }
+            : null,
+        samplingFields: ['temperature', 'top_p', 'top_k'].filter(name => Object.hasOwn(body || {}, name)),
+        routingOverridePresent: !!body?.provider,
+        request: {
+            messages: safeJsonClone(body?.messages || []),
+            tools: safeJsonClone(body?.tools || []),
+            toolChoice: safeJsonClone(body?.tool_choice ?? null),
+            providerRouting: safeJsonClone(body?.provider ?? null),
+            maxToolCalls: Number.isFinite(Number(body?.max_tool_calls)) ? Number(body.max_tool_calls) : null,
+            generation: Object.fromEntries(['max_tokens', 'temperature', 'top_p', 'top_k', 'reasoning', 'reasoning_effort']
+                .filter(name => Object.hasOwn(body || {}, name)).map(name => [name, safeJsonClone(body[name])]))
+        },
+        fit: audit ? {
+            contextSize: Number(audit.contextSize) || null,
+            estimatedInputTokens: Number(audit.estimatedInputTokens) || null,
+            outputReserve: Number(audit.outputReserve) || null,
+            margin: Number(audit.margin) || null,
+            omittedMessages: Number(audit.omittedMessages) || 0,
+            compacted: audit.compacted === true
+        } : null
+    };
+}
+
+function recordCompanionProviderRequest(shape, response = null, outcome = 'completed') {
+    const entry = {
+        ...shape,
+        outcome,
+        status: response?.status ?? null,
+        requestId: response?.headers?.get('x-request-id') || response?.headers?.get('x-openrouter-request-id') || null,
+        retryAfter: response?.headers?.get('retry-after') || null
+    };
+    companionProviderRequestDiagnostics.push(entry);
+    if (companionProviderRequestDiagnostics.length > COMPANION_PROVIDER_REQUEST_DIAGNOSTIC_LIMIT) {
+        companionProviderRequestDiagnostics.splice(0, companionProviderRequestDiagnostics.length - COMPANION_PROVIDER_REQUEST_DIAGNOSTIC_LIMIT);
+    }
+    // Deliberately make the redacted, in-memory trail inspectable from DevTools.
+    window.HordeProviderRequestDiagnostics = companionProviderRequestDiagnostics;
+    return entry;
+}
+
+function attachCompanionProviderResponse(entry, message) {
+    if (!entry || !message) return entry;
+    entry.response = {
+        content: safeJsonClone(message.content ?? null),
+        toolCalls: safeJsonClone(message.tool_calls || [])
+    };
+    return entry;
+}
+
 async function fetchCompanionCompletion(url, init, companion, repair = false) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), companionRequestTimeoutMs(companion, repair));
@@ -38691,7 +38771,8 @@ async function companionProviderHttpError(response, providerId, model) {
         status: response.status,
         requestId: requestId || null,
         providerCode: String(payload?.error?.code || payload?.code || '') || null,
-        retryAfterAt: retryAfterAt || null
+        retryAfterAt: retryAfterAt || null,
+        responseBody: raw.replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]').slice(0, 8000)
     };
     return error;
 }
@@ -40489,15 +40570,32 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         scope: 'companion', providerId: textProvider
     }) || body;
     if (companion.webAccess && textProvider === 'openrouter') body.max_tool_calls = 4;
-    const response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
-        body: JSON.stringify(body)
-    }, companion);
-    if (!response.ok) {
-        throw await companionProviderHttpError(response, textProvider, body.model);
+    const endpoint = providerApiBase(textProvider) + '/chat/completions';
+    const headers = { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) };
+    const requestShape = companionProviderRequestShape(body, fitted.audit, {
+        kind: 'companion-chat', endpoint, providerId: textProvider, headers
+    });
+    let response;
+    try {
+        response = await fetchCompanionCompletion(endpoint, {
+            method: 'POST', headers, body: JSON.stringify(body)
+        }, companion);
+    } catch (error) {
+        const entry = recordCompanionProviderRequest(requestShape, null, 'network-error');
+        entry.error = { name: String(error?.name || 'Error'), message: String(error?.message || error || '') };
+        console.warn('Virtual Human companion request failed before a provider response.', entry);
+        throw error;
     }
+    if (!response.ok) {
+        const error = await companionProviderHttpError(response, textProvider, body.model);
+        const entry = recordCompanionProviderRequest(requestShape, response, 'rejected');
+        entry.error = safeJsonClone(error.hordeProviderDiagnostic || { message: String(error.message || error) });
+        console.warn('Virtual Human companion request rejected.', entry);
+        throw error;
+    }
+    const diagnosticEntry = recordCompanionProviderRequest(requestShape, response, 'completed');
     const choice = (await response.json())?.choices?.[0] || {};
+    attachCompanionProviderResponse(diagnosticEntry, choice.message);
     if (choice.finish_reason === 'length') {
         showToast('The model reached its output limit; this reply may be incomplete. Increase Max output tokens in VH Studio → Model settings.', 'warning');
     }
@@ -49307,28 +49405,48 @@ Recent posts (avoid repeating them): ${companion.socialPosts.slice(-5).map(post 
         tool_choice: { type: 'function', function: { name: 'publish_social_post' } }
     }, companion, { maxTokens: Math.min(420, companion.maxTokens || 420) });
     const endpoint = providerApiBase(textProvider) + '/chat/completions';
-    const request = requestBody => fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
-        body: JSON.stringify(window.HordeOpenRouterRouting?.apply?.(
-            VHConversationEngine.fitRequest(requestBody, {
-                contextSize: companionRequestContextSize(companion, requestBody.model) }).body,
-            companion, { scope: 'companion', providerId: textProvider }) || requestBody)
-    });
+    let responseDiagnostic = null;
+    const request = async (requestBody, attempt = 'primary') => {
+        const fitted = VHConversationEngine.fitRequest(requestBody, {
+            contextSize: companionRequestContextSize(companion, requestBody.model) });
+        const routed = window.HordeOpenRouterRouting?.apply?.(fitted.body,
+            companion, { scope: 'companion', providerId: textProvider }) || fitted.body;
+        const headers = { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) };
+        const requestShape = companionProviderRequestShape(routed, fitted.audit, {
+            kind: 'companion-social-post', attempt, endpoint, providerId: textProvider, headers
+        });
+        try {
+            const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(routed) });
+            responseDiagnostic = recordCompanionProviderRequest(requestShape, response,
+                response.ok ? 'completed' : 'rejected');
+            return response;
+        } catch (error) {
+            responseDiagnostic = recordCompanionProviderRequest(requestShape, null, 'network-error');
+            responseDiagnostic.error = { name: String(error?.name || 'Error'), message: String(error?.message || error || '') };
+            console.warn('Virtual Human social-post request failed before a provider response.', responseDiagnostic);
+            throw error;
+        }
+    };
     let response = await request(body);
     if (!response.ok && [400, 404, 422].includes(response.status)) {
         const firstError = await response.text().catch(() => '');
+        if (responseDiagnostic) responseDiagnostic.error = { responseBody: firstError.slice(0, 8000) };
         if (/tool|function|tool_choice/i.test(firstError)) {
             const fallbackBody = { ...body };
             delete fallbackBody.tools;
             delete fallbackBody.tool_choice;
-            response = await request(fallbackBody);
+            response = await request(fallbackBody, 'tool-compatibility-fallback');
         } else {
             throw new Error(humanizeApiError(new Error(firstError || `Request failed (${response.status})`)));
         }
     }
-    if (!response.ok) throw new Error(humanizeApiError(new Error(await response.text().catch(() => `Request failed (${response.status})`))));
+    if (!response.ok) {
+        const responseBody = await response.text().catch(() => `Request failed (${response.status})`);
+        if (responseDiagnostic) responseDiagnostic.error = { responseBody: responseBody.slice(0, 8000) };
+        throw new Error(humanizeApiError(new Error(responseBody)));
+    }
     const message = (await response.json())?.choices?.[0]?.message || {};
+    attachCompanionProviderResponse(responseDiagnostic, message);
     if (!stillOwned()) return { posted: false, pendingPhoto: null, reason: 'stale' };
     const args = companionSocialPostArgsFromMessage(message);
     if (!isPlainObject(args) || (!String(args.text || '').trim()
