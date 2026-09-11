@@ -206,9 +206,9 @@ function selectWorldVisualVariant(editor, offset) {
     const current = Math.max(0, history.indexOf(editor.target.visuals[keys.current]));
     const next = Math.max(0, Math.min(history.length - 1, current + offset));
     editor.target.visuals[keys.current] = history[next];
-    document.getElementById('world-visual-crop-x').value = '50';
-    document.getElementById('world-visual-crop-y').value = '50';
-    document.getElementById('world-visual-crop-zoom').value = '100';
+    document.getElementById('ew-world-visual-crop-x').value = '50';
+    document.getElementById('ew-world-visual-crop-y').value = '50';
+    document.getElementById('ew-world-visual-crop-zoom').value = '100';
     updateWorldVisualCropPreview();
     if (editor.kind === 'npc') {
         // Switching variants switches the source; the 1:1 profile frame is
@@ -222,7 +222,7 @@ function selectWorldVisualVariant(editor, offset) {
 
 function renderWorldVisualOutfitGallery() {
     const editor = worldVisualEditorState;
-    const gallery = document.getElementById('world-visual-outfit-gallery');
+    const gallery = document.getElementById('ew-world-visual-outfit-gallery');
     if (!gallery) return;
     if (!editor || editor.kind !== 'npc') {
         gallery.hidden = true;
@@ -250,12 +250,12 @@ function renderWorldVisualOutfitGallery() {
 
 function renderWorldVisualActiveOutfit() {
     const editor = worldVisualEditorState;
-    const surface = document.getElementById('world-visual-active-outfit');
+    const surface = document.getElementById('ew-world-visual-active-outfit');
     if (!surface) return;
     const isNpc = !!editor && editor.kind === 'npc';
     surface.hidden = !isNpc;
     if (!isNpc) return;
-    const list = document.getElementById('world-visual-active-outfit-list');
+    const list = document.getElementById('ew-world-visual-active-outfit-list');
     if (!list) return;
     const outfits = worldOutfits(editor.target);
     const outfitHasAlternatives = description => /\b(?:or|either|alternatively|can wear|moves between)\b/i.test(String(description || ''));
@@ -283,13 +283,13 @@ function renderWorldVisualActiveOutfit() {
             selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false });
             renderWorldVisualActiveOutfit();
             updateWorldVisualCropPreview();
-            scrollWorldOutfitCardIntoView(document.getElementById('world-visual-active-outfit-list'), outfit.id);
+            scrollWorldOutfitCardIntoView(document.getElementById('ew-world-visual-active-outfit-list'), outfit.id);
         };
         const selectOutfit = () => {
             selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false });
             renderWorldVisualActiveOutfit();
             updateWorldVisualCropPreview();
-            scrollWorldOutfitCardIntoView(document.getElementById('world-visual-active-outfit-list'), outfit.id);
+            scrollWorldOutfitCardIntoView(document.getElementById('ew-world-visual-active-outfit-list'), outfit.id);
         };
         card.querySelector('.world-inline-outfit-image-open').onclick = selectOutfit;
         card.querySelector('.world-inline-outfit-select').onclick = selectOutfit;
@@ -303,7 +303,7 @@ function renderWorldVisualActiveOutfit() {
             editor.target.visuals.portraitDisplayAssetId = '';
             renderWorldVisualActiveOutfit();
             updateWorldVisualCropPreview();
-            scrollWorldOutfitCardIntoView(document.getElementById('world-visual-active-outfit-list'), outfit.id);
+            scrollWorldOutfitCardIntoView(document.getElementById('ew-world-visual-active-outfit-list'), outfit.id);
         };
         card.querySelector('.world-inline-outfit-image-prev').onclick = event => { event.stopPropagation(); chooseOutfitImage(-1); };
         card.querySelector('.world-inline-outfit-image-next').onclick = event => { event.stopPropagation(); chooseOutfitImage(1); };
@@ -361,7 +361,7 @@ function renderWorldVisualActiveOutfit() {
             renderWorldVisualActiveOutfit();
         });
     });
-    const apply = document.getElementById('world-visual-apply-outfit');
+    const apply = document.getElementById('ew-world-visual-apply-outfit');
     if (apply) apply.disabled = !outfits.some(outfit => outfit.id === selectedId);
 }
 
@@ -381,7 +381,7 @@ function autoSizeWorldVisualTextarea(input) {
 }
 
 function autoSizeWorldVisualTextareas() {
-    ['world-visual-primary', 'world-visual-prompt', 'world-visual-correction']
+    ['ew-world-visual-primary', 'ew-world-visual-prompt', 'ew-world-visual-correction']
         .forEach(id => autoSizeWorldVisualTextarea(document.getElementById(id)));
 }
 
@@ -397,7 +397,7 @@ async function applyWorldOutfitAndGenerate(event) {
     const instruction = `Replace the current outfit with the complete authored outfit “${outfit.name}”: ${outfit.description || '(the outfit has not been described yet; use the authored title only)'}. Preserve the person, identity, pose, framing, lighting, composition and every unrelated detail.`;
     button.disabled = true;
     try {
-        const correctionInput = document.getElementById('world-visual-correction');
+        const correctionInput = document.getElementById('ew-world-visual-correction');
         correctionInput.value = instruction;
         autoSizeWorldVisualTextarea(correctionInput);
         const refined = await refineWorldVisualPromptWithAI({ currentTarget: button }, instruction, { allowNoFieldChanges: true });
@@ -406,7 +406,7 @@ async function applyWorldOutfitAndGenerate(event) {
         // same refinement call, then establishes its first image through the
         // new-image pipeline.
         await runWorldVisualGeneration(!!source, event);
-        if (!source) document.getElementById('world-visual-correction').value = '';
+        if (!source) document.getElementById('ew-world-visual-correction').value = '';
     } finally {
         button.disabled = false;
         renderWorldVisualActiveOutfit();
@@ -415,50 +415,50 @@ async function applyWorldOutfitAndGenerate(event) {
 
 function updateWorldVisualCropPreview() {
     const editor = worldVisualEditorState;
-    const stage = document.getElementById('world-visual-crop-stage');
-    const image = document.getElementById('world-visual-crop-image');
-    const empty = document.getElementById('world-visual-crop-empty');
+    const stage = document.getElementById('ew-world-visual-crop-stage');
+    const image = document.getElementById('ew-world-visual-crop-image');
+    const empty = document.getElementById('ew-world-visual-crop-empty');
     if (!editor || !stage || !image) return;
     // The crop stage previews the frame the record will actually display:
     // NPC portraits render as fixed 1:1 profile images, so their editable
     // frame is square even when the source was generated at another ratio.
     // Location backgrounds render as responsive cover art, so their frame
     // follows the selected generation aspect.
-    const generationAspect = normalizedWorldVisualAspect(document.getElementById('world-visual-aspect')?.value,
+    const generationAspect = normalizedWorldVisualAspect(document.getElementById('ew-world-visual-aspect')?.value,
         editor.kind === 'npc' ? '3:4' : '16:9');
     const aspect = editor.kind === 'npc' ? WORLD_NPC_PORTRAIT_DISPLAY_ASPECT : generationAspect;
     const [width, height] = aspect.split(':').map(Number);
     stage.style.aspectRatio = `${width} / ${height}`;
-    const resolution = normalizedWorldVisualResolution(document.getElementById('world-visual-resolution')?.value,
+    const resolution = normalizedWorldVisualResolution(document.getElementById('ew-world-visual-resolution')?.value,
         editor.kind === 'npc' ? 1200 : 1600);
     const output = worldVisualDimensions(aspect, resolution);
-    const guide = document.getElementById('world-visual-crop-guide');
+    const guide = document.getElementById('ew-world-visual-crop-guide');
     if (guide) guide.dataset.label = `${aspect} ${editor.kind === 'npc' ? 'profile' : 'final'} frame · ${output.width} × ${output.height}px`;
     const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
     const history = worldVisualHistoryForEditor(editor);
     const selectedIndex = history.indexOf(worldVisualEditorAssetId(editor));
-    const counter = document.getElementById('world-visual-variant-count');
+    const counter = document.getElementById('ew-world-visual-variant-count');
     if (counter) counter.textContent = history.length ? `Image ${selectedIndex + 1} of ${history.length}` : 'No images';
     renderWorldVisualActiveOutfit();
     renderWorldVisualOutfitGallery();
-    document.getElementById('world-visual-previous').disabled = selectedIndex <= 0;
-    document.getElementById('world-visual-next').disabled = selectedIndex < 0 || selectedIndex >= history.length - 1;
-    document.getElementById('world-visual-export').disabled = !source;
-    document.getElementById('world-visual-revise').disabled = !source;
+    document.getElementById('ew-world-visual-previous').disabled = selectedIndex <= 0;
+    document.getElementById('ew-world-visual-next').disabled = selectedIndex < 0 || selectedIndex >= history.length - 1;
+    document.getElementById('ew-world-visual-export').disabled = !source;
+    document.getElementById('ew-world-visual-revise').disabled = !source;
     if (guide) guide.hidden = !source;
     image.hidden = !source;
     empty.hidden = !!source;
-    document.getElementById('world-visual-apply-crop').disabled = !source;
-    document.getElementById('world-visual-crop-fill').disabled = !source;
+    document.getElementById('ew-world-visual-apply-crop').disabled = !source;
+    document.getElementById('ew-world-visual-crop-fill').disabled = !source;
     if (!source) return;
     if (image.src !== source) image.src = source;
     const draw = () => {
         const stageWidth = stage.clientWidth;
         const stageHeight = stage.clientHeight;
         if (!stageWidth || !stageHeight || !image.naturalWidth || !image.naturalHeight) return;
-        const zoom = Number(document.getElementById('world-visual-crop-zoom').value) / 100;
-        const focusX = Number(document.getElementById('world-visual-crop-x').value) / 100;
-        const focusY = Number(document.getElementById('world-visual-crop-y').value) / 100;
+        const zoom = Number(document.getElementById('ew-world-visual-crop-zoom').value) / 100;
+        const focusX = Number(document.getElementById('ew-world-visual-crop-x').value) / 100;
+        const focusY = Number(document.getElementById('ew-world-visual-crop-y').value) / 100;
         const scale = Math.max(stageWidth / image.naturalWidth, stageHeight / image.naturalHeight) * zoom;
         const renderedWidth = image.naturalWidth * scale;
         const renderedHeight = image.naturalHeight * scale;
@@ -476,39 +476,39 @@ function structuredVisualEditorText(id) {
 }
 
 function renderStructuredVisualDocumentEditor(project) {
-    const form = document.getElementById('world-visual-document-form');
+    const form = document.getElementById('ew-world-visual-document-form');
     if (!form || !project) return;
     project.structuredDocument = normalizeStructuredVisualDocument(project.structuredDocument);
     const doc = project.structuredDocument;
     const set = (id, value) => { const input = document.getElementById(id); if (input) input.value = value == null ? '' : value; };
-    const requestInput = document.getElementById('world-visual-structured-request');
+    const requestInput = document.getElementById('ew-world-visual-structured-request');
     if (requestInput && !String(requestInput.value || '').trim()) requestInput.value = project.imageIntent?.authoredPrompt || doc.short_description || '';
-    set('world-visual-structured-intent', project.imageIntent?.authoredPrompt || '');
-    set('world-visual-structured-context', project.imageIntent?.context || doc.context || '');
-    set('world-visual-structured-background', doc.background_setting);
-    set('world-visual-structured-lighting-conditions', doc.lighting.conditions);
-    set('world-visual-structured-lighting-direction', doc.lighting.direction);
-    set('world-visual-structured-lighting-shadows', doc.lighting.shadows);
-    set('world-visual-structured-composition', doc.aesthetics.composition);
-    set('world-visual-structured-color', doc.aesthetics.color_scheme);
-    set('world-visual-structured-mood', doc.aesthetics.mood_atmosphere);
-    set('world-visual-structured-depth', doc.photographic_characteristics.depth_of_field);
-    set('world-visual-structured-focus', doc.photographic_characteristics.focus);
-    set('world-visual-structured-camera', doc.photographic_characteristics.camera_angle);
-    set('world-visual-structured-lens', doc.photographic_characteristics.lens_focal_length);
-    set('world-visual-structured-style-medium', doc.style_medium);
-    set('world-visual-structured-artistic-style', doc.artistic_style);
-    set('world-visual-structured-aspect', project.providerControls?.aspectRatio || '3:4');
-    set('world-visual-structured-resolution', project.providerControls?.resolution || '1200');
-    set('world-visual-structured-seed', project.providerControls?.seed == null ? '' : project.providerControls.seed);
-    set('world-visual-structured-sync', project.providerControls?.syncMode === true ? 'true' : project.providerControls?.syncMode === false ? 'false' : '');
-    const rawJson = document.getElementById('world-visual-raw-json');
-    if (rawJson && !document.getElementById('world-visual-document-json')?.hidden) {
+    set('ew-world-visual-structured-intent', project.imageIntent?.authoredPrompt || '');
+    set('ew-world-visual-structured-context', project.imageIntent?.context || doc.context || '');
+    set('ew-world-visual-structured-background', doc.background_setting);
+    set('ew-world-visual-structured-lighting-conditions', doc.lighting.conditions);
+    set('ew-world-visual-structured-lighting-direction', doc.lighting.direction);
+    set('ew-world-visual-structured-lighting-shadows', doc.lighting.shadows);
+    set('ew-world-visual-structured-composition', doc.aesthetics.composition);
+    set('ew-world-visual-structured-color', doc.aesthetics.color_scheme);
+    set('ew-world-visual-structured-mood', doc.aesthetics.mood_atmosphere);
+    set('ew-world-visual-structured-depth', doc.photographic_characteristics.depth_of_field);
+    set('ew-world-visual-structured-focus', doc.photographic_characteristics.focus);
+    set('ew-world-visual-structured-camera', doc.photographic_characteristics.camera_angle);
+    set('ew-world-visual-structured-lens', doc.photographic_characteristics.lens_focal_length);
+    set('ew-world-visual-structured-style-medium', doc.style_medium);
+    set('ew-world-visual-structured-artistic-style', doc.artistic_style);
+    set('ew-world-visual-structured-aspect', project.providerControls?.aspectRatio || '3:4');
+    set('ew-world-visual-structured-resolution', project.providerControls?.resolution || '1200');
+    set('ew-world-visual-structured-seed', project.providerControls?.seed == null ? '' : project.providerControls.seed);
+    set('ew-world-visual-structured-sync', project.providerControls?.syncMode === true ? 'true' : project.providerControls?.syncMode === false ? 'false' : '');
+    const rawJson = document.getElementById('ew-world-visual-raw-json');
+    if (rawJson && !document.getElementById('ew-world-visual-document-json')?.hidden) {
         rawJson.value = JSON.stringify(doc, null, 2);
     } else if (rawJson) {
         rawJson.value = JSON.stringify(doc, null, 2);
     }
-    const list = document.getElementById('world-visual-structured-objects');
+    const list = document.getElementById('ew-world-visual-structured-objects');
     if (!list) return;
     const ids = Array.isArray(project.objectOrder) ? project.objectOrder : [];
     list.innerHTML = doc.objects.map((object, index) => {
@@ -517,7 +517,7 @@ function renderStructuredVisualDocumentEditor(project) {
         const field = (key, label, multiline = false) => `<label class="form-label">${label}${multiline ? `<textarea class="form-textarea world-visual-object-field" data-field="${key}" rows="2">${experimentalEscapeHTML(object[key] || '')}</textarea>` : `<input class="form-input world-visual-object-field" data-field="${key}" value="${experimentalEscapeHTML(object[key] || '')}">`}</label>`;
         return `<article class="world-visual-object-card ${meta.salience === 'primary' ? 'is-primary' : ''}" data-object-id="${experimentalEscapeHTML(objectId)}"><div class="world-visual-object-card-header"><span class="world-visual-object-card-title">Object ${index + 1}</span><div class="world-visual-object-actions"><select class="form-select world-visual-object-meta" data-meta="salience" title="How important this object is to the composition"><option value="primary" ${meta.salience === 'primary' ? 'selected' : ''}>Primary</option><option value="secondary" ${meta.salience === 'secondary' ? 'selected' : ''}>Secondary</option><option value="tertiary" ${meta.salience === 'tertiary' ? 'selected' : ''}>Tertiary</option></select><select class="form-select world-visual-object-meta" data-meta="kind" title="What sort of visual object this is"><option value="subject" ${meta.kind === 'subject' ? 'selected' : ''}>Subject</option><option value="scene_object" ${meta.kind === 'scene_object' ? 'selected' : ''}>Scene object</option><option value="integrated_component" ${meta.kind === 'integrated_component' ? 'selected' : ''}>Integrated component</option><option value="background_detail" ${meta.kind === 'background_detail' ? 'selected' : ''}>Background detail</option></select><button type="button" class="tool-btn world-visual-object-up" title="Move object up">↑</button><button type="button" class="tool-btn world-visual-object-down" title="Move object down">↓</button><button type="button" class="tool-btn world-visual-object-remove" title="Remove object">Remove</button></div></div><div class="world-visual-grid-2">${field('description','Description',true)}${field('relationship','Relationship',true)}${field('location','Location')}${field('relative_size','Relative size')}${field('shape_and_color','Shape and colour')}${field('texture','Texture')}${field('appearance_details','Appearance details',true)}${field('number_of_objects','Number of objects')}${field('pose','Pose')}${field('expression','Expression')}${field('clothing','Clothing')}${field('action','Action')}${field('gender','Gender')}${field('skin_tone_and_texture','Skin tone and texture')}${field('orientation','Orientation')}</div></article>`;
     }).join('');
-    const count = document.getElementById('world-visual-object-count');
+    const count = document.getElementById('ew-world-visual-object-count');
     if (count) count.textContent = `${doc.objects.length}/${STRUCTURED_VISUAL_MAX_OBJECTS}`;
     list.querySelectorAll('.world-visual-object-remove').forEach(button => button.onclick = () => {
         const card = button.closest('[data-object-id]');
@@ -533,17 +533,17 @@ function readStructuredVisualEditorIntoProject(project) {
     const doc = normalizeStructuredVisualDocument(project.structuredDocument);
     const value = id => structuredVisualEditorText(id);
     project.imageIntent = normalizeWorldImageIntent({
-        ...(project.imageIntent || {}), authoredPrompt: value('world-visual-structured-intent'), context: value('world-visual-structured-context')
+        ...(project.imageIntent || {}), authoredPrompt: value('ew-world-visual-structured-intent'), context: value('ew-world-visual-structured-context')
     }, '', '');
-    doc.short_description = value('world-visual-structured-intent').slice(0, 1200) || doc.short_description;
-    doc.context = value('world-visual-structured-context').slice(0, 1600);
-    doc.background_setting = value('world-visual-structured-background').slice(0, 1200);
-    doc.lighting = { conditions: value('world-visual-structured-lighting-conditions').slice(0, 1200), direction: value('world-visual-structured-lighting-direction').slice(0, 1200), shadows: value('world-visual-structured-lighting-shadows').slice(0, 1200) };
-    doc.aesthetics = { composition: value('world-visual-structured-composition').slice(0, 1200), color_scheme: value('world-visual-structured-color').slice(0, 1200), mood_atmosphere: value('world-visual-structured-mood').slice(0, 1200), aesthetic_score: 'very high', preference_score: 'very high' };
-    doc.photographic_characteristics = { depth_of_field: value('world-visual-structured-depth').slice(0, 1200), focus: value('world-visual-structured-focus').slice(0, 1200), camera_angle: value('world-visual-structured-camera').slice(0, 1200), lens_focal_length: value('world-visual-structured-lens').slice(0, 1200) };
-    doc.style_medium = value('world-visual-structured-style-medium').slice(0, 600);
-    doc.artistic_style = value('world-visual-structured-artistic-style').slice(0, 900);
-    const list = document.getElementById('world-visual-structured-objects');
+    doc.short_description = value('ew-world-visual-structured-intent').slice(0, 1200) || doc.short_description;
+    doc.context = value('ew-world-visual-structured-context').slice(0, 1600);
+    doc.background_setting = value('ew-world-visual-structured-background').slice(0, 1200);
+    doc.lighting = { conditions: value('ew-world-visual-structured-lighting-conditions').slice(0, 1200), direction: value('ew-world-visual-structured-lighting-direction').slice(0, 1200), shadows: value('ew-world-visual-structured-lighting-shadows').slice(0, 1200) };
+    doc.aesthetics = { composition: value('ew-world-visual-structured-composition').slice(0, 1200), color_scheme: value('ew-world-visual-structured-color').slice(0, 1200), mood_atmosphere: value('ew-world-visual-structured-mood').slice(0, 1200), aesthetic_score: 'very high', preference_score: 'very high' };
+    doc.photographic_characteristics = { depth_of_field: value('ew-world-visual-structured-depth').slice(0, 1200), focus: value('ew-world-visual-structured-focus').slice(0, 1200), camera_angle: value('ew-world-visual-structured-camera').slice(0, 1200), lens_focal_length: value('ew-world-visual-structured-lens').slice(0, 1200) };
+    doc.style_medium = value('ew-world-visual-structured-style-medium').slice(0, 600);
+    doc.artistic_style = value('ew-world-visual-structured-artistic-style').slice(0, 900);
+    const list = document.getElementById('ew-world-visual-structured-objects');
     const nextOrder = [];
     const nextMeta = {};
     const nextObjects = [];
@@ -565,8 +565,8 @@ function readStructuredVisualEditorIntoProject(project) {
     project.structuredDocument = normalizeStructuredVisualDocument({ ...doc, objects: nextObjects });
     project.objectOrder = nextOrder;
     project.hordeObjectMetadata = normalizeStructuredVisualObjectMetadata(nextMeta, nextOrder);
-    const seedValue = value('world-visual-structured-seed');
-    project.providerControls = { ...(project.providerControls || {}), aspectRatio: value('world-visual-structured-aspect') || '3:4', resolution: value('world-visual-structured-resolution') || '1200', seed: seedValue === '' ? null : Number.parseInt(seedValue, 10), syncMode: document.getElementById('world-visual-structured-sync')?.value === 'true' };
+    const seedValue = value('ew-world-visual-structured-seed');
+    project.providerControls = { ...(project.providerControls || {}), aspectRatio: value('ew-world-visual-structured-aspect') || '3:4', resolution: value('ew-world-visual-structured-resolution') || '1200', seed: seedValue === '' ? null : Number.parseInt(seedValue, 10), syncMode: document.getElementById('ew-world-visual-structured-sync')?.value === 'true' };
     return project;
 }
 
@@ -633,7 +633,7 @@ async function runStructuredVisualAuthoring(operation, event) {
     const editor = worldVisualEditorState;
     if (!editor) return false;
     const project = saveStructuredVisualEditorDraft();
-    const request = String(document.getElementById('world-visual-structured-request')?.value || '').trim();
+    const request = String(document.getElementById('ew-world-visual-structured-request')?.value || '').trim();
     if (!request) return ExperimentalWorldsHost.notify('Describe the image or the change you want first.', 'error');
     const button = event?.currentTarget;
     const original = button?.textContent || '';
@@ -706,7 +706,7 @@ async function runStructuredVisualAuthoring(operation, event) {
 function moveStructuredVisualObject(project, card, direction) {
     if (!project || !card) return;
     saveStructuredVisualEditorDraft();
-    const index = [...document.querySelectorAll('#world-visual-structured-objects > [data-object-id]')].indexOf(card);
+    const index = [...document.querySelectorAll('#ew-world-visual-structured-objects > [data-object-id]')].indexOf(card);
     const next = index + direction;
     if (index < 0 || next < 0 || next >= project.structuredDocument.objects.length) return;
     [project.structuredDocument.objects[index], project.structuredDocument.objects[next]] = [project.structuredDocument.objects[next], project.structuredDocument.objects[index]];
@@ -725,42 +725,42 @@ function saveWorldVisualEditorFields() {
     // never read them back as active authoring truth.
     const structured = project.structuredDocument;
     const setCompat = (id, value) => { const input = document.getElementById(id); if (input) input.value = value == null ? '' : value; };
-    setCompat('world-visual-primary', structured.short_description || target.appearance || target.visualDescription || '');
-    setCompat('world-visual-prompt', project.imageIntent?.authoredPrompt || structured.short_description || '');
-    setCompat('world-visual-subject-pose', structured.objects[0]?.pose || '');
-    setCompat('world-visual-subject-expression', structured.objects[0]?.expression || '');
-    setCompat('world-visual-subject-action', structured.objects[0]?.action || '');
-    setCompat('world-visual-subject-orientation', structured.objects[0]?.orientation || '');
-    setCompat('world-visual-subject-location', structured.objects[0]?.location || '');
-    setCompat('world-visual-framing', 'auto');
-    setCompat('world-visual-look-styleMedium', structured.style_medium);
-    setCompat('world-visual-look-lightingConditions', structured.lighting.conditions);
-    setCompat('world-visual-look-colorScheme', structured.aesthetics.color_scheme);
-    setCompat('world-visual-look-depthOfField', structured.photographic_characteristics.depth_of_field);
-    setCompat('world-visual-look-focus', structured.photographic_characteristics.focus);
-    setCompat('world-visual-look-lensFocalLength', structured.photographic_characteristics.lens_focal_length);
-    const aspect = normalizedWorldVisualAspect(document.getElementById('world-visual-aspect').value,
+    setCompat('ew-world-visual-primary', structured.short_description || target.appearance || target.visualDescription || '');
+    setCompat('ew-world-visual-prompt', project.imageIntent?.authoredPrompt || structured.short_description || '');
+    setCompat('ew-world-visual-subject-pose', structured.objects[0]?.pose || '');
+    setCompat('ew-world-visual-subject-expression', structured.objects[0]?.expression || '');
+    setCompat('ew-world-visual-subject-action', structured.objects[0]?.action || '');
+    setCompat('ew-world-visual-subject-orientation', structured.objects[0]?.orientation || '');
+    setCompat('ew-world-visual-subject-location', structured.objects[0]?.location || '');
+    setCompat('ew-world-visual-framing', 'auto');
+    setCompat('ew-world-visual-look-styleMedium', structured.style_medium);
+    setCompat('ew-world-visual-look-lightingConditions', structured.lighting.conditions);
+    setCompat('ew-world-visual-look-colorScheme', structured.aesthetics.color_scheme);
+    setCompat('ew-world-visual-look-depthOfField', structured.photographic_characteristics.depth_of_field);
+    setCompat('ew-world-visual-look-focus', structured.photographic_characteristics.focus);
+    setCompat('ew-world-visual-look-lensFocalLength', structured.photographic_characteristics.lens_focal_length);
+    const aspect = normalizedWorldVisualAspect(document.getElementById('ew-world-visual-aspect').value,
         editor.kind === 'npc' ? '3:4' : '16:9');
-    const resolution = normalizedWorldVisualResolution(document.getElementById('world-visual-resolution').value,
+    const resolution = normalizedWorldVisualResolution(document.getElementById('ew-world-visual-resolution').value,
         editor.kind === 'npc' ? 1200 : 1600);
-    const correction = document.getElementById('world-visual-correction').value.trim().slice(0, 4000);
+    const correction = document.getElementById('ew-world-visual-correction').value.trim().slice(0, 4000);
     if (editor.kind === 'npc') {
-        target.appearance = document.getElementById('world-visual-primary').value.trim().slice(0, 8000);
-        target.imagePrompt = document.getElementById('world-visual-prompt').value.trim().slice(0, 8000);
-        target.visuals.portraitFraming = document.getElementById('world-visual-framing').value;
+        target.appearance = document.getElementById('ew-world-visual-primary').value.trim().slice(0, 8000);
+        target.imagePrompt = document.getElementById('ew-world-visual-prompt').value.trim().slice(0, 8000);
+        target.visuals.portraitFraming = document.getElementById('ew-world-visual-framing').value;
         target.visuals.imageIntent = normalizeWorldImageIntent(target.visuals.imageIntent, target.imagePrompt, target.visuals.imageIntent?.context || '');
         target.visuals.imageIntent.authoredPrompt = target.imagePrompt;
         target.visuals.framing = normalizeWorldImageFraming({
             ...(target.visuals.framing || {}), mode: target.visuals.portraitFraming,
-            pose: document.getElementById('world-visual-subject-pose')?.value || '',
-            expression: document.getElementById('world-visual-subject-expression')?.value || '',
-            action: document.getElementById('world-visual-subject-action')?.value || '',
-            orientation: document.getElementById('world-visual-subject-orientation')?.value || '',
-            placementInFrame: document.getElementById('world-visual-subject-location')?.value || ''
+            pose: document.getElementById('ew-world-visual-subject-pose')?.value || '',
+            expression: document.getElementById('ew-world-visual-subject-expression')?.value || '',
+            action: document.getElementById('ew-world-visual-subject-action')?.value || '',
+            orientation: document.getElementById('ew-world-visual-subject-orientation')?.value || '',
+            placementInFrame: document.getElementById('ew-world-visual-subject-location')?.value || ''
         }, {}, {});
         target.visuals.look = normalizeWorldImageLook(target.visuals.look, worldImageGuide(editor.world) || {});
         ['styleMedium', 'lightingConditions', 'colorScheme', 'depthOfField', 'focus', 'lensFocalLength'].forEach(key => {
-            const input = document.getElementById(`world-visual-look-${key}`);
+            const input = document.getElementById(`ew-world-visual-look-${key}`);
             if (input) target.visuals.look[key] = String(input.value || '').trim().slice(0, 1200);
         });
         target.visuals.portraitAspectRatio = aspect;
@@ -770,18 +770,18 @@ function saveWorldVisualEditorFields() {
         // travel to a generator.
         target.visuals.portraitSubjectGuide = normalizeWorldVisualSubjectGuide(
             WORLD_VISUAL_SUBJECT_FIELDS.reduce((subject, field) => {
-                subject[field.key] = document.getElementById(`world-visual-subject-${field.key}`)?.value || '';
+                subject[field.key] = document.getElementById(`ew-world-visual-subject-${field.key}`)?.value || '';
                 return subject;
             }, target.visuals.portraitSubjectGuide || {}));
         // Stable identity fields: the person, never the preset or outfit.
         target.visuals.portraitIdentityGuide = normalizeWorldVisualIdentityGuide(
             WORLD_VISUAL_IDENTITY_FIELDS.reduce((identity, field) => {
-                identity[field.key] = document.getElementById(`world-visual-identity-${field.key}`)?.value || '';
+                identity[field.key] = document.getElementById(`ew-world-visual-identity-${field.key}`)?.value || '';
                 return identity;
             }, target.visuals.portraitIdentityGuide || {}));
     } else {
-        target.visualDescription = document.getElementById('world-visual-primary').value.trim().slice(0, 8000);
-        target.imagePrompt = document.getElementById('world-visual-prompt').value.trim().slice(0, 8000);
+        target.visualDescription = document.getElementById('ew-world-visual-primary').value.trim().slice(0, 8000);
+        target.imagePrompt = document.getElementById('ew-world-visual-prompt').value.trim().slice(0, 8000);
         target.visuals.backgroundAspectRatio = aspect;
         target.visuals.backgroundResolution = resolution;
         target.visuals.backgroundCorrection = correction;
@@ -792,9 +792,9 @@ function saveWorldVisualEditorFields() {
 function refreshWorldVisualEditorAfterAsset() {
     const editor = worldVisualEditorState;
     if (!editor) return;
-    document.getElementById('world-visual-crop-x').value = '50';
-    document.getElementById('world-visual-crop-y').value = '50';
-    document.getElementById('world-visual-crop-zoom').value = '100';
+    document.getElementById('ew-world-visual-crop-x').value = '50';
+    document.getElementById('ew-world-visual-crop-y').value = '50';
+    document.getElementById('ew-world-visual-crop-zoom').value = '100';
     updateWorldVisualCropPreview();
     if (editor.kind === 'npc') renderWorldEntities();
     else renderWorldLocations();
@@ -802,7 +802,7 @@ function refreshWorldVisualEditorAfterAsset() {
 
 function closeWorldVisualEditor() {
     const editor = worldVisualEditorState;
-    document.getElementById('world-visual-editor-modal')?.classList.add('hidden');
+    document.getElementById('ew-world-visual-editor-modal')?.classList.add('hidden');
     worldVisualEditorState = null;
     if (editor?.kind === 'npc') renderWorldEntities();
     else if (editor?.kind === 'location') renderWorldLocations();
@@ -820,17 +820,17 @@ function openWorldOutfitManager(entity, world) {
     if (!entity || !world) return;
     worldOutfitManagerState = { entity, world, editId: '' };
     ensureWorldOutfitManagerBound();
-    document.getElementById('world-outfit-name').value = '';
-    document.getElementById('world-outfit-description').value = '';
-    document.getElementById('world-outfit-instruction').value = '';
-    const addBtn = document.getElementById('world-outfit-add');
+    document.getElementById('ew-world-outfit-name').value = '';
+    document.getElementById('ew-world-outfit-description').value = '';
+    document.getElementById('ew-world-outfit-instruction').value = '';
+    const addBtn = document.getElementById('ew-world-outfit-add');
     if (addBtn) addBtn.textContent = 'Add outfit';
     renderWorldOutfitManager();
-    document.getElementById('world-outfit-manager-modal')?.classList.remove('hidden');
+    document.getElementById('ew-world-outfit-manager-modal')?.classList.remove('hidden');
 }
 
 function closeWorldOutfitManager() {
-    document.getElementById('world-outfit-manager-modal')?.classList.add('hidden');
+    document.getElementById('ew-world-outfit-manager-modal')?.classList.add('hidden');
     worldOutfitManagerState = null;
     renderWorldEntities();
 }
@@ -842,9 +842,9 @@ function renderWorldOutfitManager() {
     entity.visuals = experimentalIsPlainObject(entity.visuals) ? entity.visuals : {};
     const outfits = worldOutfits(entity);
     const currentId = String(entity.visuals.currentOutfitId || '');
-    const header = document.getElementById('world-outfit-manager-title');
+    const header = document.getElementById('ew-world-outfit-manager-title');
     if (header) header.textContent = `${entity.name || 'Character'} — outfits`;
-    const list = document.getElementById('world-outfit-list');
+    const list = document.getElementById('ew-world-outfit-list');
     if (!list) return;
     list.innerHTML = outfits.length ? outfits.map(outfit => {
         const thumbnails = (outfit.imageAssetIds || []).map(assetId => {
@@ -890,10 +890,10 @@ function renderWorldOutfitManager() {
         });
         row.querySelector('.world-outfit-edit')?.addEventListener('click', () => {
             manager.editId = outfit.id;
-            document.getElementById('world-outfit-name').value = outfit.name;
-            document.getElementById('world-outfit-description').value = outfit.description;
-            document.getElementById('world-outfit-instruction').value = '';
-            const addBtn = document.getElementById('world-outfit-add');
+            document.getElementById('ew-world-outfit-name').value = outfit.name;
+            document.getElementById('ew-world-outfit-description').value = outfit.description;
+            document.getElementById('ew-world-outfit-instruction').value = '';
+            const addBtn = document.getElementById('ew-world-outfit-add');
             if (addBtn) addBtn.textContent = 'Save changes';
         });
         row.querySelector('.world-outfit-delete')?.addEventListener('click', () => {
@@ -911,15 +911,15 @@ function renderWorldOutfitManager() {
 function ensureWorldOutfitManagerBound() {
     if (worldOutfitManagerBound) return;
     worldOutfitManagerBound = true;
-    const modal = document.getElementById('world-outfit-manager-modal');
-    document.getElementById('world-outfit-manager-close').onclick = closeWorldOutfitManager;
+    const modal = document.getElementById('ew-world-outfit-manager-modal');
+    document.getElementById('ew-world-outfit-manager-close').onclick = closeWorldOutfitManager;
     modal.addEventListener('click', event => { if (event.target === modal) closeWorldOutfitManager(); });
-    document.getElementById('world-outfit-add').onclick = () => {
+    document.getElementById('ew-world-outfit-add').onclick = () => {
         const manager = worldOutfitManagerState;
         if (!manager) return;
         const entity = manager.entity;
-        const name = String(document.getElementById('world-outfit-name')?.value || '').trim().slice(0, 80);
-        const description = String(document.getElementById('world-outfit-description')?.value || '').trim().slice(0, 1200);
+        const name = String(document.getElementById('ew-world-outfit-name')?.value || '').trim().slice(0, 80);
+        const description = String(document.getElementById('ew-world-outfit-description')?.value || '').trim().slice(0, 1200);
         if (!name || !description) return ExperimentalWorldsHost.notify('An outfit needs a name and a description.', 'error');
         entity.visuals = experimentalIsPlainObject(entity.visuals) ? entity.visuals : {};
         const outfits = worldOutfits(entity);
@@ -945,29 +945,29 @@ function ensureWorldOutfitManagerBound() {
             }
         }
         entity.visuals.outfits = outfits;
-        document.getElementById('world-outfit-name').value = '';
-        document.getElementById('world-outfit-description').value = '';
-        document.getElementById('world-outfit-instruction').value = '';
-        const addBtn = document.getElementById('world-outfit-add');
+        document.getElementById('ew-world-outfit-name').value = '';
+        document.getElementById('ew-world-outfit-description').value = '';
+        document.getElementById('ew-world-outfit-instruction').value = '';
+        const addBtn = document.getElementById('ew-world-outfit-add');
         if (addBtn) addBtn.textContent = 'Add outfit';
         renderWorldOutfitManager();
     };
-    document.getElementById('world-outfit-ai').onclick = async event => {
+    document.getElementById('ew-world-outfit-ai').onclick = async event => {
         const manager = worldOutfitManagerState;
         if (!manager) return;
         const button = event.currentTarget;
         const original = button.textContent;
-        const instruction = String(document.getElementById('world-outfit-instruction')?.value || '').trim();
-        const name = String(document.getElementById('world-outfit-name')?.value || '').trim();
+        const instruction = String(document.getElementById('ew-world-outfit-instruction')?.value || '').trim();
+        const name = String(document.getElementById('ew-world-outfit-name')?.value || '').trim();
         if (!instruction && !name) return ExperimentalWorldsHost.notify('Name the outfit or write an instruction first.', 'error');
         button.disabled = true;
         button.textContent = 'Designing…';
         try {
-            const text = await completeFieldWithAI('world-outfit-description',
-                String(document.getElementById('world-outfit-description')?.value || ''),
+            const text = await completeFieldWithAI('ew-world-outfit-description',
+                String(document.getElementById('ew-world-outfit-description')?.value || ''),
                 manager.entity, manager.world, 'fill',
                 [instruction, name ? `Outfit name: ${name}` : ''].filter(Boolean).join('\n'));
-            document.getElementById('world-outfit-description').value = text;
+            document.getElementById('ew-world-outfit-description').value = text;
             ExperimentalWorldsHost.notify('Outfit designed. Review it, then add it.', 'success');
         } catch (error) {
             ExperimentalWorldsHost.notify(`Outfit design failed — ${error.message}`, 'error');
@@ -1005,7 +1005,7 @@ async function refineWorldVisualPromptWithAI(event, instructionOverride = '', op
     const editor = worldVisualEditorState;
     if (!editor) return false;
     const button = event.currentTarget;
-    const instruction = String(instructionOverride || document.getElementById('world-visual-correction').value || '').trim();
+    const instruction = String(instructionOverride || document.getElementById('ew-world-visual-correction').value || '').trim();
     if (!instruction) { ExperimentalWorldsHost.notify('Write the revision you want applied before refining the prompt.', 'error'); return false; }
     const originalButtonText = button.textContent;
     const isNpc = editor.kind === 'npc';
@@ -1029,11 +1029,11 @@ async function refineWorldVisualPromptWithAI(event, instructionOverride = '', op
         { key: 'imagePrompt', label: 'Authored image prompt', max: 8000 }
     ];
     const inputFor = key => {
-        if (key === 'appearance' || key === 'visualDescription') return document.getElementById('world-visual-primary');
-        if (key === 'imagePrompt') return document.getElementById('world-visual-prompt');
+        if (key === 'appearance' || key === 'visualDescription') return document.getElementById('ew-world-visual-primary');
+        if (key === 'imagePrompt') return document.getElementById('ew-world-visual-prompt');
         const [prefix, fieldKey] = key.split('_', 2);
-        if (prefix === 'identity') return document.getElementById(`world-visual-identity-${fieldKey}`);
-        if (prefix === 'staging') return document.getElementById(`world-visual-subject-${fieldKey}`);
+        if (prefix === 'identity') return document.getElementById(`ew-world-visual-identity-${fieldKey}`);
+        if (prefix === 'staging') return document.getElementById(`ew-world-visual-subject-${fieldKey}`);
         return null;
     };
     button.disabled = true;
@@ -1112,7 +1112,7 @@ async function runWorldVisual4D(event) {
     const editor = worldVisualEditorState;
     if (!editor || editor.kind !== 'npc') return;
     const button = event.currentTarget;
-    const complaint = String(document.getElementById('world-visual-correction')?.value || '').trim();
+    const complaint = String(document.getElementById('ew-world-visual-correction')?.value || '').trim();
     const assetId = worldVisualEditorAssetId(editor);
     const asset = worldMediaAsset(editor.world, assetId);
     if (!asset) return ExperimentalWorldsHost.notify('Generate or select an image before running 4D.', 'error');
@@ -1153,10 +1153,10 @@ async function runWorldVisual4D(event) {
         const detail = changes.map(change => `${change.domain}.${change.field}\n${change.before || '(blank)'}\n→ ${change.after || '(blank)'}\n${change.reason || ''}`).join('\n\n');
         ExperimentalWorldsHost.confirmModal('Increase 4D 3D 3D 3D 3 — proposed correction', detail, async () => {
             const inputFor = change => {
-                if (change.domain === 'imageIntent' && change.field === 'authoredPrompt') return document.getElementById('world-visual-prompt');
-                if (change.domain === 'character' && change.field === 'appearance') return document.getElementById('world-visual-primary');
-                if (change.domain === 'framing') return document.getElementById(`world-visual-subject-${change.field}`) || document.getElementById('world-visual-framing');
-                if (change.domain === 'look') return document.getElementById(`world-visual-look-${change.field}`);
+                if (change.domain === 'imageIntent' && change.field === 'authoredPrompt') return document.getElementById('ew-world-visual-prompt');
+                if (change.domain === 'character' && change.field === 'appearance') return document.getElementById('ew-world-visual-primary');
+                if (change.domain === 'framing') return document.getElementById(`ew-world-visual-subject-${change.field}`) || document.getElementById('ew-world-visual-framing');
+                if (change.domain === 'look') return document.getElementById(`ew-world-visual-look-${change.field}`);
                 return null;
             };
             changes.forEach(change => {
@@ -1179,7 +1179,7 @@ async function runWorldVisualGeneration(revisionOnly, event) {
     const editor = worldVisualEditorState;
     if (!editor) return;
     const button = event.currentTarget;
-    const correction = document.getElementById('world-visual-correction').value.trim();
+    const correction = document.getElementById('ew-world-visual-correction').value.trim();
     const referenceImage = revisionOnly
         ? worldMediaSource(editor.world, worldVisualEditorAssetId(editor)) : '';
     const sourceAsset = revisionOnly ? worldMediaAsset(editor.world, worldVisualEditorAssetId(editor)) : null;
@@ -1198,8 +1198,8 @@ async function runWorldVisualGeneration(revisionOnly, event) {
         const options = {
             revisionOnly,
             correction: revisionOnly ? correction : '',
-            aspectRatio: document.getElementById('world-visual-aspect').value,
-            maxDimension: Number(document.getElementById('world-visual-resolution').value),
+            aspectRatio: document.getElementById('ew-world-visual-aspect').value,
+            maxDimension: Number(document.getElementById('ew-world-visual-resolution').value),
             referenceImage,
             imageGuide: activeGuide,
             visualProject,
@@ -1241,7 +1241,7 @@ async function runWorldVisualGeneration(revisionOnly, event) {
         // so the record immediately shows a deliberate crop of the new image.
         if (editor.kind === 'npc') await deriveWorldNpcPortraitDisplay(editor.world, editor.target);
         if (revisionOnly) {
-            const correctionInput = document.getElementById('world-visual-correction');
+            const correctionInput = document.getElementById('ew-world-visual-correction');
             correctionInput.value = '';
             autoSizeWorldVisualTextarea(correctionInput);
             if (editor.kind === 'npc') editor.target.visuals.portraitCorrection = '';
@@ -1276,13 +1276,13 @@ async function runWorldVisualCropFill(event) {
         // fill toward their selected display aspect.
         const aspectRatio = editor.kind === 'npc'
             ? WORLD_NPC_PORTRAIT_DISPLAY_ASPECT
-            : document.getElementById('world-visual-aspect').value;
-        const maxDimension = Number(document.getElementById('world-visual-resolution').value);
+            : document.getElementById('ew-world-visual-aspect').value;
+        const maxDimension = Number(document.getElementById('ew-world-visual-resolution').value);
         const fillReference = await frameWorldVisualForFill(source, aspectRatio, maxDimension,
-            document.getElementById('world-visual-crop-x').value,
-            document.getElementById('world-visual-crop-y').value,
-            Number(document.getElementById('world-visual-crop-zoom').value) / 100);
-        const correctionInput = document.getElementById('world-visual-correction');
+            document.getElementById('ew-world-visual-crop-x').value,
+            document.getElementById('ew-world-visual-crop-y').value,
+            Number(document.getElementById('ew-world-visual-crop-zoom').value) / 100);
+        const correctionInput = document.getElementById('ew-world-visual-correction');
         const prompt = worldVisualCropFillPrompt(editor, aspectRatio, correctionInput.value);
         const visualProject = ensureWorldVisualProject(editor.world, editor.target, editor.kind === 'npc' ? 'character' : 'location');
         const assetId = await generateWorldVisual(editor.world, prompt, {
@@ -1328,17 +1328,17 @@ async function runWorldVisualCropFill(event) {
 function ensureWorldVisualEditorBound() {
     if (worldVisualEditorBound) return;
     worldVisualEditorBound = true;
-    const modal = document.getElementById('world-visual-editor-modal');
-    document.getElementById('world-visual-editor-close').onclick = closeWorldVisualEditor;
-    document.getElementById('world-visual-save-close').onclick = async () => {
+    const modal = document.getElementById('ew-world-visual-editor-modal');
+    document.getElementById('ew-world-visual-editor-close').onclick = closeWorldVisualEditor;
+    document.getElementById('ew-world-visual-save-close').onclick = async () => {
         const editor = worldVisualEditorState;
         try {
             saveWorldVisualEditorFields();
             if (editor?.kind === 'npc' && worldVisualEditorAssetId(editor)) {
                 const displayId = await deriveWorldNpcPortraitDisplay(editor.world, editor.target,
-                    document.getElementById('world-visual-crop-x').value,
-                    document.getElementById('world-visual-crop-y').value,
-                    Number(document.getElementById('world-visual-crop-zoom').value) / 100);
+                    document.getElementById('ew-world-visual-crop-x').value,
+                    document.getElementById('ew-world-visual-crop-y').value,
+                    Number(document.getElementById('ew-world-visual-crop-zoom').value) / 100);
                 if (!displayId) throw new Error('The profile frame could not be derived from this image.');
                 pruneWorldMediaAssets(editor.world);
             }
@@ -1350,18 +1350,18 @@ function ensureWorldVisualEditorBound() {
         }
     };
     modal.addEventListener('click', event => { if (event.target === modal) closeWorldVisualEditor(); });
-    document.getElementById('world-visual-previous').onclick = () => selectWorldVisualVariant(worldVisualEditorState, -1);
-    document.getElementById('world-visual-next').onclick = () => selectWorldVisualVariant(worldVisualEditorState, 1);
-    document.getElementById('world-visual-variant-filter').onchange = event => {
+    document.getElementById('ew-world-visual-previous').onclick = () => selectWorldVisualVariant(worldVisualEditorState, -1);
+    document.getElementById('ew-world-visual-next').onclick = () => selectWorldVisualVariant(worldVisualEditorState, 1);
+    document.getElementById('ew-world-visual-variant-filter').onchange = event => {
         if (!worldVisualEditorState) return;
         worldVisualEditorState.variantFilter = event.target.value || 'all';
         applyWorldVisualVariantFilter();
     };
-    document.getElementById('world-visual-export').onclick = exportCurrentWorldVisual;
-    const structuredFormTab = document.getElementById('world-visual-document-form-tab');
-    const structuredJsonTab = document.getElementById('world-visual-document-json-tab');
-    const structuredForm = document.getElementById('world-visual-document-form');
-    const structuredJson = document.getElementById('world-visual-document-json');
+    document.getElementById('ew-world-visual-export').onclick = exportCurrentWorldVisual;
+    const structuredFormTab = document.getElementById('ew-world-visual-document-form-tab');
+    const structuredJsonTab = document.getElementById('ew-world-visual-document-json-tab');
+    const structuredForm = document.getElementById('ew-world-visual-document-form');
+    const structuredJson = document.getElementById('ew-world-visual-document-json');
     const setStructuredEditorTab = tab => {
         const json = tab === 'json';
         if (structuredForm) structuredForm.hidden = json;
@@ -1370,16 +1370,16 @@ function ensureWorldVisualEditorBound() {
         structuredJsonTab?.classList.toggle('is-active', json);
         if (json && worldVisualEditorState) {
             const project = saveStructuredVisualEditorDraft();
-            const raw = document.getElementById('world-visual-raw-json');
+            const raw = document.getElementById('ew-world-visual-raw-json');
             if (raw && project) raw.value = JSON.stringify(project.structuredDocument, null, 2);
         }
     };
     if (structuredFormTab) structuredFormTab.onclick = () => setStructuredEditorTab('form');
     if (structuredJsonTab) structuredJsonTab.onclick = () => setStructuredEditorTab('json');
-    document.getElementById('world-visual-structured-compile')?.addEventListener('click', event => runStructuredVisualAuthoring('compile', event));
-    document.getElementById('world-visual-structured-refine')?.addEventListener('click', event => runStructuredVisualAuthoring('refine', event));
-    document.getElementById('world-visual-structured-rebuild')?.addEventListener('click', event => runStructuredVisualAuthoring('rebuild', event));
-    document.getElementById('world-visual-add-object')?.addEventListener('click', () => {
+    document.getElementById('ew-world-visual-structured-compile')?.addEventListener('click', event => runStructuredVisualAuthoring('compile', event));
+    document.getElementById('ew-world-visual-structured-refine')?.addEventListener('click', event => runStructuredVisualAuthoring('refine', event));
+    document.getElementById('ew-world-visual-structured-rebuild')?.addEventListener('click', event => runStructuredVisualAuthoring('rebuild', event));
+    document.getElementById('ew-world-visual-add-object')?.addEventListener('click', () => {
         const editor = worldVisualEditorState;
         if (!editor) return;
         const project = saveStructuredVisualEditorDraft();
@@ -1389,17 +1389,17 @@ function ensureWorldVisualEditorBound() {
         project.objectOrder.push(id);
         project.hordeObjectMetadata[id] = { salience: 'secondary', kind: 'scene_object', binding: { characterId: '', outfitId: '', source: 'structured_editor' } };
         renderStructuredVisualDocumentEditor(project);
-        const cards = document.querySelectorAll('#world-visual-structured-objects > [data-object-id]');
+        const cards = document.querySelectorAll('#ew-world-visual-structured-objects > [data-object-id]');
         cards[cards.length - 1]?.scrollIntoView({ block: 'nearest' });
         cards[cards.length - 1]?.querySelector('[data-field="description"]')?.focus({ preventScroll: true });
     });
-    document.getElementById('world-visual-apply-json')?.addEventListener('click', async event => {
+    document.getElementById('ew-world-visual-apply-json')?.addEventListener('click', async event => {
         const editor = worldVisualEditorState;
         if (!editor) return;
-        const status = document.getElementById('world-visual-json-status');
+        const status = document.getElementById('ew-world-visual-json-status');
         try {
             const project = saveStructuredVisualEditorDraft();
-            const next = parseStructuredVisualJson(document.getElementById('world-visual-raw-json')?.value || '');
+            const next = parseStructuredVisualJson(document.getElementById('ew-world-visual-raw-json')?.value || '');
             const previous = project.structuredDocument;
             project.structuredDocument = next;
             while (project.objectOrder.length < next.objects.length) project.objectOrder.push(newStructuredVisualObjectId('obj'));
@@ -1414,11 +1414,11 @@ function ensureWorldVisualEditorBound() {
             ExperimentalWorldsHost.notify(`Structured JSON was not applied — ${error.message}`, 'error');
         }
     });
-    ['world-visual-primary', 'world-visual-prompt', 'world-visual-correction']
+    ['ew-world-visual-primary', 'ew-world-visual-prompt', 'ew-world-visual-correction']
         .forEach(id => document.getElementById(id)?.addEventListener('input', event => autoSizeWorldVisualTextarea(event.currentTarget)));
-    ['world-visual-aspect', 'world-visual-resolution', 'world-visual-crop-x', 'world-visual-crop-y', 'world-visual-crop-zoom']
+    ['ew-world-visual-aspect', 'ew-world-visual-resolution', 'ew-world-visual-crop-x', 'ew-world-visual-crop-y', 'ew-world-visual-crop-zoom']
         .forEach(id => { const field = document.getElementById(id); if (field) field.oninput = updateWorldVisualCropPreview; });
-    document.getElementById('world-visual-apply-crop').onclick = async event => {
+    document.getElementById('ew-world-visual-apply-crop').onclick = async event => {
         const editor = worldVisualEditorState;
         if (!editor) return;
         const button = event.currentTarget;
@@ -1433,20 +1433,20 @@ function ensureWorldVisualEditorBound() {
                 // image stays current so reopening the editor always offers
                 // the full, uncropped picture for further edits.
                 const displayId = await deriveWorldNpcPortraitDisplay(editor.world, editor.target,
-                    document.getElementById('world-visual-crop-x').value,
-                    document.getElementById('world-visual-crop-y').value,
-                    Number(document.getElementById('world-visual-crop-zoom').value) / 100);
+                    document.getElementById('ew-world-visual-crop-x').value,
+                    document.getElementById('ew-world-visual-crop-y').value,
+                    Number(document.getElementById('ew-world-visual-crop-zoom').value) / 100);
                 if (!displayId) throw new Error('The profile frame could not be derived from this image.');
                 pruneWorldMediaAssets(editor.world);
                 refreshWorldVisualEditorAfterAsset();
                 ExperimentalWorldsHost.notify(`Profile frame saved for ${editor.target.name}. The full image is preserved for future edits.`, 'success');
             } else {
                 const cropped = await cropWorldVisual(source,
-                    document.getElementById('world-visual-aspect').value,
-                    document.getElementById('world-visual-resolution').value,
-                    document.getElementById('world-visual-crop-x').value,
-                    document.getElementById('world-visual-crop-y').value,
-                    Number(document.getElementById('world-visual-crop-zoom').value) / 100);
+                    document.getElementById('ew-world-visual-aspect').value,
+                    document.getElementById('ew-world-visual-resolution').value,
+                    document.getElementById('ew-world-visual-crop-x').value,
+                    document.getElementById('ew-world-visual-crop-y').value,
+                    Number(document.getElementById('ew-world-visual-crop-zoom').value) / 100);
                 const assetId = addWorldMediaAsset(editor.world, cropped,
                     'location_background', editor.target.name,
                     { prompt: 'Manual crop of an existing portable world visual.' });
@@ -1462,12 +1462,12 @@ function ensureWorldVisualEditorBound() {
             button.textContent = 'Apply Crop';
         }
     };
-    document.getElementById('world-visual-crop-fill').onclick = event => runWorldVisualCropFill(event);
-    document.getElementById('world-visual-regenerate').onclick = event => runWorldVisualGeneration(false, event);
-    document.getElementById('world-visual-revise').onclick = event => runWorldVisualGeneration(true, event);
-    document.getElementById('world-visual-refine-prompt').onclick = event => refineWorldVisualPromptWithAI(event);
-    document.getElementById('world-visual-4d').onclick = event => runWorldVisual4D(event);
-    document.getElementById('world-visual-save-identity-reference').onclick = () => {
+    document.getElementById('ew-world-visual-crop-fill').onclick = event => runWorldVisualCropFill(event);
+    document.getElementById('ew-world-visual-regenerate').onclick = event => runWorldVisualGeneration(false, event);
+    document.getElementById('ew-world-visual-revise').onclick = event => runWorldVisualGeneration(true, event);
+    document.getElementById('ew-world-visual-refine-prompt').onclick = event => refineWorldVisualPromptWithAI(event);
+    document.getElementById('ew-world-visual-4d').onclick = event => runWorldVisual4D(event);
+    document.getElementById('ew-world-visual-save-identity-reference').onclick = () => {
         const editor = worldVisualEditorState;
         if (!editor || editor.kind !== 'npc') return;
         const assetId = worldVisualEditorAssetId(editor);
@@ -1479,8 +1479,8 @@ function ensureWorldVisualEditorBound() {
         ].slice(-12);
         ExperimentalWorldsHost.notify('Selected image saved as a character identity reference.', 'success');
     };
-    document.getElementById('world-visual-apply-outfit').onclick = event => applyWorldOutfitAndGenerate(event);
-    document.getElementById('world-visual-new-outfit').onclick = () => {
+    document.getElementById('ew-world-visual-apply-outfit').onclick = event => applyWorldOutfitAndGenerate(event);
+    document.getElementById('ew-world-visual-new-outfit').onclick = () => {
         const editor = worldVisualEditorState;
         if (!editor || editor.kind !== 'npc') return;
         const outfit = createBlankWorldOutfit(editor.target);
@@ -1488,12 +1488,12 @@ function ensureWorldVisualEditorBound() {
         selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false });
         renderWorldEntities();
         renderWorldVisualActiveOutfit();
-        const outfitList = document.getElementById('world-visual-active-outfit-list');
+        const outfitList = document.getElementById('ew-world-visual-active-outfit-list');
         scrollWorldOutfitListToEnd(outfitList);
         focusWorldOutfitName(outfitList, outfit.id);
         ExperimentalWorldsHost.notify('Blank outfit added and selected. Fill in its description on the character screen.', 'success');
     };
-    const outfitSelect = document.getElementById('world-visual-outfit-select');
+    const outfitSelect = document.getElementById('ew-world-visual-outfit-select');
     if (outfitSelect) outfitSelect.onchange = event => {
         const editor = worldVisualEditorState;
         if (!editor || editor.kind !== 'npc' || !event.target.value) return;
@@ -1502,7 +1502,7 @@ function ensureWorldVisualEditorBound() {
         saveWorldVisualEditorFields();
         renderWorldVisualOutfitGallery();
     };
-    const leftOutfitSelect = document.getElementById('world-visual-left-outfit-select');
+    const leftOutfitSelect = document.getElementById('ew-world-visual-left-outfit-select');
     if (leftOutfitSelect) leftOutfitSelect.onchange = event => {
         const editor = worldVisualEditorState;
         if (!editor || editor.kind !== 'npc' || !event.target.value) return;
@@ -1512,7 +1512,7 @@ function ensureWorldVisualEditorBound() {
         saveWorldVisualEditorFields();
         updateWorldVisualCropPreview();
     };
-    const briefPicker = document.getElementById('world-visual-brief-preset');
+    const briefPicker = document.getElementById('ew-world-visual-brief-preset');
     if (briefPicker) briefPicker.onchange = () => {
         const editor = worldVisualEditorState;
         const name = briefPicker.value;
@@ -1522,8 +1522,8 @@ function ensureWorldVisualEditorBound() {
         // Visual editor generation is intentionally fixed to the portrait
         // source aspect. Presets may still carry legacy aspect metadata, but
         // it must not reintroduce a per-image aspect choice.
-        document.getElementById('world-visual-aspect').value = '3:4';
-        if (preset.framing && editor.kind === 'npc') document.getElementById('world-visual-framing').value = preset.framing;
+        document.getElementById('ew-world-visual-aspect').value = '3:4';
+        if (preset.framing && editor.kind === 'npc') document.getElementById('ew-world-visual-framing').value = preset.framing;
         saveWorldVisualEditorFields();
         const project = ensureWorldVisualProject(editor.world, editor.target, editor.kind === 'npc' ? 'character' : 'location');
         const doc = project.structuredDocument;
@@ -1552,16 +1552,16 @@ function ensureWorldVisualEditorBound() {
         renderStructuredVisualDocumentEditor(project);
         updateWorldVisualCropPreview();
         briefPicker.value = name;
-        const activeLabel = document.getElementById('world-visual-brief-active');
+        const activeLabel = document.getElementById('ew-world-visual-brief-active');
         if (activeLabel) activeLabel.textContent = `Active: ${name}`;
         ExperimentalWorldsHost.notify(`Applied visual brief “${name}” to ${editor.target.name || 'this visual'}.`, 'success');
     };
-    document.getElementById('world-visual-brief-save-as').onclick = async event => {
+    document.getElementById('ew-world-visual-brief-save-as').onclick = async event => {
         const editor = worldVisualEditorState;
         if (!editor) return;
         const button = event.currentTarget;
-        const picker = document.getElementById('world-visual-brief-preset');
-        const input = document.getElementById('world-visual-brief-save-name');
+        const picker = document.getElementById('ew-world-visual-brief-preset');
+        const input = document.getElementById('ew-world-visual-brief-save-name');
         const selected = String(picker?.value || editor.activeBriefName || '').trim();
         const name = String(input?.value || '').trim().slice(0, 100) || `${selected || 'Visual brief'} - modified`;
         const presets = normalizeImageGuidePresets(ExperimentalWorldsState.globalSettings.imageGuidePresets);
@@ -1569,8 +1569,8 @@ function ensureWorldVisualEditorBound() {
             ...(worldImageGuide(editor.world) || {}),
             ...(selected ? (presets[selected] || {}) : {})
         });
-        const aspect = document.getElementById('world-visual-aspect')?.value || '';
-        const framing = editor.kind === 'npc' ? document.getElementById('world-visual-framing')?.value || '' : '';
+        const aspect = document.getElementById('ew-world-visual-aspect')?.value || '';
+        const framing = editor.kind === 'npc' ? document.getElementById('ew-world-visual-framing')?.value || '' : '';
         const project = saveStructuredVisualEditorDraft();
         const structured = project ? experimentalSafeJsonClone(project.structuredDocument) : null;
         presets[name] = {
@@ -1594,7 +1594,7 @@ function ensureWorldVisualEditorBound() {
             picker.value = name;
         }
         if (input) input.value = '';
-        const activeLabel = document.getElementById('world-visual-brief-active');
+        const activeLabel = document.getElementById('ew-world-visual-brief-active');
         if (activeLabel) activeLabel.textContent = `Active: ${name}`;
         button.disabled = true;
         try { await ExperimentalWorldsHost.persistSharedSettings(); ExperimentalWorldsHost.notify(`Saved global visual brief “${name}”.`, 'success'); }
@@ -1602,27 +1602,27 @@ function ensureWorldVisualEditorBound() {
         finally { button.disabled = false; }
     };
 
-    const stage = document.getElementById('world-visual-crop-stage');
+    const stage = document.getElementById('ew-world-visual-crop-stage');
     let drag = null;
     stage.onpointerdown = event => {
         if (!worldVisualEditorState
             || !worldMediaSource(worldVisualEditorState.world, worldVisualEditorAssetId())) return;
         drag = {
             x: event.clientX, y: event.clientY,
-            focusX: Number(document.getElementById('world-visual-crop-x').value),
-            focusY: Number(document.getElementById('world-visual-crop-y').value)
+            focusX: Number(document.getElementById('ew-world-visual-crop-x').value),
+            focusY: Number(document.getElementById('ew-world-visual-crop-y').value)
         };
         stage.setPointerCapture(event.pointerId);
     };
     stage.onpointermove = event => {
         if (!drag) return;
-        const image = document.getElementById('world-visual-crop-image');
+        const image = document.getElementById('ew-world-visual-crop-image');
         const overflowX = Math.max(1, image.offsetWidth - stage.clientWidth);
         const overflowY = Math.max(1, image.offsetHeight - stage.clientHeight);
         const nextX = Math.max(0, Math.min(100, drag.focusX - (event.clientX - drag.x) / overflowX * 100));
         const nextY = Math.max(0, Math.min(100, drag.focusY - (event.clientY - drag.y) / overflowY * 100));
-        document.getElementById('world-visual-crop-x').value = String(nextX);
-        document.getElementById('world-visual-crop-y').value = String(nextY);
+        document.getElementById('ew-world-visual-crop-x').value = String(nextX);
+        document.getElementById('ew-world-visual-crop-y').value = String(nextY);
         updateWorldVisualCropPreview();
     };
     stage.onpointerup = stage.onpointercancel = () => { drag = null; };
@@ -1639,23 +1639,23 @@ function openWorldVisualEditor(world, target, kind) {
         activeBriefName: kind === 'npc' ? String(target.visuals.portraitBriefId || '') : ''
     };
     const npc = kind === 'npc';
-    document.getElementById('world-visual-editor-title').textContent = `${target.name || 'Untitled'} - ${npc ? 'portrait' : 'location visual'}`;
+    document.getElementById('ew-world-visual-editor-title').textContent = `${target.name || 'Untitled'} - ${npc ? 'portrait' : 'location visual'}`;
     // Write only the text node: the label also hosts the AI-fill buttons, and
     // assigning textContent to the whole label would delete them.
-    (document.getElementById('world-visual-primary-label-text')
-        || document.getElementById('world-visual-primary-label')).textContent =
+    (document.getElementById('ew-world-visual-primary-label-text')
+        || document.getElementById('ew-world-visual-primary-label')).textContent =
         npc ? 'Appearance & public impression' : 'Visible physical description';
-    document.getElementById('world-visual-primary').value = npc
+    document.getElementById('ew-world-visual-primary').value = npc
         ? target.appearance || target.description || ''
         : target.visualDescription || target.description || '';
-    document.getElementById('world-visual-prompt').value = target.visuals.imageIntent?.authoredPrompt || target.imagePrompt || '';
-    document.getElementById('world-visual-framing-field').classList.toggle('hidden', !npc);
-    document.getElementById('world-visual-framing').value = npc
+    document.getElementById('ew-world-visual-prompt').value = target.visuals.imageIntent?.authoredPrompt || target.imagePrompt || '';
+    document.getElementById('ew-world-visual-framing-field').classList.toggle('hidden', !npc);
+    document.getElementById('ew-world-visual-framing').value = npc
         ? target.visuals.framing?.mode || target.visuals.portraitFraming || 'auto' : 'auto';
     // Optional per-character subject fields (NPC portraits only). Hidden for
     // locations, where the world guide and the location's own description
     // already carry the subject layer.
-    const subjectField = document.getElementById('world-visual-subject-field');
+    const subjectField = document.getElementById('ew-world-visual-subject-field');
     if (subjectField) {
         subjectField.classList.toggle('hidden', !npc);
         if (npc) {
@@ -1664,36 +1664,36 @@ function openWorldVisualEditor(world, target, kind) {
                 ...(target.visuals.framing || {})
             });
             WORLD_VISUAL_SUBJECT_FIELDS.forEach(field => {
-                const input = document.getElementById(`world-visual-subject-${field.key}`);
+                const input = document.getElementById(`ew-world-visual-subject-${field.key}`);
                 if (input) input.value = subjectGuide[field.key];
             });
         }
     }
-    const lookField = document.getElementById('world-visual-look-field');
+    const lookField = document.getElementById('ew-world-visual-look-field');
     if (lookField) {
         lookField.classList.toggle('hidden', !npc);
         if (npc) {
             const look = normalizeWorldImageLook(target.visuals.look, worldImageGuide(world) || {});
             ['styleMedium', 'lightingConditions', 'colorScheme', 'depthOfField', 'focus', 'lensFocalLength'].forEach(key => {
-                const input = document.getElementById(`world-visual-look-${key}`);
+                const input = document.getElementById(`ew-world-visual-look-${key}`);
                 if (input) input.value = look[key] || '';
             });
         }
     }
     // Stable identity fields belong to the person, not to presets or outfits.
-    const identityField = document.getElementById('world-visual-identity-field');
+    const identityField = document.getElementById('ew-world-visual-identity-field');
     if (identityField) {
         identityField.classList.toggle('hidden', !npc);
         if (npc) {
             const identityGuide = normalizeWorldVisualIdentityGuide(target.visuals.portraitIdentityGuide);
             WORLD_VISUAL_IDENTITY_FIELDS.forEach(field => {
-                const input = document.getElementById(`world-visual-identity-${field.key}`);
+                const input = document.getElementById(`ew-world-visual-identity-${field.key}`);
                 if (input) input.value = identityGuide[field.key];
             });
         }
     }
-    const outfitField = document.getElementById('world-visual-outfit-field');
-    const outfitSelect = document.getElementById('world-visual-outfit-select');
+    const outfitField = document.getElementById('ew-world-visual-outfit-field');
+    const outfitSelect = document.getElementById('ew-world-visual-outfit-select');
     if (outfitField && outfitSelect) {
         outfitField.classList.toggle('hidden', !npc);
         if (npc) {
@@ -1705,32 +1705,32 @@ function openWorldVisualEditor(world, target, kind) {
     }
     // The shared AI instruction is transient: one authoring session, cleared
     // when the editor opens so stale instructions never leak into a fill.
-    const aiInstruction = document.getElementById('world-visual-ai-instruction');
+    const aiInstruction = document.getElementById('ew-world-visual-ai-instruction');
     if (aiInstruction) aiInstruction.value = '';
     // Visual brief presets apply the world's look plus this visual's aspect
     // and framing in one action.
-    const briefPicker = document.getElementById('world-visual-brief-preset');
+    const briefPicker = document.getElementById('ew-world-visual-brief-preset');
     if (briefPicker) {
         const presets = normalizeImageGuidePresets(ExperimentalWorldsState.globalSettings.imageGuidePresets);
         const names = Object.keys(presets).sort((a, b) => a.localeCompare(b));
         briefPicker.innerHTML = `<option value="">Apply a visual brief…</option>`
             + names.map(name => `<option value="${experimentalEscapeHTML(name)}">${experimentalEscapeHTML(name)}</option>`).join('');
         briefPicker.value = npc ? String(worldVisualEditorState.activeBriefName || '') : '';
-        const activeLabel = document.getElementById('world-visual-brief-active');
+        const activeLabel = document.getElementById('ew-world-visual-brief-active');
         if (activeLabel) activeLabel.textContent = briefPicker.value ? `Active: ${briefPicker.value}` : 'No preset selected';
     }
     // All editor generations use the same 3:4 vertical source. The profile
     // portrait is derived separately as a square crop; the source remains
     // whole and editable in the outfit/profile cards.
-    document.getElementById('world-visual-aspect').value = '3:4';
-    document.getElementById('world-visual-resolution').value = String(npc
+    document.getElementById('ew-world-visual-aspect').value = '3:4';
+    document.getElementById('ew-world-visual-resolution').value = String(npc
         ? normalizedWorldVisualResolution(target.visuals.portraitResolution, 1200)
         : normalizedWorldVisualResolution(target.visuals.backgroundResolution, 1600));
     renderStructuredVisualDocumentEditor(visualProject);
-    document.getElementById('world-visual-correction').value = npc
+    document.getElementById('ew-world-visual-correction').value = npc
         ? target.visuals.portraitCorrection || '' : target.visuals.backgroundCorrection || '';
     worldVisualHistory(world, target, kind);
-    const variantFilter = document.getElementById('world-visual-variant-filter');
+    const variantFilter = document.getElementById('ew-world-visual-variant-filter');
     if (variantFilter) {
         if (npc) {
             const outfits = worldOutfits(target);
@@ -1744,26 +1744,26 @@ function openWorldVisualEditor(world, target, kind) {
         }
         variantFilter.value = 'all';
     }
-    document.getElementById('world-visual-regenerate').textContent = 'Generate new';
-    document.getElementById('world-visual-crop-x').value = '50';
-    document.getElementById('world-visual-crop-y').value = '50';
-    document.getElementById('world-visual-crop-zoom').value = '100';
+    document.getElementById('ew-world-visual-regenerate').textContent = 'Generate new';
+    document.getElementById('ew-world-visual-crop-x').value = '50';
+    document.getElementById('ew-world-visual-crop-y').value = '50';
+    document.getElementById('ew-world-visual-crop-zoom').value = '100';
     // Sparkle affordances for the two authored text fields. Story-born
     // characters arrive with prose but no image prompt, so this is the only
     // route by which they ever become illustratable.
     {
-        const primaryEl = document.getElementById('world-visual-primary');
-        const promptEl = document.getElementById('world-visual-prompt');
-        const primarySlot = document.getElementById('ai-visual-primary-actions');
-        const promptSlot = document.getElementById('ai-visual-prompt-actions');
+        const primaryEl = document.getElementById('ew-world-visual-primary');
+        const promptEl = document.getElementById('ew-world-visual-prompt');
+        const primarySlot = document.getElementById('ew-ai-visual-primary-actions');
+        const promptSlot = document.getElementById('ew-ai-visual-prompt-actions');
         if (primarySlot) primarySlot.innerHTML = aiFieldButtonMarkup(
-            'world-visual-primary', String(primaryEl?.value || ''), 'world-visual-primary');
+            'ew-world-visual-primary', String(primaryEl?.value || ''), 'ew-world-visual-primary');
         if (promptSlot) promptSlot.innerHTML = aiFieldButtonMarkup(
-            'ent-image-prompt', String(promptEl?.value || ''), 'world-visual-prompt');
-        bindAiFieldButtons(document.getElementById('world-visual-editor-modal'), () => target, world,
-            () => document.getElementById('world-visual-ai-instruction')?.value || '');
+            'ent-image-prompt', String(promptEl?.value || ''), 'ew-world-visual-prompt');
+        bindAiFieldButtons(document.getElementById('ew-world-visual-editor-modal'), () => target, world,
+            () => document.getElementById('ew-world-visual-ai-instruction')?.value || '');
     }
-    document.getElementById('world-visual-editor-modal').classList.remove('hidden');
+    document.getElementById('ew-world-visual-editor-modal').classList.remove('hidden');
     renderWorldVisualActiveOutfit();
     requestAnimationFrame(() => {
         autoSizeWorldVisualTextareas();

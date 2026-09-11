@@ -12,6 +12,8 @@ const HORDE_STUDIO_VERSION = '17.4.0';
 const HORDE_STUDIO_RELEASED_AT = '2026-09-04T14:05:54+05:00';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
+const EXPERIMENTAL_WORLDS_MODE_ID = 'experimentalWorlds';
+const EXPERIMENTAL_WORLDS_ACK_REVISION = 1;
 let worldMediaDirty = false;
 
 const HordeDB = {
@@ -1164,6 +1166,11 @@ let state = {
         companionAlwaysOnMinimumMinutes: 120,
         companionAlwaysOnClientId: '',
         companionAgencyPaused: false,
+        experimentalWorlds: {
+            enabled: false,
+            acknowledgementRevision: 0,
+            acknowledgedAt: ''
+        },
         labs: window.HordeLabs ? window.HordeLabs.normalizeConfig({}) : { enabled: false, policies: { chat: 'off', worlds: 'off', humans: 'off' } }
         // userPersona moved to personas
     },
@@ -1862,6 +1869,11 @@ function repairLoadedState() {
         companionAlwaysOnMinimumMinutes: 120,
         companionAlwaysOnClientId: '',
         companionAgencyPaused: false,
+        experimentalWorlds: {
+            enabled: false,
+            acknowledgementRevision: 0,
+            acknowledgedAt: ''
+        },
         labs: window.HordeLabs ? window.HordeLabs.normalizeConfig({}) : { enabled: false, policies: { chat: 'off', worlds: 'off', humans: 'off' } },
         ...loadedGlobalSettings
     };
@@ -1904,6 +1916,15 @@ function repairLoadedState() {
     state.globalSettings.companionAlwaysOnMinimumMinutes = livingClamp(Math.round(Number(state.globalSettings.companionAlwaysOnMinimumMinutes) || 120), 15, 1440);
     state.globalSettings.companionAlwaysOnClientId = String(state.globalSettings.companionAlwaysOnClientId || '').slice(0, 120);
     state.globalSettings.companionAgencyPaused = state.globalSettings.companionAgencyPaused === true;
+    const experimentalWorldsPreference = isPlainObject(state.globalSettings.experimentalWorlds)
+        ? state.globalSettings.experimentalWorlds : {};
+    state.globalSettings.experimentalWorlds = {
+        enabled: experimentalWorldsPreference.enabled === true,
+        acknowledgementRevision: Number.isSafeInteger(experimentalWorldsPreference.acknowledgementRevision)
+            ? Math.max(0, experimentalWorldsPreference.acknowledgementRevision) : 0,
+        acknowledgedAt: typeof experimentalWorldsPreference.acknowledgedAt === 'string'
+            ? experimentalWorldsPreference.acknowledgedAt.slice(0, 80) : ''
+    };
     state.globalSettings.mcpBridgeUrl = normalizeMcpBridgeUrl(state.globalSettings.mcpBridgeUrl);
     state.globalSettings.localImageBaseUrl = normalizeLoopbackUrl(
         state.globalSettings.localImageBaseUrl, 'http://127.0.0.1:7860/v1');
@@ -2037,7 +2058,8 @@ let pendingWorkspaceState = null;
 function validWorkspaceView(value) {
     return ['library', 'chat', 'studio', 'worlds', 'worldStudio', 'worldPlay',
         'videoWorlds', 'videoWorldStudio', 'videoWorldPlay', 'companions',
-        'companionStudio', 'companionChat', 'multiplayer', 'multiplayerSession', 'pip'].includes(value);
+        'companionStudio', 'companionChat', 'multiplayer', 'multiplayerSession', 'pip',
+        EXPERIMENTAL_WORLDS_MODE_ID].includes(value);
 }
 
 function workspaceString(value) {
@@ -2142,6 +2164,14 @@ function persistWorkspaceSoon() {
 
 window.addEventListener('pagehide', () => {
     if (!workspaceRestoring) writeWorkspaceStateMirror();
+    if (experimentalWorldsRuntime?.mode) {
+        try {
+            const workspace = experimentalWorldsRuntime.mode.captureWorkspace();
+            experimentalWorldsRuntime.workspace = structuredClone(workspace);
+            void persistExperimentalWorkspaceNow(workspace, 'pagehide');
+            experimentalWorldsRuntime.mode.abortOwnedOperations();
+        } catch (_) { /* The repository already holds the last completed write. */ }
+    }
 });
 
 async function loadWorkspaceState() {
@@ -2208,6 +2238,11 @@ function restoreLastWorkspace() {
     const lastWorldStudioId = state.lastWorldStudioId;
     workspaceRestoring = true;
     try {
+        if (lastView === EXPERIMENTAL_WORLDS_MODE_ID) {
+            if (experimentalWorldsAcknowledged()) switchView(EXPERIMENTAL_WORLDS_MODE_ID);
+            else switchView('worlds');
+            return;
+        }
         if (lastView === 'worldPlay' && workspaceEntityExists(state.worlds, state.activeWorldId)) {
             enterWorld(state.activeWorldId, lastWorldSessionId);
             return;
@@ -3951,7 +3986,8 @@ const views = {
     videoWorldPlay: document.getElementById('video-world-play-view'),
     companions: document.getElementById('companions-view'),
     companionStudio: document.getElementById('companion-studio-view'),
-    companionChat: document.getElementById('companion-chat-view')
+    companionChat: document.getElementById('companion-chat-view'),
+    experimentalWorlds: document.getElementById('experimental-worlds-root')
 };
 
 const navBtns = document.querySelectorAll('.nav-item');
@@ -5204,6 +5240,418 @@ async function labsProposal(task, envelope, mode, options = {}) {
     }
 }
 
+// --- Optional Experimental Worlds mode -----------------------------------
+// Native 17.4 owns the document and all stock modes. Experimental Worlds is a
+// lazy ES module with one host route, an owned root/portal, and an independent
+// repository. Nothing in this section aliases or replaces stock World state.
+const EXPERIMENTAL_WORLDS_STYLES = Object.freeze([
+    ['experimental-scenepulse-vendor-style', 'experiences/experimental-worlds/scenepulse/vendor/ScenePulse/style.css?v=6.27.20-2888d0d'],
+    ['experimental-scenepulse-host-style', 'experiences/experimental-worlds/styles/scene-pulse-worlds.css?v=17.4.0-ew-namespace-1'],
+    ['experimental-worlds-visual-style', 'experiences/experimental-worlds/styles/world-visuals-and-sidecar.css?v=17.4.0-ew-namespace-1'],
+    ['experimental-worlds-private-style', 'experiences/experimental-worlds/styles/experimental-worlds-isolated.css?v=17.4.0-ew-namespace-1']
+]);
+const experimentalWorldsStyleLoads = new Map();
+const EXPERIMENTAL_WORLDS_SHARED_KEYS = new Set([
+    'globalSettings', 'roleplayOSSources', 'systemPresets', 'chatContinuities'
+]);
+const experimentalWorldsRuntime = {
+    epoch: 0,
+    modulePromise: null,
+    mode: null,
+    workspace: null,
+    workspaceTimer: null,
+    activationPromise: null,
+    deactivationPromise: null,
+    active: false
+};
+
+function experimentalWorldsPreference() {
+    const preference = isPlainObject(state.globalSettings?.experimentalWorlds)
+        ? state.globalSettings.experimentalWorlds : {};
+    return {
+        enabled: preference.enabled === true,
+        acknowledgementRevision: Number(preference.acknowledgementRevision) || 0,
+        acknowledgedAt: String(preference.acknowledgedAt || '')
+    };
+}
+
+function experimentalWorldsAcknowledged() {
+    const preference = experimentalWorldsPreference();
+    return preference.enabled && preference.acknowledgementRevision >= EXPERIMENTAL_WORLDS_ACK_REVISION;
+}
+
+async function setExperimentalWorldsStylesEnabled(enabled) {
+    if (!enabled) {
+        EXPERIMENTAL_WORLDS_STYLES.forEach(([id]) => {
+            document.getElementById(id)?.remove();
+            experimentalWorldsStyleLoads.get(id)?.resolve();
+            experimentalWorldsStyleLoads.delete(id);
+        });
+        return;
+    }
+    await Promise.all(EXPERIMENTAL_WORLDS_STYLES.map(([id, href]) => {
+        const existing = document.getElementById(id);
+        if (existing) return experimentalWorldsStyleLoads.get(id)?.promise || Promise.resolve();
+        let resolveLoad;
+        let rejectLoad;
+        const promise = new Promise((resolve, reject) => {
+            resolveLoad = resolve;
+            rejectLoad = reject;
+        });
+        experimentalWorldsStyleLoads.set(id, { promise, resolve: resolveLoad });
+        const link = document.createElement('link');
+        link.id = id;
+        link.rel = 'stylesheet';
+        link.href = href;
+        link.dataset.owner = 'experimental-worlds';
+        link.onload = () => {
+            experimentalWorldsStyleLoads.delete(id);
+            resolveLoad();
+        };
+        link.onerror = () => {
+            experimentalWorldsStyleLoads.delete(id);
+            link.remove();
+            rejectLoad(new Error(`Experimental stylesheet could not load: ${href.split('?')[0]}`));
+        };
+        document.head.appendChild(link);
+        return promise;
+    }));
+}
+
+function experimentalWorldsDiagnostics() {
+    return {
+        apiCalls: Array.isArray(window.__hordeApiCallTraces) ? window.__hordeApiCallTraces : [],
+        runtimeErrors: Array.isArray(window.__hordeRuntimeErrors) ? window.__hordeRuntimeErrors : []
+    };
+}
+
+async function persistExperimentalWorkspaceNow(workspace, reason = 'workspace-change') {
+    const bootstrap = window.ExperimentalWorldsPersistenceBootstrap;
+    if (typeof bootstrap?.persistWorkspace !== 'function') return false;
+    await bootstrap.persistWorkspace(structuredClone(workspace || { route: 'library' }), reason);
+    return true;
+}
+
+function scheduleExperimentalWorkspacePersist(workspace) {
+    experimentalWorldsRuntime.workspace = structuredClone(workspace || { route: 'library' });
+    clearTimeout(experimentalWorldsRuntime.workspaceTimer);
+    // Begin the IndexedDB write immediately. The persistence bootstrap
+    // serializes these writes, so rapid tab/World changes stay ordered without
+    // risking that a reload cancels an unstarted debounce.
+    const write = persistExperimentalWorkspaceNow(experimentalWorldsRuntime.workspace, 'workspace-change')
+        .catch(error => console.warn('Could not preserve the Experimental Worlds workspace:', error));
+    experimentalWorldsRuntime.workspaceTimer = null;
+    return write;
+}
+
+function createExperimentalWorldsVisualServices() {
+    return {
+        markExperimentalWorldMediaChanged: () => { window.__hordeExperimentalWorldMediaDirty = true; },
+        imageModelFallback: provider => companionImageModelFallback(provider),
+        getImageOutputModels: (...args) => getCompanionOutputModels(...args),
+        rankImageModels: (...args) => rankCompanionImageModels(...args),
+        imageModelInfo: model => companionImageModelInfo(model),
+        getImageEndpoints: (...args) => getCompanionImageEndpoints(...args),
+        chooseImageEndpoint: (...args) => chooseCompanionImageEndpoint(...args),
+        imageCapabilities: (...args) => companionImageCapabilities(...args),
+        applyImageParameters: (...args) => applyCompanionImageParameters(...args),
+        async requestImage(...args) {
+            requestCompanionPhoto.lastResult = null;
+            const image = await requestCompanionPhoto(...args);
+            return { image, result: requestCompanionPhoto.lastResult || {} };
+        },
+        normalizeGeneratedImageSource: (...args) => normalizeGeneratedImageSource(...args),
+        stabilizeGeneratedImageSource: (...args) => stabilizeGeneratedImageSource(...args)
+    };
+}
+
+function createExperimentalWorldsHostServices() {
+    return Object.freeze({
+        fetch: window.fetch.bind(window),
+        confirm: (...args) => window.confirm(...args),
+        prompt: (...args) => window.prompt(...args),
+        readShared(key) {
+            if (!EXPERIMENTAL_WORLDS_SHARED_KEYS.has(key)) {
+                throw new Error(`Experimental Worlds requested an unapproved host state key: ${String(key)}`);
+            }
+            return state[key];
+        },
+        writeShared(key, value) {
+            if (!EXPERIMENTAL_WORLDS_SHARED_KEYS.has(key)) {
+                throw new Error(`Experimental Worlds attempted to write an unapproved host state key: ${String(key)}`);
+            }
+            state[key] = value;
+        },
+        sharedState: Object.freeze({}),
+        navigateHost(destination) {
+            // Experimental library/studio/play are consumed inside the mode.
+            // Only explicit native destinations may cross this boundary.
+            if (destination === 'multiplayer') switchView('multiplayer');
+        },
+        onWorkspaceChange: scheduleExperimentalWorkspacePersist,
+        restoreGeneration: () => window.ExperimentalWorldsPersistenceBootstrap?.captureRestoreGeneration?.() || '',
+        persistSharedContinuities: continuities => HordeDB.set('chatContinuities', continuities),
+        markMediaChanged: () => { window.__hordeExperimentalWorldMediaDirty = true; },
+        mediaDirty: () => window.__hordeExperimentalWorldMediaDirty === true,
+        restoreMediaDirty: value => { window.__hordeExperimentalWorldMediaDirty = value === true; },
+        worldLoadWarning: () => '',
+        notify: (...args) => showToast(...args),
+        confirmModal: (...args) => showConfirmModal(...args),
+        apiBase: () => apiBase(),
+        authHeaders: () => authHeaders(),
+        attributionHeaders: () => attributionHeaders(),
+        hasApiCredentials: () => hasApiCredentials(),
+        isLocalProvider: (...args) => isLocalProvider(...args),
+        cloudProviderName: (...args) => cloudProviderName(...args),
+        normalizedProviderId: (...args) => normalizedProviderId(...args),
+        providerApiBase: (...args) => providerApiBase(...args),
+        providerAuthHeaders: (...args) => providerAuthHeaders(...args),
+        providerAttributionHeaders: (...args) => providerAttributionHeaders(...args),
+        providerHasCredentials: (...args) => providerHasCredentials(...args),
+        providerDisplayName: (...args) => providerDisplayName(...args),
+        applyOpenRouterRouting: (...args) => window.HordeOpenRouterRouting?.apply?.(...args) || args[0],
+        sanitizeMessagesForProvider: (...args) => sanitizeMessagesForProvider(...args),
+        humanizeApiError: (...args) => humanizeApiError(...args),
+        localGenerationIdleTimeoutMs: () => localGenerationIdleTimeoutMs(),
+        // OpenRouter itself has a hard 45-second cutoff; preserve the accepted
+        // host behavior rather than inventing a second longer cloud timer.
+        cloudGenerationIdleTimeoutMs: () => 45_000,
+        diagnostics: experimentalWorldsDiagnostics,
+        applyRegexScripts: (...args) => applyRegexScripts(...args),
+        replaceMacros: (...args) => replaceMacros(...args),
+        getAllPresets: (...args) => getAllPresets(...args),
+        isPresetPromptEnabled: (...args) => isPresetPromptEnabled(...args),
+        getOrderedPresetPrompts: (...args) => getOrderedPresetPrompts(...args),
+        getEmbedding: (...args) => getEmbedding(...args),
+        persistSharedSettings: () => persistGlobalSettingsOnly(),
+        modelCatalog: () => Array.isArray(openRouterModels) ? openRouterModels : [],
+        getModelCatalog: ({ force = false } = {}) => getOpenRouterModels(force),
+        // Rolling recovery is publication-based, not an authority check that
+        // blocks a local turn. A completed assistant turn merely marks it dirty.
+        ensureSharedLibraryFresh: async () => true,
+        recordSharedLibraryAssistantTurn: () => window.HordeRollingRecovery?.notePersisted?.(),
+        labsAvailable: () => Boolean(window.HordeLabs),
+        labsPolicy: scope => window.HordeLabs?.policyFor?.(scope) || 'off',
+        labsTaskCapabilities: () => window.HordeLabs?.taskCapabilities?.() || [],
+        labsProposal: (...args) => labsProposal(...args),
+        sharedPersonas: () => Array.isArray(state.personas) ? state.personas : [],
+        chatMemoryParticipantName: id => (state.characters || []).find(character => character.id === id)?.name || '',
+        chatMemoryContext: () => null,
+        activeSharedPersonaId: () => state.activePersonaId || '',
+        visualMedia: createExperimentalWorldsVisualServices()
+    });
+}
+
+async function loadExperimentalWorldsMode(expectedEpoch) {
+    if (experimentalWorldsRuntime.mode) return experimentalWorldsRuntime.mode;
+    if (!experimentalWorldsRuntime.modulePromise) {
+        experimentalWorldsRuntime.modulePromise = import(
+            './host-adapters/experimental-worlds/experimental-worlds-mode.js?v=17.4.0-native-integration-1'
+        ).catch(error => {
+            experimentalWorldsRuntime.modulePromise = null;
+            throw error;
+        });
+    }
+    const module = await experimentalWorldsRuntime.modulePromise;
+    if (expectedEpoch !== experimentalWorldsRuntime.epoch || state.view !== EXPERIMENTAL_WORLDS_MODE_ID) {
+        throw new DOMException('Experimental Worlds activation was superseded.', 'AbortError');
+    }
+    const root = document.getElementById('experimental-worlds-root');
+    const portalRoot = document.getElementById('experimental-worlds-portal-root');
+    const bootstrap = window.ExperimentalWorldsPersistenceBootstrap;
+    const repository = bootstrap?.runtimeRepository;
+    if (!root || !portalRoot || !repository) throw new Error('Experimental Worlds host roots or repository are unavailable.');
+    experimentalWorldsRuntime.mode = module.createExperimentalWorldsMode({
+        root,
+        portalRoot,
+        services: createExperimentalWorldsHostServices(),
+        repository
+    });
+    bootstrap.configure({
+        lifecycle: {
+            flush: async () => {
+                const workspace = experimentalWorldsRuntime.mode?.captureWorkspace?.();
+                if (workspace) await persistExperimentalWorkspaceNow(workspace, 'restore-quiesce');
+            },
+            quiesce: async () => {
+                await deactivateExperimentalWorlds({ persist: false });
+            },
+            resume: async () => {
+                experimentalWorldsRuntime.workspace = structuredClone(
+                    (await bootstrap.snapshot())?.workspace || { route: 'library' }
+                );
+                if (state.view === EXPERIMENTAL_WORLDS_MODE_ID && experimentalWorldsAcknowledged()) {
+                    await activateExperimentalWorlds();
+                }
+            }
+        }
+    });
+    return experimentalWorldsRuntime.mode;
+}
+
+async function activateExperimentalWorlds() {
+    if (experimentalWorldsRuntime.deactivationPromise) {
+        await experimentalWorldsRuntime.deactivationPromise;
+        if (state.view !== EXPERIMENTAL_WORLDS_MODE_ID) return;
+    }
+    if (experimentalWorldsRuntime.active) return;
+    if (experimentalWorldsRuntime.activationPromise) {
+        try { await experimentalWorldsRuntime.activationPromise; }
+        catch (_) { /* The current activation reports its own failure. */ }
+        if (state.view !== EXPERIMENTAL_WORLDS_MODE_ID || experimentalWorldsRuntime.active) return;
+    }
+    const task = (async () => {
+        const epoch = ++experimentalWorldsRuntime.epoch;
+        const root = document.getElementById('experimental-worlds-root');
+        if (root) {
+            root.innerHTML = '<div class="experimental-worlds-loading" role="status">Loading Experimental Worlds…</div>';
+            root.hidden = false;
+        }
+        try {
+            await setExperimentalWorldsStylesEnabled(true);
+            if (epoch !== experimentalWorldsRuntime.epoch || state.view !== EXPERIMENTAL_WORLDS_MODE_ID) return;
+            const mode = await loadExperimentalWorldsMode(epoch);
+            if (epoch !== experimentalWorldsRuntime.epoch || state.view !== EXPERIMENTAL_WORLDS_MODE_ID) return;
+            const savedWorkspace = experimentalWorldsRuntime.workspace
+                || (await window.ExperimentalWorldsPersistenceBootstrap.snapshot())?.workspace
+                || { route: 'library' };
+            if (epoch !== experimentalWorldsRuntime.epoch || state.view !== EXPERIMENTAL_WORLDS_MODE_ID) return;
+            await mode.restoreWorkspace(savedWorkspace);
+            if (epoch !== experimentalWorldsRuntime.epoch || state.view !== EXPERIMENTAL_WORLDS_MODE_ID) return;
+            await mode.activate(savedWorkspace.route || 'library');
+            if (epoch !== experimentalWorldsRuntime.epoch || state.view !== EXPERIMENTAL_WORLDS_MODE_ID) {
+                await deactivateExperimentalWorlds();
+                return;
+            }
+            experimentalWorldsRuntime.active = true;
+        } catch (error) {
+            if (error?.name === 'AbortError' || epoch !== experimentalWorldsRuntime.epoch) return;
+            experimentalWorldsDiagnostics().runtimeErrors.push({
+                source: 'experimental-worlds-activation',
+                message: error?.message || String(error),
+                at: new Date().toISOString()
+            });
+            console.error('Experimental Worlds failed to activate:', error);
+            showToast(`Experimental Worlds could not open: ${error.message || error}`, 'error');
+            if (state.view === EXPERIMENTAL_WORLDS_MODE_ID) switchView('worlds');
+        }
+    })();
+    experimentalWorldsRuntime.activationPromise = task;
+    try {
+        await task;
+    } finally {
+        if (experimentalWorldsRuntime.activationPromise === task) {
+            experimentalWorldsRuntime.activationPromise = null;
+        }
+    }
+}
+
+async function deactivateExperimentalWorlds({ persist = true } = {}) {
+    ++experimentalWorldsRuntime.epoch;
+    if (experimentalWorldsRuntime.deactivationPromise) {
+        return experimentalWorldsRuntime.deactivationPromise;
+    }
+    clearTimeout(experimentalWorldsRuntime.workspaceTimer);
+    void setExperimentalWorldsStylesEnabled(false);
+    const root = document.getElementById('experimental-worlds-root');
+    const portal = document.getElementById('experimental-worlds-portal-root');
+    if (root) { root.hidden = true; root.classList.add('hidden'); }
+    if (portal) { portal.hidden = true; portal.classList.add('hidden'); }
+    const task = (async () => {
+        const mode = experimentalWorldsRuntime.mode;
+        if (mode) {
+            try {
+                experimentalWorldsRuntime.workspace = mode.captureWorkspace();
+                await mode.deactivate({ persist });
+                if (persist) {
+                    await persistExperimentalWorkspaceNow(experimentalWorldsRuntime.workspace, 'workspace-deactivate');
+                }
+            } catch (error) {
+                console.warn('Experimental Worlds teardown did not complete cleanly:', error);
+            }
+        }
+        experimentalWorldsRuntime.active = false;
+    })();
+    experimentalWorldsRuntime.deactivationPromise = task;
+    try {
+        await task;
+    } finally {
+        if (experimentalWorldsRuntime.deactivationPromise === task) {
+            experimentalWorldsRuntime.deactivationPromise = null;
+        }
+    }
+}
+
+function removeExperimentalWorldsAcknowledgement() {
+    document.querySelector('.experimental-worlds-ack-overlay')?.remove();
+}
+
+function requestExperimentalWorldsAcknowledgement() {
+    if (experimentalWorldsAcknowledged()) {
+        switchView(EXPERIMENTAL_WORLDS_MODE_ID);
+        return;
+    }
+    if (document.querySelector('.experimental-worlds-ack-overlay')) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'experimental-worlds-ack-overlay';
+    overlay.innerHTML = `
+        <section class="experimental-worlds-ack-dialog" role="dialog" aria-modal="true" aria-labelledby="experimental-worlds-ack-title">
+            <span class="experimental-worlds-heading-badge">EXPERIMENTAL</span>
+            <h2 id="experimental-worlds-ack-title">Enable Experimental Worlds?</h2>
+            <p>This is a separate, evolving World runtime with its own library and timelines. Native 17.4 Worlds stays available and unchanged, and Experimental data is stored in its own database.</p>
+            <p>Turning it on loads the mode only when you open it. It does not import, inspect, or migrate data from any older Horde Studio origin.</p>
+            <label class="experimental-worlds-ack-check"><input type="checkbox"><span>I understand this mode is experimental and keeps separate World data.</span></label>
+            <div class="experimental-worlds-ack-actions"><button class="btn btn-ghost" data-action="cancel" type="button">Cancel</button><button class="btn btn-primary" data-action="enable" type="button" disabled>Enable in 5 seconds</button></div>
+        </section>`;
+    document.body.appendChild(overlay);
+    const checkbox = overlay.querySelector('input[type="checkbox"]');
+    const enable = overlay.querySelector('[data-action="enable"]');
+    let remaining = 5;
+    let elapsed = false;
+    const update = () => {
+        enable.disabled = !(elapsed && checkbox.checked);
+        enable.textContent = elapsed ? 'Enable Experimental Worlds' : `Enable in ${remaining} second${remaining === 1 ? '' : 's'}`;
+    };
+    update();
+    const timer = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) {
+            elapsed = true;
+            clearInterval(timer);
+        }
+        update();
+    }, 1000);
+    checkbox.addEventListener('change', update);
+    overlay.querySelector('[data-action="cancel"]').addEventListener('click', () => {
+        clearInterval(timer);
+        removeExperimentalWorldsAcknowledgement();
+    });
+    enable.addEventListener('click', async () => {
+        if (!elapsed || !checkbox.checked) return;
+        clearInterval(timer);
+        state.globalSettings.experimentalWorlds = {
+            enabled: true,
+            acknowledgementRevision: EXPERIMENTAL_WORLDS_ACK_REVISION,
+            acknowledgedAt: new Date().toISOString()
+        };
+        await persistGlobalSettingsOnly();
+        removeExperimentalWorldsAcknowledgement();
+        switchView(EXPERIMENTAL_WORLDS_MODE_ID);
+    });
+}
+
+async function resetExperimentalWorldsAcknowledgement() {
+    if (state.view === EXPERIMENTAL_WORLDS_MODE_ID) switchView('worlds');
+    else await deactivateExperimentalWorlds();
+    state.globalSettings.experimentalWorlds = {
+        enabled: false,
+        acknowledgementRevision: 0,
+        acknowledgedAt: ''
+    };
+    await persistGlobalSettingsOnly();
+    showToast('Experimental Worlds disabled. Its saved data was kept.', 'success');
+}
+
 function labsSocialContext(result) {
     const candidate = result?.candidate;
     if (!candidate || Number(candidate.confidence) < 0.55) return '';
@@ -5239,8 +5687,30 @@ async function init() {
     }
 
     await loadState();
+    // Resolve only the pre-domain-coordinator journal used by older 17.4
+    // builds. Current cross-domain recovery waits until every bootstrap
+    // persistence domain is registered below.
     await recoverInterruptedHostBackupRestore();
     registerHostBackupDomain();
+    const experimentalPersistence = window.ExperimentalWorldsPersistenceBootstrap;
+    if (experimentalPersistence) {
+        try {
+            await experimentalPersistence.start({
+                readFeatureState: () => ({
+                    enabled: experimentalWorldsPreference().enabled,
+                    acknowledgementVersion: experimentalWorldsPreference().acknowledgementRevision
+                })
+            });
+        } catch (error) {
+            console.error('Experimental Worlds persistence could not register:', error);
+            // If a cross-domain restore was interrupted, startup must fail
+            // closed rather than treating an absent domain as disposable.
+            const pendingRestore = window.HordeBackupDomains?.pending?.();
+            if (pendingRestore?.domains?.includes?.('experimental-worlds')) throw error;
+        }
+    }
+    window.HordeBackupDomains?.seal?.();
+    await window.HordeBackupDomains?.recoverPending?.();
     await window.HordeRollingRecovery?.setup?.();
     setupNavigation();
     setupStudioTabs();
@@ -5513,8 +5983,28 @@ function setupLibraryFilters() {
 // --- Navigation ---
 function setupNavigation() {
     navBtns.forEach(btn => {
-        if (btn.dataset.view) btn.onclick = () => switchView(btn.dataset.view);
+        if (!btn.dataset.view) return;
+        btn.onclick = () => {
+            if (btn.dataset.view === EXPERIMENTAL_WORLDS_MODE_ID) {
+                requestExperimentalWorldsAcknowledgement();
+                return;
+            }
+            switchView(btn.dataset.view);
+        };
     });
+
+    const resetExperimentalAcknowledgement = document.getElementById('reset-experimental-worlds-ack-btn');
+    if (resetExperimentalAcknowledgement) {
+        resetExperimentalAcknowledgement.onclick = () => {
+            showConfirmModal(
+                'Disable Experimental Worlds?',
+                'This removes the acknowledgement and unloads the mode. Experimental Worlds data is kept and remains included in global backups.',
+                resetExperimentalWorldsAcknowledgement,
+                'Disable mode',
+                'Keep enabled'
+            );
+        };
+    }
 
     const homeButton = document.getElementById('sidebar-home-btn');
     if (homeButton) homeButton.onclick = () => switchView('library');
@@ -5536,6 +6026,16 @@ function setupNavigation() {
 }
 
 function switchView(viewName) {
+    if (viewName === EXPERIMENTAL_WORLDS_MODE_ID && !experimentalWorldsAcknowledged()) {
+        requestExperimentalWorldsAcknowledgement();
+        return;
+    }
+    const previousView = state.view;
+    if (previousView === EXPERIMENTAL_WORLDS_MODE_ID && viewName !== EXPERIMENTAL_WORLDS_MODE_ID) {
+        // Invalidate the activation synchronously. Teardown may await owned
+        // work, but late module/provider completions lose their epoch now.
+        void deactivateExperimentalWorlds();
+    }
     state.view = viewName;
     persistWorkspaceSoon();
     
@@ -5561,6 +6061,11 @@ function switchView(viewName) {
             views[v].classList.toggle('hidden', v !== viewName);
         }
     });
+
+    if (viewName === EXPERIMENTAL_WORLDS_MODE_ID) {
+        void activateExperimentalWorlds();
+        return;
+    }
 
     // View specific logic
     if (viewName === 'library') renderLibrary();
@@ -12287,6 +12792,10 @@ async function applyHostBackupPayload(data) {
 async function recoverInterruptedHostBackupRestore() {
     const journal = await HordeDB.get('globalBackupRestoreJournal').catch(() => null);
     if (!journal || typeof journal !== 'object') return false;
+    // The current coordinator owns this journal and cannot make its atomic
+    // decision until every registered domain is present. Leave it untouched
+    // here; init() invokes HordeBackupDomains.recoverPending() after bootstrap.
+    if (journal.coordinatorManaged === true) return false;
     if (journal.phase === 'prepared' || journal.phase === 'committed') {
         if (!journal.preimage || typeof journal.preimage !== 'object') {
             throw new Error('A previous backup restore was interrupted without a recoverable preimage.');
@@ -12297,6 +12806,11 @@ async function recoverInterruptedHostBackupRestore() {
     return true;
 }
 
+let hostBackupRestoreTransactionId = null;
+let hostBackupRestoreStage = null;
+let hostBackupRestorePausedCompanionAgency = false;
+let hostBackupRestorePausedCompanionAlwaysOn = false;
+
 function registerHostBackupDomain() {
     if (!window.HordeBackupDomains || window.HordeBackupDomains.registered().includes('horde-studio-host')) return;
     window.HordeBackupDomains.register({
@@ -12304,7 +12818,28 @@ function registerHostBackupDomain() {
         schemaVersion: 1,
         serialize: serializeHostBackupPayload,
         validate: async payload => validateBackupData(safeJsonClone(payload)),
-        stage: async payload => safeJsonClone(payload),
+        quiesce: async transaction => {
+            const transactionId = String(transaction?.id || '');
+            if (!transactionId) throw new Error('Host restore quiescence requires a transaction id.');
+            if (hostBackupRestoreTransactionId) throw new Error('The host persistence domain is already quiesced.');
+            hostBackupRestoreTransactionId = transactionId;
+            generationController?.abort();
+            worldGenController?.abort();
+            hostBackupRestorePausedCompanionAgency = Boolean(companionAgencyTimer);
+            hostBackupRestorePausedCompanionAlwaysOn = Boolean(companionAlwaysOnTimer);
+            if (companionAgencyTimer) clearInterval(companionAgencyTimer);
+            if (companionAlwaysOnTimer) clearInterval(companionAlwaysOnTimer);
+            companionAgencyTimer = null;
+            companionAlwaysOnTimer = null;
+        },
+        stage: async (payload, transaction) => {
+            if (hostBackupRestoreTransactionId !== String(transaction?.id || '')) {
+                throw new Error('Host restore staging was attempted outside its quiesced transaction.');
+            }
+            hostBackupRestoreStage = safeJsonClone(payload);
+            return safeJsonClone(hostBackupRestoreStage);
+        },
+        discardStage: async () => { hostBackupRestoreStage = null; },
         capturePreimage: serializeHostBackupPayload,
         commit: applyHostBackupPayload,
         rollback: applyHostBackupPayload,
@@ -12321,12 +12856,48 @@ function registerHostBackupDomain() {
         journal: async (phase, transaction, preimage) => {
             if (phase === 'complete' || phase === 'rolled-back') {
                 await HordeDB.delete('globalBackupRestoreJournal').catch(() => {});
+                hostBackupRestoreStage = null;
                 return;
             }
             await HordeDB.set('globalBackupRestoreJournal', {
-                phase, transactionId: transaction.id, updatedAt: new Date().toISOString(),
-                preimage
+                coordinatorManaged: true,
+                phase,
+                transactionId: transaction.id,
+                restoreGeneration: transaction.restoreGeneration,
+                updatedAt: new Date().toISOString(),
+                preimage,
+                staged: hostBackupRestoreStage
             });
+        },
+        recover: async (transaction, decision) => {
+            const journal = await HordeDB.get('globalBackupRestoreJournal').catch(() => null);
+            if (!journal || journal.coordinatorManaged !== true) return;
+            if (journal.transactionId !== transaction.id) {
+                throw new Error('The host restore journal belongs to another transaction.');
+            }
+            if (decision === 'rollback') {
+                if (!journal.preimage || typeof journal.preimage !== 'object') {
+                    throw new Error('The interrupted host restore has no recoverable preimage.');
+                }
+                await applyHostBackupPayload(safeJsonClone(journal.preimage));
+            } else if (decision !== 'commit') {
+                throw new Error(`Unknown host restore recovery decision: ${String(decision)}`);
+            }
+            await HordeDB.delete('globalBackupRestoreJournal');
+            hostBackupRestoreStage = null;
+        },
+        resume: async transaction => {
+            const transactionId = String(transaction?.id || '');
+            if (hostBackupRestoreTransactionId && transactionId && hostBackupRestoreTransactionId !== transactionId) {
+                throw new Error('The host persistence domain refused to resume another transaction.');
+            }
+            const restartAgency = hostBackupRestorePausedCompanionAgency;
+            const restartAlwaysOn = hostBackupRestorePausedCompanionAlwaysOn;
+            hostBackupRestorePausedCompanionAgency = false;
+            hostBackupRestorePausedCompanionAlwaysOn = false;
+            hostBackupRestoreTransactionId = null;
+            if (restartAgency) startCompanionAgencyEngine();
+            if (restartAlwaysOn) startCompanionAlwaysOnRuntime();
         }
     });
 }
@@ -12357,39 +12928,27 @@ function importFullBackup(file) {
                 return;
             }
             const data = validateBackupData(parsed);
-            showConfirmModal('Restore Backup',
-                `This will REPLACE all current data with the backup from ${data._exportedAt ? data._exportedAt.slice(0, 10) : 'unknown date'} (${(data.characters || []).length} chat characters, ${(data.companions || []).length} virtual humans, ${(data.worlds || []).length} worlds). Continue?`,
+            const diagnosticManifest = {
+                _format: 'horde-studio-domain-backup',
+                _version: 3,
+                _exportedAt: data._exportedAt || new Date().toISOString(),
+                backupId: crypto.randomUUID(),
+                domains: {
+                    'horde-studio-host': {
+                        schemaVersion: 1,
+                        checksum: await window.HordeBackupDomains.checksum(data),
+                        metadata: { importedLegacyHostBackup: true },
+                        payload: data
+                    }
+                }
+            };
+            showConfirmModal('Restore legacy host backup only',
+                `This older backup contains no Experimental Worlds domain. It can be restored only as an explicit host-domain diagnostic restore. Chat, Virtual Human, native Worlds and other host data will be replaced; Experimental Worlds data will stay untouched. Continue?`,
                 async () => {
-                    if (data.companions === undefined) data.companions = [];
-                    if (data.companionThreads === undefined) data.companionThreads = {};
-                    if (data.companionTimelines === undefined) data.companionTimelines = {};
-                    if (data.activeCompanionId === undefined) data.activeCompanionId = null;
-                    if (data.videoWorlds === undefined) data.videoWorlds = [];
-                    if (data.videoWorldSessions === undefined) data.videoWorldSessions = {};
-                    if (data.activeVideoWorldId === undefined) data.activeVideoWorldId = null;
-                    if (data.globalSettings) data.globalSettings = redactGlobalSettingsCredentials(data.globalSettings);
-                    if (data.chatContinuities === undefined) data.chatContinuities = {};
-                    const keys = ['globalSettings', 'characters', 'chats', 'chatContinuities', 'activeSessionId',
-                        'personas', 'activePersonaId', 'rooms', 'theme', 'systemPresets', 'regexScripts',
-                        'worlds', 'worldInstances', 'activeWorldId', 'companions',
-                        'companionThreads', 'companionTimelines', 'activeCompanionId',
-                        'videoWorlds', 'videoWorldSessions', 'activeVideoWorldId'];
-                    keys.forEach(k => { if (data[k] !== undefined) state[k] = data[k]; });
-                    for (const [assetId, source] of Object.entries(data.companionVideoAssets || {})) {
-                        if (!/^data:video\/[a-z0-9.+-]+;base64,/i.test(source)) continue;
-                        const blob = await fetch(source).then(response => response.blob());
-                        await HordeDB.set(`companionVideoAsset:${assetId}`, blob);
-                    }
-                    for (const [assetId, source] of Object.entries(data.chatAssets || {})) {
-                        if (!/^data:(?:image|video|audio|application\/pdf)/i.test(source)) continue;
-                        const blob = await fetch(source).then(response => response.blob());
-                        await HordeDB.set(`chatAsset:${assetId}`, blob);
-                    }
-                    worldMediaDirty = true;
-                    await saveState();
-                    showToast('Backup restored! Reloading...', 'success');
+                    await window.HordeBackupDomains.restoreDomain(diagnosticManifest, 'horde-studio-host');
+                    showToast('Host-domain backup restored. Experimental Worlds was untouched. Reloading...', 'success');
                     setTimeout(() => window.location.reload(), 800);
-                }, 'Restore & Reload', 'Cancel');
+                }, 'Restore host only', 'Cancel');
         } catch (err) {
             showToast('Restore failed: ' + err.message, 'error');
         }
@@ -12400,14 +12959,21 @@ function importFullBackup(file) {
 function purgeAllData() {
     showConfirmModal('⚠️ Purge All Data', 'This will permanently delete all characters, settings, and memory. This action cannot be undone. Are you sure?', async () => {
         try {
-            localStorage.clear();
+            if (window.HordeBackupDomains?.pending?.()) {
+                throw new Error('An interrupted restore must be recovered before data can be purged. Reload Horde Studio first.');
+            }
+            await deactivateExperimentalWorlds({ persist: false });
             HordeDB.close();
+            await window.ExperimentalWorldsRepository?.destroyForExplicitGlobalPurge?.();
             await new Promise((resolve, reject) => {
                 const request = indexedDB.deleteDatabase(DB_NAME);
                 request.onsuccess = () => resolve();
                 request.onerror = () => reject(request.error || new Error('Database deletion failed'));
                 request.onblocked = () => reject(new Error('Close other Horde Studio tabs and try again'));
             });
+            // Clear same-origin preferences and recovery metadata only after
+            // both persistence authorities have accepted the explicit purge.
+            localStorage.clear();
             showToast('All data purged. Reloading...', 'success');
             window.location.reload();
         } catch (err) {

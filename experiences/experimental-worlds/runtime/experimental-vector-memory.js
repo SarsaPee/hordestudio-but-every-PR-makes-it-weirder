@@ -116,7 +116,7 @@
         triggerFallback(active) {
             this.isFallbackActive = active;
             this.fallbackUntil = active ? Date.now() + 60000 : 0;
-            const banner = document.getElementById('world-vector-fallback-banner');
+            const banner = document.getElementById('ew-world-vector-fallback-banner');
             banner?.classList.toggle('hidden', !active);
         },
 

@@ -1,0 +1,37 @@
+import { experimentalWorldsVendorGlobals as __experimentalWorldsVendorGlobals } from '../../../../../../../host-adapters/experimental-worlds/experimental-worlds-vendor-context.js';
+const { window, document, SillyTavern, toastr, fetch, localStorage, navigator, setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame, cancelAnimationFrame, queueMicrotask, MutationObserver, ResizeObserver, IntersectionObserver, URL } = __experimentalWorldsVendorGlobals;
+
+// src/ui/time-tint.js — Time-of-Day Ambient Tint
+import { getSettings } from '../settings.js';
+import { currentTimePeriod, setCurrentTimePeriod } from '../state.js';
+import { spDetectMode } from './mobile.js';
+// v6.17.0: instrumented for perf-monitor capture (Panel A MVP).
+import { markStart, markEnd } from '../perf-monitor.js';
+
+export function updateTimeTint(timeStr){
+    markStart('sp:time-tint');
+    try { return _updateTimeTintInner(timeStr); }
+    finally { markEnd('sp:time-tint'); }
+}
+function _updateTimeTintInner(timeStr){
+    const s=getSettings();
+    if(s.timeTint===false)return;
+    const mode=spDetectMode();if(mode==='mobile'||mode==='tablet'){clearTimeTint();return}
+    const h=parseInt((timeStr||'').match(/(\d+):/)?.[1]||'12');
+    let period='day';
+    if(h>=5&&h<7)period='dawn';
+    else if(h>=7&&h<11)period='morning';
+    else if(h>=11&&h<14)period='day';
+    else if(h>=14&&h<17)period='afternoon';
+    else if(h>=17&&h<20)period='dusk';
+    else if(h>=20&&h<22)period='evening';
+    else period='night';
+    if(period===currentTimePeriod)return;
+    setCurrentTimePeriod(period);
+    let ov=document.getElementById('sp-time-tint');
+    if(!ov){ov=document.createElement('div');ov.id='sp-time-tint';window.ExperimentalWorldsDom.portalRoot().prepend(ov)}
+    ov.className='sp-time-tint sp-time-'+period;
+}
+export function clearTimeTint(){
+    const ov=document.getElementById('sp-time-tint');if(ov)ov.remove();setCurrentTimePeriod('');
+}

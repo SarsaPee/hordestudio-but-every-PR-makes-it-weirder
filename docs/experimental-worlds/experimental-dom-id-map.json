@@ -1,0 +1,5555 @@
+{
+  "schemaVersion": 1,
+  "namespace": "ew-",
+  "generatedFrom": [
+    "experiences/experimental-worlds/experimental-worlds-shell.html",
+    "experiences/experimental-worlds/runtime/**/*.js",
+    "experiences/experimental-worlds/mechanics/**/*.js",
+    "experiences/experimental-worlds/visuals/**/*.js",
+    "experiences/experimental-worlds/styles/**/*.css"
+  ],
+  "protectedPrefixes": [
+    "sp-"
+  ],
+  "protectedIds": [
+    "spClkBg",
+    "spTempGrad"
+  ],
+  "externalHostReferences": [
+    "app",
+    "cc-mood-badge",
+    "chat",
+    "companion-chat-view",
+    "companion-studio-view",
+    "companions-view",
+    "confirm-modal-overlay",
+    "cs-voice-sample-text",
+    "experimental-worlds-portal-root",
+    "experimental-worlds-root",
+    "labs-guide-status",
+    "labs-install-progress-fill",
+    "labs-needle-progress-fill",
+    "library-view",
+    "mp-session-dice",
+    "multiplayer-campaign-list",
+    "multiplayer-copy-setup",
+    "multiplayer-hub-invite",
+    "multiplayer-hub-join",
+    "multiplayer-hub-name",
+    "multiplayer-online-config",
+    "multiplayer-relay-url",
+    "multiplayer-source-list",
+    "multiplayer-source-search",
+    "open-vector-memory-btn",
+    "persona-ai-generation-status",
+    "pip-clear-chat-btn",
+    "pip-configure-btn",
+    "pip-view",
+    "rightSendForm",
+    "rooms-view",
+    "send_but",
+    "send_form",
+    "send_textarea",
+    "settings-view",
+    "sheld",
+    "show_more_messages",
+    "stock-worlds-pass0-mount",
+    "top-bar",
+    "top-settings-holder"
+  ],
+  "roots": {
+    "library": "ew-worlds-view",
+    "studio": "ew-world-studio-view",
+    "play": "ew-world-play-view"
+  },
+  "entries": [
+    {
+      "source": "add-entity-btn",
+      "namespaced": "ew-add-entity-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "add-entity-btn-bottom",
+      "namespaced": "ew-add-entity-btn-bottom",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "add-faction-btn",
+      "namespaced": "ew-add-faction-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "add-faction-btn-bottom",
+      "namespaced": "ew-add-faction-btn-bottom",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "add-item-btn",
+      "namespaced": "ew-add-item-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "add-item-btn-bottom",
+      "namespaced": "ew-add-item-btn-bottom",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "add-location-btn",
+      "namespaced": "ew-add-location-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "add-location-btn-bottom",
+      "namespaced": "ew-add-location-btn-bottom",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "add-traversal-method-btn",
+      "namespaced": "ew-add-traversal-method-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "add-vehicle-btn",
+      "namespaced": "ew-add-vehicle-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "add-vehicle-btn-bottom",
+      "namespaced": "ew-add-vehicle-btn-bottom",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "add-w-lore-btn",
+      "namespaced": "ew-add-w-lore-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "add-world-origin-btn",
+      "namespaced": "ew-add-world-origin-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "add-world-stat-btn",
+      "namespaced": "ew-add-world-stat-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "ai-audit-results",
+      "namespaced": "ew-ai-audit-results",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "ai-visual-primary-actions",
+      "namespaced": "ew-ai-visual-primary-actions",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "ai-visual-prompt-actions",
+      "namespaced": "ew-ai-visual-prompt-actions",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "apply-clock-offset-btn",
+      "namespaced": "ew-apply-clock-offset-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "audit-results-container",
+      "namespaced": "ew-audit-results-container",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "autonomy-health-results",
+      "namespaced": "ew-autonomy-health-results",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "calibrate-apply-all-btn",
+      "namespaced": "ew-calibrate-apply-all-btn",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "calibrate-pass-apply-all",
+      "namespaced": "ew-calibrate-pass-apply-all",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "calibrate-pass-clear",
+      "namespaced": "ew-calibrate-pass-clear",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "calibrate-pass-dismiss-all",
+      "namespaced": "ew-calibrate-pass-dismiss-all",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "calibrate-pass-results",
+      "namespaced": "ew-calibrate-pass-results",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "cancel-sidecar-migration-btn",
+      "namespaced": "ew-cancel-sidecar-migration-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "cancel-system-inject-btn",
+      "namespaced": "ew-cancel-system-inject-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "cancel-world-check",
+      "namespaced": "ew-cancel-world-check",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "cancel-world-clock-btn",
+      "namespaced": "ew-cancel-world-clock-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "cancel-world-ledger-btn",
+      "namespaced": "ew-cancel-world-ledger-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "cancel-world-outfit-btn",
+      "namespaced": "ew-cancel-world-outfit-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "cancel-world-quest-btn",
+      "namespaced": "ew-cancel-world-quest-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "cancel-world-stats-btn",
+      "namespaced": "ew-cancel-world-stats-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-audit-btn",
+      "namespaced": "ew-close-audit-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-map-modal",
+      "namespaced": "ew-close-map-modal",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-npc-dossier-btn",
+      "namespaced": "ew-close-npc-dossier-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-scheduler-btn",
+      "namespaced": "ew-close-scheduler-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-session-zero-btn",
+      "namespaced": "ew-close-session-zero-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-sidecar-migration-wizard-btn",
+      "namespaced": "ew-close-sidecar-migration-wizard-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-system-inject-btn",
+      "namespaced": "ew-close-system-inject-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-vector-memory-btn",
+      "namespaced": "ew-close-vector-memory-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-vector-memory-ft-btn",
+      "namespaced": "ew-close-vector-memory-ft-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-world-check-modal",
+      "namespaced": "ew-close-world-check-modal",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-world-clock-btn",
+      "namespaced": "ew-close-world-clock-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-world-ledger-btn",
+      "namespaced": "ew-close-world-ledger-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-world-outfit-btn",
+      "namespaced": "ew-close-world-outfit-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-world-quest-btn",
+      "namespaced": "ew-close-world-quest-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-world-sidecar-inspector",
+      "namespaced": "ew-close-world-sidecar-inspector",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "close-world-stats-btn",
+      "namespaced": "ew-close-world-stats-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-world-studio-btn",
+      "namespaced": "ew-close-world-studio-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-world-timeline-browser-btn",
+      "namespaced": "ew-close-world-timeline-browser-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "close-world-timeline-browser-ft-btn",
+      "namespaced": "ew-close-world-timeline-browser-ft-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "confirm-system-inject-btn",
+      "namespaced": "ew-confirm-system-inject-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "confirm-world-check",
+      "namespaced": "ew-confirm-world-check",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "create-new-world-btn",
+      "namespaced": "ew-create-new-world-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "delete-world-btn",
+      "namespaced": "ew-delete-world-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "delete-world-quest-btn",
+      "namespaced": "ew-delete-world-quest-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "dossier-dispo-slider",
+      "namespaced": "ew-dossier-dispo-slider",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "dossier-dispo-val",
+      "namespaced": "ew-dossier-dispo-val",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "dossier-goal",
+      "namespaced": "ew-dossier-goal",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "dossier-goal-autonomy",
+      "namespaced": "ew-dossier-goal-autonomy",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "dossier-goal-progress",
+      "namespaced": "ew-dossier-goal-progress",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "dossier-goal-progress-val",
+      "namespaced": "ew-dossier-goal-progress-val",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "dossier-goal-why",
+      "namespaced": "ew-dossier-goal-why",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "dossier-obs-list",
+      "namespaced": "ew-dossier-obs-list",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "dossier-save-goal",
+      "namespaced": "ew-dossier-save-goal",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "edit-ledger-btn",
+      "namespaced": "ew-edit-ledger-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "edit-outfit-btn",
+      "namespaced": "ew-edit-outfit-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "edit-player-stats-btn",
+      "namespaced": "ew-edit-player-stats-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "export-world-btn",
+      "namespaced": "ew-export-world-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "force-archive-now-btn",
+      "namespaced": "ew-force-archive-now-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "gen-all-schedules-btn",
+      "namespaced": "ew-gen-all-schedules-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "hud-section-clock",
+      "namespaced": "ew-hud-section-clock",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "hud-section-ledger",
+      "namespaced": "ew-hud-section-ledger",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "hud-section-living-world",
+      "namespaced": "ew-hud-section-living-world",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "hud-section-quests",
+      "namespaced": "ew-hud-section-quests",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "hud-section-secrets",
+      "namespaced": "ew-hud-section-secrets",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "hud-section-threads",
+      "namespaced": "ew-hud-section-threads",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "import-world-btn",
+      "namespaced": "ew-import-world-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "living-world-count",
+      "namespaced": "ew-living-world-count",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-clock-ampm",
+      "namespaced": "ew-m-clock-ampm",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-clock-day",
+      "namespaced": "ew-m-clock-day",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-clock-hour",
+      "namespaced": "ew-m-clock-hour",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-clock-minute",
+      "namespaced": "ew-m-clock-minute",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-clock-offset",
+      "namespaced": "ew-m-clock-offset",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-ledger-content",
+      "namespaced": "ew-m-ledger-content",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-outfit-content",
+      "namespaced": "ew-m-outfit-content",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-quest-description",
+      "namespaced": "ew-m-quest-description",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-quest-giver",
+      "namespaced": "ew-m-quest-giver",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-quest-id",
+      "namespaced": "ew-m-quest-id",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-quest-objective",
+      "namespaced": "ew-m-quest-objective",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-quest-objectives",
+      "namespaced": "ew-m-quest-objectives",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-quest-reward-items",
+      "namespaced": "ew-m-quest-reward-items",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-quest-reward-stats",
+      "namespaced": "ew-m-quest-reward-stats",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-quest-rewards",
+      "namespaced": "ew-m-quest-rewards",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-quest-status",
+      "namespaced": "ew-m-quest-status",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-quest-title",
+      "namespaced": "ew-m-quest-title",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "m-stats-guide",
+      "namespaced": "ew-m-stats-guide",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "map-container",
+      "namespaced": "ew-map-container",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "map-modal",
+      "namespaced": "ew-map-modal",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "npc-dossier-content",
+      "namespaced": "ew-npc-dossier-content",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "npc-dossier-overlay",
+      "namespaced": "ew-npc-dossier-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "npc-dossier-title",
+      "namespaced": "ew-npc-dossier-title",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "open-scheduler-btn",
+      "namespaced": "ew-open-scheduler-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "quest-count",
+      "namespaced": "ew-quest-count",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "quest-manage-btn",
+      "namespaced": "ew-quest-manage-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "run-ai-audit-btn",
+      "namespaced": "ew-run-ai-audit-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "run-autonomy-health-btn",
+      "namespaced": "ew-run-autonomy-health-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "run-sidecar-migration-btn",
+      "namespaced": "ew-run-sidecar-migration-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "run-world-audit-btn",
+      "namespaced": "ew-run-world-audit-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "save-play-world-btn",
+      "namespaced": "ew-save-play-world-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "save-scheduler-btn",
+      "namespaced": "ew-save-scheduler-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "save-world-btn",
+      "namespaced": "ew-save-world-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "save-world-clock-btn",
+      "namespaced": "ew-save-world-clock-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "save-world-ledger-btn",
+      "namespaced": "ew-save-world-ledger-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "save-world-outfit-btn",
+      "namespaced": "ew-save-world-outfit-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "save-world-quest-btn",
+      "namespaced": "ew-save-world-quest-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "save-world-stats-btn",
+      "namespaced": "ew-save-world-stats-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "scheduler-npc-list",
+      "namespaced": "ew-scheduler-npc-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "secret-count",
+      "namespaced": "ew-secret-count",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "semantic-arrow-architect",
+      "namespaced": "ew-semantic-arrow-architect",
+      "kinds": [
+        "runtime-created"
+      ]
+    },
+    {
+      "source": "semantic-arrow-play",
+      "namespaced": "ew-semantic-arrow-play",
+      "kinds": [
+        "runtime-created"
+      ]
+    },
+    {
+      "source": "sidecar-migration-select-all-btn",
+      "namespaced": "ew-sidecar-migration-select-all-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sidecar-migration-wizard-list",
+      "namespaced": "ew-sidecar-migration-wizard-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sidecar-migration-wizard-overlay",
+      "namespaced": "ew-sidecar-migration-wizard-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sidecar-migration-wizard-status",
+      "namespaced": "ew-sidecar-migration-wizard-status",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "structured-model-custom",
+      "namespaced": "ew-structured-model-custom",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "structured-model-picker",
+      "namespaced": "ew-structured-model-picker",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "structured-model-refresh",
+      "namespaced": "ew-structured-model-refresh",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "structured-model-status",
+      "namespaced": "ew-structured-model-status",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "system-inject-input",
+      "namespaced": "ew-system-inject-input",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "system-inject-modal-overlay",
+      "namespaced": "ew-system-inject-modal-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-attribute-list",
+      "namespaced": "ew-sz-attribute-list",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-begin-btn",
+      "namespaced": "ew-sz-begin-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-controlled-entity",
+      "namespaced": "ew-sz-controlled-entity",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-equipment-list",
+      "namespaced": "ew-sz-equipment-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-focus",
+      "namespaced": "ew-sz-focus",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-life-seed-enabled",
+      "namespaced": "ew-sz-life-seed-enabled",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-life-seed-option",
+      "namespaced": "ew-sz-life-seed-option",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-life-seed-status",
+      "namespaced": "ew-sz-life-seed-status",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-notes",
+      "namespaced": "ew-sz-notes",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-origin-list",
+      "namespaced": "ew-sz-origin-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-origin-section",
+      "namespaced": "ew-sz-origin-section",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-pacing",
+      "namespaced": "ew-sz-pacing",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-persona-preview",
+      "namespaced": "ew-sz-persona-preview",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-persona-section",
+      "namespaced": "ew-sz-persona-section",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-persona-select",
+      "namespaced": "ew-sz-persona-select",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-points-status",
+      "namespaced": "ew-sz-points-status",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-public-identity",
+      "namespaced": "ew-sz-public-identity",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-reputation",
+      "namespaced": "ew-sz-reputation",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-role-section",
+      "namespaced": "ew-sz-role-section",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-role-summary",
+      "namespaced": "ew-sz-role-summary",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-save-status",
+      "namespaced": "ew-sz-save-status",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-skill-list",
+      "namespaced": "ew-sz-skill-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-skip-btn",
+      "namespaced": "ew-sz-skip-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-tone",
+      "namespaced": "ew-sz-tone",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "sz-trait-list",
+      "namespaced": "ew-sz-trait-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-ai",
+      "namespaced": "ew-tab-w-ai",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-basics",
+      "namespaced": "ew-tab-w-basics",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-builder",
+      "namespaced": "ew-tab-w-builder",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-entities",
+      "namespaced": "ew-tab-w-entities",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-factions",
+      "namespaced": "ew-tab-w-factions",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-hud",
+      "namespaced": "ew-tab-w-hud",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-items",
+      "namespaced": "ew-tab-w-items",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-locations",
+      "namespaced": "ew-tab-w-locations",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-lore",
+      "namespaced": "ew-tab-w-lore",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-note",
+      "namespaced": "ew-tab-w-note",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-overview",
+      "namespaced": "ew-tab-w-overview",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-sandbox",
+      "namespaced": "ew-tab-w-sandbox",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-travel",
+      "namespaced": "ew-tab-w-travel",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-visual-map",
+      "namespaced": "ew-tab-w-visual-map",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-visuals",
+      "namespaced": "ew-tab-w-visuals",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "thread-count",
+      "namespaced": "ew-thread-count",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "vector-character-filter",
+      "namespaced": "ew-vector-character-filter",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "vector-delete-all-btn",
+      "namespaced": "ew-vector-delete-all-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "vector-memory-list",
+      "namespaced": "ew-vector-memory-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "vector-memory-modal-overlay",
+      "namespaced": "ew-vector-memory-modal-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "vector-memory-status",
+      "namespaced": "ew-vector-memory-status",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "vector-tab-biography",
+      "namespaced": "ew-vector-tab-biography",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "vector-tab-cognition",
+      "namespaced": "ew-vector-tab-cognition",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "vector-tab-episodic",
+      "namespaced": "ew-vector-tab-episodic",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "vector-tab-locations",
+      "namespaced": "ew-vector-tab-locations",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "vector-tab-unresolved",
+      "namespaced": "ew-vector-tab-unresolved",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "vector-test-query",
+      "namespaced": "ew-vector-test-query",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "vector-test-search-btn",
+      "namespaced": "ew-vector-test-search-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "vectorize-listed-btn",
+      "namespaced": "ew-vectorize-listed-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-agent-enabled",
+      "namespaced": "ew-w-agent-enabled",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-agent-interval",
+      "namespaced": "ew-w-agent-interval",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-agent-model",
+      "namespaced": "ew-w-agent-model",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-agent-model-results",
+      "namespaced": "ew-w-agent-model-results",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-agent-proposal-only",
+      "namespaced": "ew-w-agent-proposal-only",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-banner-input",
+      "namespaced": "ew-w-banner-input",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-banner-preview",
+      "namespaced": "ew-w-banner-preview",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-banner-upload-area",
+      "namespaced": "ew-w-banner-upload-area",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-apply-btn",
+      "namespaced": "ew-w-builder-apply-btn",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-code-output",
+      "namespaced": "ew-w-builder-code-output",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-detail-context",
+      "namespaced": "ew-w-builder-detail-context",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-detail-json",
+      "namespaced": "ew-w-builder-detail-json",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-detail-price",
+      "namespaced": "ew-w-builder-detail-price",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-detail-tools",
+      "namespaced": "ew-w-builder-detail-tools",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-error-diagnostic",
+      "namespaced": "ew-w-builder-error-diagnostic",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-generate-btn",
+      "namespaced": "ew-w-builder-generate-btn",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-merge-btn",
+      "namespaced": "ew-w-builder-merge-btn",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-model-results",
+      "namespaced": "ew-w-builder-model-results",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-model-search",
+      "namespaced": "ew-w-builder-model-search",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-preview-box",
+      "namespaced": "ew-w-builder-preview-box",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-progress-box",
+      "namespaced": "ew-w-builder-progress-box",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-prompt",
+      "namespaced": "ew-w-builder-prompt",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-recovery-box",
+      "namespaced": "ew-w-builder-recovery-box",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-recovery-reparse-btn",
+      "namespaced": "ew-w-builder-recovery-reparse-btn",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-recovery-textarea",
+      "namespaced": "ew-w-builder-recovery-textarea",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-verification-badge",
+      "namespaced": "ew-w-builder-verification-badge",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-verification-card",
+      "namespaced": "ew-w-builder-verification-card",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-builder-warning-container",
+      "namespaced": "ew-w-builder-warning-container",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-capabilities-customizable",
+      "namespaced": "ew-w-capabilities-customizable",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-capability-budget",
+      "namespaced": "ew-w-capability-budget",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-capability-flaws",
+      "namespaced": "ew-w-capability-flaws",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-capability-perks",
+      "namespaced": "ew-w-capability-perks",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-capability-skills",
+      "namespaced": "ew-w-capability-skills",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-consequence-policy-section",
+      "namespaced": "ew-w-consequence-policy-section",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-consequences-decay",
+      "namespaced": "ew-w-consequences-decay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-consequences-enabled",
+      "namespaced": "ew-w-consequences-enabled",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-consequences-escalation",
+      "namespaced": "ew-w-consequences-escalation",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-consequences-max",
+      "namespaced": "ew-w-consequences-max",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-dice-criticals",
+      "namespaced": "ew-w-dice-criticals",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-dice-default-difficulty",
+      "namespaced": "ew-w-dice-default-difficulty",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-dice-modifier-mode",
+      "namespaced": "ew-w-dice-modifier-mode",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-dice-resolution",
+      "namespaced": "ew-w-dice-resolution",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-dice-sides",
+      "namespaced": "ew-w-dice-sides",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-dice-visibility",
+      "namespaced": "ew-w-dice-visibility",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-entities-list",
+      "namespaced": "ew-w-entities-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-factions-list",
+      "namespaced": "ew-w-factions-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-fetch-model-btn",
+      "namespaced": "ew-w-fetch-model-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-fine-tune-preset-btn",
+      "namespaced": "ew-w-fine-tune-preset-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-hud-adjust-time-btn",
+      "namespaced": "ew-w-hud-adjust-time-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-hud-enable-schedules",
+      "namespaced": "ew-w-hud-enable-schedules",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-hud-show-clock",
+      "namespaced": "ew-w-hud-show-clock",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-hud-show-days",
+      "namespaced": "ew-w-hud-show-days",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-hud-show-inventory",
+      "namespaced": "ew-w-hud-show-inventory",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-hud-show-ledger",
+      "namespaced": "ew-w-hud-show-ledger",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-hud-show-quests",
+      "namespaced": "ew-w-hud-show-quests",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-hud-start-minute",
+      "namespaced": "ew-w-hud-start-minute",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-hud-start-time",
+      "namespaced": "ew-w-hud-start-time",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-hud-start-weekday",
+      "namespaced": "ew-w-hud-start-weekday",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-hud-stats-list",
+      "namespaced": "ew-w-hud-stats-list",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-hud-time-step",
+      "namespaced": "ew-w-hud-time-step",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-import-preset-btn",
+      "namespaced": "ew-w-import-preset-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-inline-legacy-migrate-btn",
+      "namespaced": "ew-w-inline-legacy-migrate-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-inline-legacy-settings",
+      "namespaced": "ew-w-inline-legacy-settings",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-items-list",
+      "namespaced": "ew-w-items-list",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-journeys-list",
+      "namespaced": "ew-w-journeys-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-kernel-compact-tools",
+      "namespaced": "ew-w-kernel-compact-tools",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-kernel-enabled",
+      "namespaced": "ew-w-kernel-enabled",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-kernel-location-limit",
+      "namespaced": "ew-w-kernel-location-limit",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-kernel-memory-mode",
+      "namespaced": "ew-w-kernel-memory-mode",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-kernel-repair-mode",
+      "namespaced": "ew-w-kernel-repair-mode",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-legacy-preset-section",
+      "namespaced": "ew-w-legacy-preset-section",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-locations-list",
+      "namespaced": "ew-w-locations-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-lore-import-btn",
+      "namespaced": "ew-w-lore-import-btn",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "w-lore-list",
+      "namespaced": "ew-w-lore-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-model-detail-context",
+      "namespaced": "ew-w-model-detail-context",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-model-detail-json",
+      "namespaced": "ew-w-model-detail-json",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-model-detail-price",
+      "namespaced": "ew-w-model-detail-price",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-model-detail-tools",
+      "namespaced": "ew-w-model-detail-tools",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-model-info-badges",
+      "namespaced": "ew-w-model-info-badges",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-model-info-card",
+      "namespaced": "ew-w-model-info-card",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-model-info-id",
+      "namespaced": "ew-w-model-info-id",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-model-info-name",
+      "namespaced": "ew-w-model-info-name",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-model-info-params-list",
+      "namespaced": "ew-w-model-info-params-list",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-model-verification-badge",
+      "namespaced": "ew-w-model-verification-badge",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-overview-sidecar-migrate-btn",
+      "namespaced": "ew-w-overview-sidecar-migrate-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "w-overview-sidecar-migration",
+      "namespaced": "ew-w-overview-sidecar-migration",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-player-capabilities-section",
+      "namespaced": "ew-w-player-capabilities-section",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-preset-file-input",
+      "namespaced": "ew-w-preset-file-input",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-preview-entities-count",
+      "namespaced": "ew-w-preview-entities-count",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-preview-identity",
+      "namespaced": "ew-w-preview-identity",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-preview-locations-count",
+      "namespaced": "ew-w-preview-locations-count",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-preview-lore-count",
+      "namespaced": "ew-w-preview-lore-count",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-progression-enabled",
+      "namespaced": "ew-w-progression-enabled",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-progression-method",
+      "namespaced": "ew-w-progression-method",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-reasoning-effort-row",
+      "namespaced": "ew-w-reasoning-effort-row",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-reasoning-section",
+      "namespaced": "ew-w-reasoning-section",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-roleplay-os-choices",
+      "namespaced": "ew-w-roleplay-os-choices",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-roleplay-os-file-input",
+      "namespaced": "ew-w-roleplay-os-file-input",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-roleplay-os-import-btn",
+      "namespaced": "ew-w-roleplay-os-import-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-roleplay-os-migration",
+      "namespaced": "ew-w-roleplay-os-migration",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-roleplay-os-migration-dismiss",
+      "namespaced": "ew-w-roleplay-os-migration-dismiss",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "w-roleplay-os-section",
+      "namespaced": "ew-w-roleplay-os-section",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-roleplay-os-source",
+      "namespaced": "ew-w-roleplay-os-source",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-roleplay-os-source-info",
+      "namespaced": "ew-w-roleplay-os-source-info",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-roleplay-os-state",
+      "namespaced": "ew-w-roleplay-os-state",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-rules-add-item",
+      "namespaced": "ew-w-rules-add-item",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-rules-currency-name",
+      "namespaced": "ew-w-rules-currency-name",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-rules-currency-stat",
+      "namespaced": "ew-w-rules-currency-stat",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-rules-equipment-slots",
+      "namespaced": "ew-w-rules-equipment-slots",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-rules-item-catalog",
+      "namespaced": "ew-w-rules-item-catalog",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-rules-modules-grid",
+      "namespaced": "ew-w-rules-modules-grid",
+      "kinds": [
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-rules-profile",
+      "namespaced": "ew-w-rules-profile",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-rules-profile-description",
+      "namespaced": "ew-w-rules-profile-description",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-rules-vital-stat",
+      "namespaced": "ew-w-rules-vital-stat",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-rules-zero-hp-mode",
+      "namespaced": "ew-w-rules-zero-hp-mode",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sandbox-calendar",
+      "namespaced": "ew-w-sandbox-calendar",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sandbox-conflict",
+      "namespaced": "ew-w-sandbox-conflict",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sandbox-enabled",
+      "namespaced": "ew-w-sandbox-enabled",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sandbox-growth",
+      "namespaced": "ew-w-sandbox-growth",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sandbox-law",
+      "namespaced": "ew-w-sandbox-law",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sandbox-politics",
+      "namespaced": "ew-w-sandbox-politics",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sandbox-principles",
+      "namespaced": "ew-w-sandbox-principles",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sandbox-scale",
+      "namespaced": "ew-w-sandbox-scale",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sandbox-season-days",
+      "namespaced": "ew-w-sandbox-season-days",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sandbox-seasons",
+      "namespaced": "ew-w-sandbox-seasons",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-authority-settings",
+      "namespaced": "ew-w-sidecar-authority-settings",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-config-grid",
+      "namespaced": "ew-w-sidecar-config-grid",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-debug",
+      "namespaced": "ew-w-sidecar-debug",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-episode-cadence",
+      "namespaced": "ew-w-sidecar-episode-cadence",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-episode-size",
+      "namespaced": "ew-w-sidecar-episode-size",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-fetch-model-btn",
+      "namespaced": "ew-w-sidecar-fetch-model-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-inherit-narrator",
+      "namespaced": "ew-w-sidecar-inherit-narrator",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-job-concurrency",
+      "namespaced": "ew-w-sidecar-job-concurrency",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-max-tokens",
+      "namespaced": "ew-w-sidecar-max-tokens",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-memory-grid",
+      "namespaced": "ew-w-sidecar-memory-grid",
+      "kinds": [
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-memory-inherit",
+      "namespaced": "ew-w-sidecar-memory-inherit",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-memory-status",
+      "namespaced": "ew-w-sidecar-memory-status",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-migrate-btn",
+      "namespaced": "ew-w-sidecar-migrate-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-migration-controls",
+      "namespaced": "ew-w-sidecar-migration-controls",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-migration-report",
+      "namespaced": "ew-w-sidecar-migration-report",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-mode",
+      "namespaced": "ew-w-sidecar-mode",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-mode-hint",
+      "namespaced": "ew-w-sidecar-mode-hint",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-model",
+      "namespaced": "ew-w-sidecar-model",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-model-results",
+      "namespaced": "ew-w-sidecar-model-results",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-model-status",
+      "namespaced": "ew-w-sidecar-model-status",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-override-config",
+      "namespaced": "ew-w-sidecar-override-config",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-provider",
+      "namespaced": "ew-w-sidecar-provider",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-provider-concurrency",
+      "namespaced": "ew-w-sidecar-provider-concurrency",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-provider-connection-hint",
+      "namespaced": "ew-w-sidecar-provider-connection-hint",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-context-budget",
+      "namespaced": "ew-w-sidecar-reader-context-budget",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-enabled",
+      "namespaced": "ew-w-sidecar-reader-enabled",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-lookup-budget",
+      "namespaced": "ew-w-sidecar-reader-lookup-budget",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-max-tokens",
+      "namespaced": "ew-w-sidecar-reader-max-tokens",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-model",
+      "namespaced": "ew-w-sidecar-reader-model",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-profile-inherit",
+      "namespaced": "ew-w-sidecar-reader-profile-inherit",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-profile-max-tokens",
+      "namespaced": "ew-w-sidecar-reader-profile-max-tokens",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-provider",
+      "namespaced": "ew-w-sidecar-reader-provider",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-reasoning",
+      "namespaced": "ew-w-sidecar-reader-reasoning",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-reasoning-effort",
+      "namespaced": "ew-w-sidecar-reader-reasoning-effort",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-refresh",
+      "namespaced": "ew-w-sidecar-reader-refresh",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-retry",
+      "namespaced": "ew-w-sidecar-reader-retry",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-timeout",
+      "namespaced": "ew-w-sidecar-reader-timeout",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reader-tools",
+      "namespaced": "ew-w-sidecar-reader-tools",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reasoning-effort",
+      "namespaced": "ew-w-sidecar-reasoning-effort",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reasoning-effort-row",
+      "namespaced": "ew-w-sidecar-reasoning-effort-row",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-reasoning-mode",
+      "namespaced": "ew-w-sidecar-reasoning-mode",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-restore-backup",
+      "namespaced": "ew-w-sidecar-restore-backup",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-retrieval-limit",
+      "namespaced": "ew-w-sidecar-retrieval-limit",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-settings",
+      "namespaced": "ew-w-sidecar-settings",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-trace-count",
+      "namespaced": "ew-w-sidecar-trace-count",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-sidecar-verbatim-window",
+      "namespaced": "ew-w-sidecar-verbatim-window",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-state-pipeline-hint",
+      "namespaced": "ew-w-state-pipeline-hint",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-step-analyze",
+      "namespaced": "ew-w-step-analyze",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-step-entities",
+      "namespaced": "ew-w-step-entities",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-step-finalize",
+      "namespaced": "ew-w-step-finalize",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-step-locations",
+      "namespaced": "ew-w-step-locations",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-step-lore",
+      "namespaced": "ew-w-step-lore",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-context-size",
+      "namespaced": "ew-w-studio-context-size",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-context-size-badge",
+      "namespaced": "ew-w-studio-context-size-badge",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-context-size-val",
+      "namespaced": "ew-w-studio-context-size-val",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-desc",
+      "namespaced": "ew-w-studio-desc",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-dm-prompt",
+      "namespaced": "ew-w-studio-dm-prompt",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-freq-penalty",
+      "namespaced": "ew-w-studio-freq-penalty",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-intro",
+      "namespaced": "ew-w-studio-intro",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-max-tokens",
+      "namespaced": "ew-w-studio-max-tokens",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-min-p",
+      "namespaced": "ew-w-studio-min-p",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-model",
+      "namespaced": "ew-w-studio-model",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-model-results",
+      "namespaced": "ew-w-studio-model-results",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-name",
+      "namespaced": "ew-w-studio-name",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-note",
+      "namespaced": "ew-w-studio-note",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-pres-penalty",
+      "namespaced": "ew-w-studio-pres-penalty",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-reasoning",
+      "namespaced": "ew-w-studio-reasoning",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-reasoning-effort",
+      "namespaced": "ew-w-studio-reasoning-effort",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-rep-penalty",
+      "namespaced": "ew-w-studio-rep-penalty",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-system-preset",
+      "namespaced": "ew-w-studio-system-preset",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-temp",
+      "namespaced": "ew-w-studio-temp",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-token-count",
+      "namespaced": "ew-w-studio-token-count",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-top-k",
+      "namespaced": "ew-w-studio-top-k",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-top-p",
+      "namespaced": "ew-w-studio-top-p",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-traversal-methods-list",
+      "namespaced": "ew-w-traversal-methods-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-unlock-all-params-btn",
+      "namespaced": "ew-w-unlock-all-params-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-vehicles-list",
+      "namespaced": "ew-w-vehicles-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-accent",
+      "namespaced": "ew-w-visual-accent",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-art-direction",
+      "namespaced": "ew-w-visual-art-direction",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-art-style",
+      "namespaced": "ew-w-visual-art-style",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-background-dim",
+      "namespaced": "ew-w-visual-background-dim",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-dim-value",
+      "namespaced": "ew-w-visual-dim-value",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-enabled",
+      "namespaced": "ew-w-visual-enabled",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-fal-advanced",
+      "namespaced": "ew-w-visual-fal-advanced",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-fal-enable-safety-checker",
+      "namespaced": "ew-w-visual-fal-enable-safety-checker",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-fal-safety-tolerance",
+      "namespaced": "ew-w-visual-fal-safety-tolerance",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-fal-seed",
+      "namespaced": "ew-w-visual-fal-seed",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-guide-preset",
+      "namespaced": "ew-w-visual-guide-preset",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-guide-preset-aspect",
+      "namespaced": "ew-w-visual-guide-preset-aspect",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-guide-preset-delete",
+      "namespaced": "ew-w-visual-guide-preset-delete",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-guide-preset-description",
+      "namespaced": "ew-w-visual-guide-preset-description",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-guide-preset-framing",
+      "namespaced": "ew-w-visual-guide-preset-framing",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-guide-preset-name",
+      "namespaced": "ew-w-visual-guide-preset-name",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-guide-preset-save",
+      "namespaced": "ew-w-visual-guide-preset-save",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-image-guide",
+      "namespaced": "ew-w-visual-image-guide",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-map-skin-clear",
+      "namespaced": "ew-w-visual-map-skin-clear",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-map-skin-generate",
+      "namespaced": "ew-w-visual-map-skin-generate",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-map-skin-input",
+      "namespaced": "ew-w-visual-map-skin-input",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-map-skin-preview",
+      "namespaced": "ew-w-visual-map-skin-preview",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-map-skin-upload",
+      "namespaced": "ew-w-visual-map-skin-upload",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-media-summary",
+      "namespaced": "ew-w-visual-media-summary",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-mode",
+      "namespaced": "ew-w-visual-mode",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-new-image-model",
+      "namespaced": "ew-w-visual-new-image-model",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-new-image-model-results",
+      "namespaced": "ew-w-visual-new-image-model-results",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-new-image-model-status",
+      "namespaced": "ew-w-visual-new-image-model-status",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-new-image-provider",
+      "namespaced": "ew-w-visual-new-image-provider",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-new-refresh-models",
+      "namespaced": "ew-w-visual-new-refresh-models",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-opacity-value",
+      "namespaced": "ew-w-visual-opacity-value",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-panel-opacity",
+      "namespaced": "ew-w-visual-panel-opacity",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-player-override",
+      "namespaced": "ew-w-visual-player-override",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-revision-image-model",
+      "namespaced": "ew-w-visual-revision-image-model",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-revision-image-model-results",
+      "namespaced": "ew-w-visual-revision-image-model-results",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-revision-image-model-status",
+      "namespaced": "ew-w-visual-revision-image-model-status",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-revision-image-provider",
+      "namespaced": "ew-w-visual-revision-image-provider",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-visual-revision-refresh-models",
+      "namespaced": "ew-w-visual-revision-refresh-models",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-world-origins-list",
+      "namespaced": "ew-w-world-origins-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-active-name",
+      "namespaced": "ew-world-active-name",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-agent-openrouter-routing",
+      "namespaced": "ew-world-agent-openrouter-routing",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-audit-overlay",
+      "namespaced": "ew-world-audit-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-check-difficulty",
+      "namespaced": "ew-world-check-difficulty",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-check-label",
+      "namespaced": "ew-world-check-label",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-check-modal",
+      "namespaced": "ew-world-check-modal",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-check-modifier",
+      "namespaced": "ew-world-check-modifier",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-check-pending-note",
+      "namespaced": "ew-world-check-pending-note",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-check-preview",
+      "namespaced": "ew-world-check-preview",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-check-stat",
+      "namespaced": "ew-world-check-stat",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-check-title",
+      "namespaced": "ew-world-check-title",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-clear-btn",
+      "namespaced": "ew-world-clear-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-clock-display",
+      "namespaced": "ew-world-clock-display",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-clock-modal-overlay",
+      "namespaced": "ew-world-clock-modal-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-close-sequence-btn",
+      "namespaced": "ew-world-close-sequence-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-close-sidecar-conversation",
+      "namespaced": "ew-world-close-sidecar-conversation",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-context-fill",
+      "namespaced": "ew-world-context-fill",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-context-label",
+      "namespaced": "ew-world-context-label",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-context-meter-wrap",
+      "namespaced": "ew-world-context-meter-wrap",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-continue-btn",
+      "namespaced": "ew-world-continue-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-del-session-btn",
+      "namespaced": "ew-world-del-session-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-dm-avatar",
+      "namespaced": "ew-world-dm-avatar",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-dm-name",
+      "namespaced": "ew-world-dm-name",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-dm-typing",
+      "namespaced": "ew-world-dm-typing",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-dm-typing-label",
+      "namespaced": "ew-world-dm-typing-label",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-download-btn",
+      "namespaced": "ew-world-download-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-exit-btn",
+      "namespaced": "ew-world-exit-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-exits-list",
+      "namespaced": "ew-world-exits-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-floor-datalist",
+      "namespaced": "ew-world-floor-datalist",
+      "kinds": [
+        "runtime-getElementById"
+      ]
+    },
+    {
+      "source": "world-grid",
+      "namespaced": "ew-world-grid",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-hud-toggle",
+      "namespaced": "ew-world-hud-toggle",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-inventory-list",
+      "namespaced": "ew-world-inventory-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-item-editor-overlay",
+      "namespaced": "ew-world-item-editor-overlay",
+      "kinds": [
+        "runtime-getElementById"
+      ]
+    },
+    {
+      "source": "world-ledger-card",
+      "namespaced": "ew-world-ledger-card",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-ledger-content",
+      "namespaced": "ew-world-ledger-content",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-ledger-modal-overlay",
+      "namespaced": "ew-world-ledger-modal-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-ledger-status",
+      "namespaced": "ew-world-ledger-status",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-living-world-list",
+      "namespaced": "ew-world-living-world-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-loc-card",
+      "namespaced": "ew-world-loc-card",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-loc-desc",
+      "namespaced": "ew-world-loc-desc",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-loc-name",
+      "namespaced": "ew-world-loc-name",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-location-datalist",
+      "namespaced": "ew-world-location-datalist",
+      "kinds": [
+        "runtime-getElementById"
+      ]
+    },
+    {
+      "source": "world-map-btn",
+      "namespaced": "ew-world-map-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-mechanics-toggle-btn",
+      "namespaced": "ew-world-mechanics-toggle-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-message-resize-handle",
+      "namespaced": "ew-world-message-resize-handle",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-messages-container",
+      "namespaced": "ew-world-messages-container",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-migration-apply-btn",
+      "namespaced": "ew-world-migration-apply-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "world-migration-backup-btn",
+      "namespaced": "ew-world-migration-backup-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "world-migration-title",
+      "namespaced": "ew-world-migration-title",
+      "kinds": [
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "world-model-name",
+      "namespaced": "ew-world-model-name",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-more-actions",
+      "namespaced": "ew-world-more-actions",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-more-btn",
+      "namespaced": "ew-world-more-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-multiplayer-overlay",
+      "namespaced": "ew-world-multiplayer-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-new-session-btn",
+      "namespaced": "ew-world-new-session-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-open-vector-memory-btn",
+      "namespaced": "ew-world-open-vector-memory-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-openrouter-routing",
+      "namespaced": "ew-world-openrouter-routing",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-outfit-add",
+      "namespaced": "ew-world-outfit-add",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-outfit-ai",
+      "namespaced": "ew-world-outfit-ai",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-outfit-card",
+      "namespaced": "ew-world-outfit-card",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-outfit-content",
+      "namespaced": "ew-world-outfit-content",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-outfit-description",
+      "namespaced": "ew-world-outfit-description",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-outfit-instruction",
+      "namespaced": "ew-world-outfit-instruction",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-outfit-list",
+      "namespaced": "ew-world-outfit-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-outfit-manager-close",
+      "namespaced": "ew-world-outfit-manager-close",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-outfit-manager-modal",
+      "namespaced": "ew-world-outfit-manager-modal",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-outfit-manager-title",
+      "namespaced": "ew-world-outfit-manager-title",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-outfit-modal-overlay",
+      "namespaced": "ew-world-outfit-modal-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-outfit-name",
+      "namespaced": "ew-world-outfit-name",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-action",
+      "namespaced": "ew-world-party-action",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-action-status",
+      "namespaced": "ew-world-party-action-status",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-attributes",
+      "namespaced": "ew-world-party-attributes",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-campaign-name",
+      "namespaced": "ew-world-party-campaign-name",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-close-btn",
+      "namespaced": "ew-world-party-close-btn",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-commit-btn",
+      "namespaced": "ew-world-party-commit-btn",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-copy-btn",
+      "namespaced": "ew-world-party-copy-btn",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-custom-rules",
+      "namespaced": "ew-world-party-custom-rules",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-die",
+      "namespaced": "ew-world-party-die",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-end-btn",
+      "namespaced": "ew-world-party-end-btn",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-feed",
+      "namespaced": "ew-world-party-feed",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-host-actions",
+      "namespaced": "ew-world-party-host-actions",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-host-btn",
+      "namespaced": "ew-world-party-host-btn",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-host-heading",
+      "namespaced": "ew-world-party-host-heading",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-host-name",
+      "namespaced": "ew-world-party-host-name",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-host-persona",
+      "namespaced": "ew-world-party-host-persona",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-invite",
+      "namespaced": "ew-world-party-invite",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-invite-url",
+      "namespaced": "ew-world-party-invite-url",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-join-btn",
+      "namespaced": "ew-world-party-join-btn",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-join-name",
+      "namespaced": "ew-world-party-join-name",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-mechanics-mode",
+      "namespaced": "ew-world-party-mechanics-mode",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-online-help",
+      "namespaced": "ew-world-party-online-help",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-player-count",
+      "namespaced": "ew-world-party-player-count",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-players",
+      "namespaced": "ew-world-party-players",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-progression",
+      "namespaced": "ew-world-party-progression",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-relay-url",
+      "namespaced": "ew-world-party-relay-url",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-relay-wrap",
+      "namespaced": "ew-world-party-relay-wrap",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-resources",
+      "namespaced": "ew-world-party-resources",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-role",
+      "namespaced": "ew-world-party-role",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-room",
+      "namespaced": "ew-world-party-room",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-room-code",
+      "namespaced": "ew-world-party-room-code",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-room-title",
+      "namespaced": "ew-world-party-room-title",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-round-label",
+      "namespaced": "ew-world-party-round-label",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-rules-preset",
+      "namespaced": "ew-world-party-rules-preset",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-skills",
+      "namespaced": "ew-world-party-skills",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-slots",
+      "namespaced": "ew-world-party-slots",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-start",
+      "namespaced": "ew-world-party-start",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-submit-btn",
+      "namespaced": "ew-world-party-submit-btn",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-subtitle",
+      "namespaced": "ew-world-party-subtitle",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-target",
+      "namespaced": "ew-world-party-target",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-title",
+      "namespaced": "ew-world-party-title",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-transport-lan",
+      "namespaced": "ew-world-party-transport-lan",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-transport-online",
+      "namespaced": "ew-world-party-transport-online",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-party-vote",
+      "namespaced": "ew-world-party-vote",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-persona-btn",
+      "namespaced": "ew-world-persona-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-pipeline-status-btn",
+      "namespaced": "ew-world-pipeline-status-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-plan-sequence-btn",
+      "namespaced": "ew-world-plan-sequence-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-play-view",
+      "namespaced": "ew-world-play-view",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-present-list",
+      "namespaced": "ew-world-present-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-presentation-btn",
+      "namespaced": "ew-world-presentation-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-quest-list",
+      "namespaced": "ew-world-quest-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-quest-modal-overlay",
+      "namespaced": "ew-world-quest-modal-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-record-body",
+      "namespaced": "ew-world-record-body",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-record-close",
+      "namespaced": "ew-world-record-close",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-record-done",
+      "namespaced": "ew-world-record-done",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-record-kicker",
+      "namespaced": "ew-world-record-kicker",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-record-overlay",
+      "namespaced": "ew-world-record-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-record-reference-status",
+      "namespaced": "ew-world-record-reference-status",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-record-subtitle",
+      "namespaced": "ew-world-record-subtitle",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-record-tabs",
+      "namespaced": "ew-world-record-tabs",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-record-title",
+      "namespaced": "ew-world-record-title",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-region-datalist",
+      "namespaced": "ew-world-region-datalist",
+      "kinds": [
+        "runtime-getElementById"
+      ]
+    },
+    {
+      "source": "world-rename-session-btn",
+      "namespaced": "ew-world-rename-session-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-reroll-btn",
+      "namespaced": "ew-world-reroll-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-roll-btn",
+      "namespaced": "ew-world-roll-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-scheduler-overlay",
+      "namespaced": "ew-world-scheduler-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-scroll-bottom-btn",
+      "namespaced": "ew-world-scroll-bottom-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-search",
+      "namespaced": "ew-world-search",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-secrets-list",
+      "namespaced": "ew-world-secrets-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-send-btn",
+      "namespaced": "ew-world-send-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-session-select",
+      "namespaced": "ew-world-session-select",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-session-zero-btn",
+      "namespaced": "ew-world-session-zero-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-session-zero-overlay",
+      "namespaced": "ew-world-session-zero-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-sidecar-conversation",
+      "namespaced": "ew-world-sidecar-conversation",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-sidecar-conversation-log",
+      "namespaced": "ew-world-sidecar-conversation-log",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-sidecar-inspector-migrate",
+      "namespaced": "ew-world-sidecar-inspector-migrate",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "world-sidecar-inspector-overlay",
+      "namespaced": "ew-world-sidecar-inspector-overlay",
+      "kinds": [
+        "runtime-getElementById"
+      ]
+    },
+    {
+      "source": "world-sidecar-inspector-timelines",
+      "namespaced": "ew-world-sidecar-inspector-timelines",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "world-sidecar-openrouter-routing",
+      "namespaced": "ew-world-sidecar-openrouter-routing",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-sidecar-reader-backfill",
+      "namespaced": "ew-world-sidecar-reader-backfill",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "world-sidecar-reader-backfill-end",
+      "namespaced": "ew-world-sidecar-reader-backfill-end",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "world-sidecar-reader-backfill-start",
+      "namespaced": "ew-world-sidecar-reader-backfill-start",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "world-sidecar-workspace",
+      "namespaced": "ew-world-sidecar-workspace",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-stats-container",
+      "namespaced": "ew-world-stats-container",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-stats-modal-overlay",
+      "namespaced": "ew-world-stats-modal-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-status-columns",
+      "namespaced": "ew-world-status-columns",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-status-columns-toggle",
+      "namespaced": "ew-world-status-columns-toggle",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-status-resize-handle",
+      "namespaced": "ew-world-status-resize-handle",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-studio-btn",
+      "namespaced": "ew-world-studio-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-studio-view",
+      "namespaced": "ew-world-studio-view",
+      "kinds": [
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-summarize-btn",
+      "namespaced": "ew-world-summarize-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-system-btn",
+      "namespaced": "ew-world-system-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-thread-list",
+      "namespaced": "ew-world-thread-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-time-period",
+      "namespaced": "ew-world-time-period",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-timeline-browser-btn",
+      "namespaced": "ew-world-timeline-browser-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-timeline-browser-list",
+      "namespaced": "ew-world-timeline-browser-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-timeline-browser-overlay",
+      "namespaced": "ew-world-timeline-browser-overlay",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-toggle-headers-btn",
+      "namespaced": "ew-world-toggle-headers-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-total-count",
+      "namespaced": "ew-world-total-count",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-transport-suggestions",
+      "namespaced": "ew-world-transport-suggestions",
+      "kinds": [
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "world-user-input",
+      "namespaced": "ew-world-user-input",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-v3-end-scene-btn",
+      "namespaced": "ew-world-v3-end-scene-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-v3-gm-btn",
+      "namespaced": "ew-world-v3-gm-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-vector-fallback-banner",
+      "namespaced": "ew-world-vector-fallback-banner",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visible-count",
+      "namespaced": "ew-world-visible-count",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-4d",
+      "namespaced": "ew-world-visual-4d",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-active-outfit",
+      "namespaced": "ew-world-visual-active-outfit",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-active-outfit-list",
+      "namespaced": "ew-world-visual-active-outfit-list",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-add-object",
+      "namespaced": "ew-world-visual-add-object",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-ai-instruction",
+      "namespaced": "ew-world-visual-ai-instruction",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-apply-crop",
+      "namespaced": "ew-world-visual-apply-crop",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-apply-json",
+      "namespaced": "ew-world-visual-apply-json",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-apply-outfit",
+      "namespaced": "ew-world-visual-apply-outfit",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-aspect",
+      "namespaced": "ew-world-visual-aspect",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-brief-active",
+      "namespaced": "ew-world-visual-brief-active",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-brief-field",
+      "namespaced": "ew-world-visual-brief-field",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-brief-preset",
+      "namespaced": "ew-world-visual-brief-preset",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-brief-save-as",
+      "namespaced": "ew-world-visual-brief-save-as",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-brief-save-field",
+      "namespaced": "ew-world-visual-brief-save-field",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-brief-save-name",
+      "namespaced": "ew-world-visual-brief-save-name",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-canvas",
+      "namespaced": "ew-world-visual-canvas",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-character-heading",
+      "namespaced": "ew-world-visual-character-heading",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-correction",
+      "namespaced": "ew-world-visual-correction",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-crop-empty",
+      "namespaced": "ew-world-visual-crop-empty",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-crop-fill",
+      "namespaced": "ew-world-visual-crop-fill",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-crop-guide",
+      "namespaced": "ew-world-visual-crop-guide",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-crop-image",
+      "namespaced": "ew-world-visual-crop-image",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-crop-stage",
+      "namespaced": "ew-world-visual-crop-stage",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-crop-x",
+      "namespaced": "ew-world-visual-crop-x",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-crop-y",
+      "namespaced": "ew-world-visual-crop-y",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-crop-zoom",
+      "namespaced": "ew-world-visual-crop-zoom",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-document-form",
+      "namespaced": "ew-world-visual-document-form",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-document-form-tab",
+      "namespaced": "ew-world-visual-document-form-tab",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-document-json",
+      "namespaced": "ew-world-visual-document-json",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-document-json-tab",
+      "namespaced": "ew-world-visual-document-json-tab",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-editor-close",
+      "namespaced": "ew-world-visual-editor-close",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-editor-modal",
+      "namespaced": "ew-world-visual-editor-modal",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-editor-title",
+      "namespaced": "ew-world-visual-editor-title",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-export",
+      "namespaced": "ew-world-visual-export",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-framing",
+      "namespaced": "ew-world-visual-framing",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-framing-field",
+      "namespaced": "ew-world-visual-framing-field",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-identity-appearanceDetails",
+      "namespaced": "ew-world-visual-identity-appearanceDetails",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-identity-field",
+      "namespaced": "ew-world-visual-identity-field",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-identity-gender",
+      "namespaced": "ew-world-visual-identity-gender",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-identity-relativeSize",
+      "namespaced": "ew-world-visual-identity-relativeSize",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-identity-shapeAndColor",
+      "namespaced": "ew-world-visual-identity-shapeAndColor",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-identity-skinToneAndTexture",
+      "namespaced": "ew-world-visual-identity-skinToneAndTexture",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-identity-texture",
+      "namespaced": "ew-world-visual-identity-texture",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-json-status",
+      "namespaced": "ew-world-visual-json-status",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-left-outfit-select",
+      "namespaced": "ew-world-visual-left-outfit-select",
+      "kinds": [
+        "runtime-getElementById"
+      ]
+    },
+    {
+      "source": "world-visual-look-colorScheme",
+      "namespaced": "ew-world-visual-look-colorScheme",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-look-depthOfField",
+      "namespaced": "ew-world-visual-look-depthOfField",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-look-field",
+      "namespaced": "ew-world-visual-look-field",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-look-focus",
+      "namespaced": "ew-world-visual-look-focus",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-look-lensFocalLength",
+      "namespaced": "ew-world-visual-look-lensFocalLength",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-look-lightingConditions",
+      "namespaced": "ew-world-visual-look-lightingConditions",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-look-styleMedium",
+      "namespaced": "ew-world-visual-look-styleMedium",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-new-outfit",
+      "namespaced": "ew-world-visual-new-outfit",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-next",
+      "namespaced": "ew-world-visual-next",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-object-count",
+      "namespaced": "ew-world-visual-object-count",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-outfit-field",
+      "namespaced": "ew-world-visual-outfit-field",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-outfit-gallery",
+      "namespaced": "ew-world-visual-outfit-gallery",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-outfit-select",
+      "namespaced": "ew-world-visual-outfit-select",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-previous",
+      "namespaced": "ew-world-visual-previous",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-primary",
+      "namespaced": "ew-world-visual-primary",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-primary-label",
+      "namespaced": "ew-world-visual-primary-label",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-primary-label-text",
+      "namespaced": "ew-world-visual-primary-label-text",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-profile-heading",
+      "namespaced": "ew-world-visual-profile-heading",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-prompt",
+      "namespaced": "ew-world-visual-prompt",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-raw-json",
+      "namespaced": "ew-world-visual-raw-json",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-refine-prompt",
+      "namespaced": "ew-world-visual-refine-prompt",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-regenerate",
+      "namespaced": "ew-world-visual-regenerate",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-resolution",
+      "namespaced": "ew-world-visual-resolution",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-revise",
+      "namespaced": "ew-world-visual-revise",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-save-close",
+      "namespaced": "ew-world-visual-save-close",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-save-identity-reference",
+      "namespaced": "ew-world-visual-save-identity-reference",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-staging-heading",
+      "namespaced": "ew-world-visual-staging-heading",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-artistic-style",
+      "namespaced": "ew-world-visual-structured-artistic-style",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-aspect",
+      "namespaced": "ew-world-visual-structured-aspect",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-background",
+      "namespaced": "ew-world-visual-structured-background",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-camera",
+      "namespaced": "ew-world-visual-structured-camera",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-color",
+      "namespaced": "ew-world-visual-structured-color",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-compile",
+      "namespaced": "ew-world-visual-structured-compile",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-composition",
+      "namespaced": "ew-world-visual-structured-composition",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-context",
+      "namespaced": "ew-world-visual-structured-context",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-depth",
+      "namespaced": "ew-world-visual-structured-depth",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-focus",
+      "namespaced": "ew-world-visual-structured-focus",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-heading",
+      "namespaced": "ew-world-visual-structured-heading",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-intent",
+      "namespaced": "ew-world-visual-structured-intent",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-lens",
+      "namespaced": "ew-world-visual-structured-lens",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-lighting-conditions",
+      "namespaced": "ew-world-visual-structured-lighting-conditions",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-lighting-direction",
+      "namespaced": "ew-world-visual-structured-lighting-direction",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-lighting-shadows",
+      "namespaced": "ew-world-visual-structured-lighting-shadows",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-mood",
+      "namespaced": "ew-world-visual-structured-mood",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-objects",
+      "namespaced": "ew-world-visual-structured-objects",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-selector",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-panel",
+      "namespaced": "ew-world-visual-structured-panel",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-rebuild",
+      "namespaced": "ew-world-visual-structured-rebuild",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-refine",
+      "namespaced": "ew-world-visual-structured-refine",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-request",
+      "namespaced": "ew-world-visual-structured-request",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-resolution",
+      "namespaced": "ew-world-visual-structured-resolution",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-seed",
+      "namespaced": "ew-world-visual-structured-seed",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-style-medium",
+      "namespaced": "ew-world-visual-structured-style-medium",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-structured-sync",
+      "namespaced": "ew-world-visual-structured-sync",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-subject-action",
+      "namespaced": "ew-world-visual-subject-action",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-subject-expression",
+      "namespaced": "ew-world-visual-subject-expression",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-subject-field",
+      "namespaced": "ew-world-visual-subject-field",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-subject-location",
+      "namespaced": "ew-world-visual-subject-location",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-subject-orientation",
+      "namespaced": "ew-world-visual-subject-orientation",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-subject-pose",
+      "namespaced": "ew-world-visual-subject-pose",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-variant-count",
+      "namespaced": "ew-world-visual-variant-count",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-visual-variant-filter",
+      "namespaced": "ew-world-visual-variant-filter",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "world-weather-display",
+      "namespaced": "ew-world-weather-display",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "worlds-view",
+      "namespaced": "ew-worlds-view",
+      "kinds": [
+        "shell"
+      ]
+    }
+  ],
+  "dynamicPrefixes": [
+    {
+      "source": "loc-card-",
+      "namespaced": "ew-loc-card-"
+    },
+    {
+      "source": "world-visual-identity-",
+      "namespaced": "ew-world-visual-identity-"
+    },
+    {
+      "source": "world-visual-look-",
+      "namespaced": "ew-world-visual-look-"
+    },
+    {
+      "source": "world-visual-subject-",
+      "namespaced": "ew-world-visual-subject-"
+    }
+  ]
+}

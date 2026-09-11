@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=17.4.0-global-host-4">
+    <link rel="stylesheet" href="style.css?v=17.4.0-experimental-host-1">
 </head>
 <body>
 <div id="app">
@@ -31,6 +31,10 @@
             <button class="nav-item" data-view="worlds" id="nav-worlds-btn">
                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
                 Worlds
+            </button>
+            <button class="nav-item experimental-worlds-nav-item" data-view="experimentalWorlds" id="nav-experimental-worlds-btn" type="button" title="Open the isolated Experimental Worlds mode">
+                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="m7 4 2 2M17 4l-2 2"/></svg>
+                <span>Experimental Worlds</span><span class="experimental-worlds-nav-badge">EXPERIMENTAL</span>
             </button>
             <button class="nav-item video-world-nav-item" data-view="videoWorlds" id="nav-video-worlds-btn" type="button" title="Create and play persistent generated films">
                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3V9z"/></svg>
@@ -195,6 +199,11 @@
             </div>
             </div>
         </section>
+
+        <!-- Optional mode host. Its complete ew-* shell is lazy-mounted only
+             after the Experimental acknowledgement; native Worlds above is
+             never moved, renamed, cloned, or replaced. -->
+        <section id="experimental-worlds-root" class="view hidden" data-owner="experimental-worlds" aria-label="Experimental Worlds"></section>
 
         <!-- ────────── VIDEO ADVENTURES (separate from simulation Worlds) ────────── -->
         <section id="video-worlds-view" class="view hidden landing-view">
@@ -4176,6 +4185,9 @@
                         <button id="rolling-recovery-restore" class="btn btn-ghost" type="button" disabled>Restore selected</button>
                     </div>
                 </section>
+                <div class="settings-danger-zone"><div><strong>Experimental Worlds acknowledgement</strong><span>Disable the mode and require its five-second warning again. Saved Experimental Worlds are not deleted.</span></div>
+                <button id="reset-experimental-worlds-ack-btn" class="btn btn-ghost btn-full" type="button">Reset acknowledgement</button>
+                </div>
                 <div class="settings-danger-zone"><div><strong>Hard reset</strong><span>Deletes every local character, World, conversation and setting.</span></div>
                 <button id="purge-data-btn" class="btn btn-danger btn-full">⚠️ Purge All Data (Hard Reset)</button>
                 </div></div>
@@ -5233,6 +5245,10 @@
     </div>
 </div>
 
+<!-- Experimental viewport-level overlays are owned here rather than on the
+     host body. The portal remains empty while the mode is disabled. -->
+<div id="experimental-worlds-portal-root" data-owner="experimental-worlds" hidden></div>
+
 <script src="boot-diagnostics.js"></script>
 <script src="presets.js"></script>
 <script src="policy-panic-world.js"></script>
@@ -5254,8 +5270,10 @@
     <script src="vh-world-engine.js?v=20260908-reply-cleanup"></script>
 <script src="vh-simulation-core.js?v=20260908-reply-cleanup"></script>
 <script src="backup-domain-coordinator.js?v=17.4.0-backup-domains-1"></script>
+<script src="experiences/experimental-worlds/runtime/experimental-worlds-repository.js?v=17.4.0-experimental-persistence-1"></script>
+<script src="host-adapters/experimental-worlds/experimental-worlds-persistence-bootstrap.js?v=17.4.0-experimental-persistence-1"></script>
 <script src="rolling-recovery.js?v=17.4.0-rolling-recovery-1"></script>
 <script src="global-openrouter-routing.js?v=17.4.0-global-routing-9"></script>
-    <script src="app.js?v=17.4.0-workspace-restore-6"></script>
+    <script src="app.js?v=17.4.0-experimental-host-1"></script>
 </body>
 </html>

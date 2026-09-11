@@ -1,6 +1,6 @@
 // --- World Engine ---
 function setupWorldsLogic() {
-    const createBtn = document.getElementById('create-new-world-btn');
+    const createBtn = document.getElementById('ew-create-new-world-btn');
     if (createBtn) {
         createBtn.onclick = () => {
             createNewWorld();
@@ -8,7 +8,7 @@ function setupWorldsLogic() {
         };
     }
     
-    const search = document.getElementById('world-search');
+    const search = document.getElementById('ew-world-search');
     if (search) {
         search.oninput = () => renderWorlds();
     }
@@ -97,7 +97,7 @@ function renderStatePipelineConfig(world = ExperimentalWorldsState.editingWorld)
         section.classList.toggle('hidden', !visible);
         section.setAttribute('aria-hidden', visible ? 'false' : 'true');
     });
-    const hint = document.getElementById('w-state-pipeline-hint');
+    const hint = document.getElementById('ew-w-state-pipeline-hint');
     if (hint) hint.textContent = mode === 'sidecar'
         ? 'Sidecar is active. It is the only canonical state authority for this world.'
         : 'Compatibility mode for existing timelines. Inline Legacy owns its receipt repair and classifier paths.';
@@ -122,12 +122,12 @@ function setSidecarStudioFeatureAvailability(world = ExperimentalWorldsState.edi
     });
     // In Sidecar mode the FF 5.4 Roleplay OS owns the narrator prompt, so the
     // legacy world preset selector has nothing left to contribute there.
-    const legacyPresetSection = document.getElementById('w-legacy-preset-section');
+    const legacyPresetSection = document.getElementById('ew-w-legacy-preset-section');
     if (legacyPresetSection) legacyPresetSection.classList.toggle('hidden', sidecarActive);
 }
 
 function renderWorldOverviewSidecarMigration(world = ExperimentalWorldsState.editingWorld) {
-    const host = document.getElementById('w-overview-sidecar-migration');
+    const host = document.getElementById('ew-w-overview-sidecar-migration');
     if (!host) return;
     const inlineLegacy = !!world && !worldUsesSidecarPipeline(world);
     host.classList.toggle('hidden', !inlineLegacy);
@@ -146,14 +146,14 @@ function renderWorldOverviewSidecarMigration(world = ExperimentalWorldsState.edi
                 <h3>This world is using Inline Legacy</h3>
                 <p>Move this world to Sidecar before authoring Sidecar-only travel, vehicle, and reconciliation features. The migration wizard creates a recoverable backup and retains raw roleplay and canonical records. ${experimentalEscapeHTML(timelineLabel)}</p>
             </div>
-            <button id="w-overview-sidecar-migrate-btn" type="button" class="btn btn-primary">Review Sidecar migration</button>
+            <button id="ew-w-overview-sidecar-migrate-btn" type="button" class="btn btn-primary">Review Sidecar migration</button>
         </div>`;
-    document.getElementById('w-overview-sidecar-migrate-btn')?.addEventListener('click', () => openSidecarMigrationWizard(world.id));
+    document.getElementById('ew-w-overview-sidecar-migrate-btn')?.addEventListener('click', () => openSidecarMigrationWizard(world.id));
 }
 
 function setupWorldStudioTabs() {
     const tabs = document.querySelectorAll('.world-studio-tab');
-    const panels = document.querySelectorAll('#world-studio-view .studio-panel');
+    const panels = document.querySelectorAll('#ew-world-studio-view .studio-panel');
 
     tabs.forEach(tab => {
         tab.onclick = () => {
@@ -225,30 +225,30 @@ function setupWorldStudioLogic() {
         ExperimentalWorldsRuntime.bindRouteListener('sidecar-feature-guard-key', document, 'keydown', blockUnavailableSidecarFeature, true);
     }
 
-    const recordOverlay = document.getElementById('world-record-overlay');
-    document.getElementById('world-record-close').onclick = closeWorldRecordInspector;
-    document.getElementById('world-record-done').onclick = closeWorldRecordInspector;
+    const recordOverlay = document.getElementById('ew-world-record-overlay');
+    document.getElementById('ew-world-record-close').onclick = closeWorldRecordInspector;
+    document.getElementById('ew-world-record-done').onclick = closeWorldRecordInspector;
     recordOverlay.onclick = event => { if (event.target === recordOverlay) closeWorldRecordInspector(); };
 
-    document.getElementById('close-world-studio-btn').onclick = () => ExperimentalWorldsHost.navigate('worlds');
-    document.getElementById('save-world-btn').onclick = saveWorld;
-    document.getElementById('save-play-world-btn').onclick = async () => {
+    document.getElementById('ew-close-world-studio-btn').onclick = () => ExperimentalWorldsHost.navigate('worlds');
+    document.getElementById('ew-save-world-btn').onclick = saveWorld;
+    document.getElementById('ew-save-play-world-btn').onclick = async () => {
         await saveWorld();
         if (ExperimentalWorldsState.editingWorld?.id) enterWorld(ExperimentalWorldsState.editingWorld.id);
     };
-    document.getElementById('delete-world-btn').onclick = deleteWorld;
+    document.getElementById('ew-delete-world-btn').onclick = deleteWorld;
     
-    document.getElementById('open-scheduler-btn').onclick = () => {
-        document.getElementById('world-scheduler-overlay').classList.remove('hidden');
+    document.getElementById('ew-open-scheduler-btn').onclick = () => {
+        document.getElementById('ew-world-scheduler-overlay').classList.remove('hidden');
         renderWorldScheduler();
     };
-    document.getElementById('close-scheduler-btn').onclick = () => document.getElementById('world-scheduler-overlay').classList.add('hidden');
-    document.getElementById('save-scheduler-btn').onclick = () => {
-        document.getElementById('world-scheduler-overlay').classList.add('hidden');
+    document.getElementById('ew-close-scheduler-btn').onclick = () => document.getElementById('ew-world-scheduler-overlay').classList.add('hidden');
+    document.getElementById('ew-save-scheduler-btn').onclick = () => {
+        document.getElementById('ew-world-scheduler-overlay').classList.add('hidden');
         ExperimentalWorldsHost.notify('Schedules saved to world configuration.', 'success');
     };
 
-    document.getElementById('gen-all-schedules-btn').onclick = async (e) => {
+    document.getElementById('ew-gen-all-schedules-btn').onclick = async (e) => {
         const btn = e.target;
         const world = ExperimentalWorldsState.editingWorld;
         if (!world) return;
@@ -275,13 +275,13 @@ function setupWorldStudioLogic() {
         }
     };
 
-    document.getElementById('run-world-audit-btn').onclick = () => {
-        document.getElementById('world-audit-overlay').classList.remove('hidden');
+    document.getElementById('ew-run-world-audit-btn').onclick = () => {
+        document.getElementById('ew-world-audit-overlay').classList.remove('hidden');
         renderWorldAudit();
     };
-    document.getElementById('close-audit-btn').onclick = () => document.getElementById('world-audit-overlay').classList.add('hidden');
+    document.getElementById('ew-close-audit-btn').onclick = () => document.getElementById('ew-world-audit-overlay').classList.add('hidden');
     
-    document.getElementById('export-world-btn').onclick = () => {
+    document.getElementById('ew-export-world-btn').onclick = () => {
         if (!ExperimentalWorldsState.editingWorld) return;
         // Never hand someone a world carrying references to things that are gone.
         normalizeAuthoredWorld(ExperimentalWorldsState.editingWorld);
@@ -305,66 +305,66 @@ function setupWorldStudioLogic() {
         URL.revokeObjectURL(url);
         ExperimentalWorldsHost.notify(`World exported with ${media.count} embedded media asset${media.count === 1 ? '' : 's'} (${formatByteSize(media.bytes)}).`, 'success');
     };
-    document.getElementById('add-location-btn')?.addEventListener('click', () => addWorldLocation('top'));
-    document.getElementById('add-location-btn-bottom')?.addEventListener('click', () => addWorldLocation('bottom'));
+    document.getElementById('ew-add-location-btn')?.addEventListener('click', () => addWorldLocation('top'));
+    document.getElementById('ew-add-location-btn-bottom')?.addEventListener('click', () => addWorldLocation('bottom'));
     // Do not assign addWorldEntity directly as an event handler. Browsers pass
     // the click event as the first argument, which used to become `entity.type`
     // and produced records that were neither people nor items.
-    document.getElementById('add-entity-btn').onclick = () => addWorldEntity('npc');
-    document.getElementById('add-entity-btn-bottom').onclick = () => addWorldEntity('npc');
-    document.getElementById('add-item-btn').onclick = addWorldItem;
-    document.getElementById('add-item-btn-bottom').onclick = addWorldItem;
-    document.getElementById('add-vehicle-btn').onclick = () => addWorldEntity('vehicle');
-    document.getElementById('add-vehicle-btn-bottom').onclick = () => addWorldEntity('vehicle');
-    document.getElementById('add-traversal-method-btn')?.addEventListener('click', () => addWorldTraversalMethod());
-    document.getElementById('add-faction-btn').onclick = () => addWorldFaction('top');
-    document.getElementById('add-faction-btn-bottom').onclick = () => addWorldFaction('bottom');
-    document.getElementById('add-world-origin-btn').onclick = addWorldStartingLife;
-    document.getElementById('add-w-lore-btn').onclick = () => { addWorldLore(); updateWorldTokenCount(); };
-    document.getElementById('add-world-stat-btn').onclick = addWorldStat;
-    document.getElementById('w-fetch-model-btn').onclick = fetchWorldModelSettings;
-    document.getElementById('w-sidecar-mode').onchange = () => {
+    document.getElementById('ew-add-entity-btn').onclick = () => addWorldEntity('npc');
+    document.getElementById('ew-add-entity-btn-bottom').onclick = () => addWorldEntity('npc');
+    document.getElementById('ew-add-item-btn').onclick = addWorldItem;
+    document.getElementById('ew-add-item-btn-bottom').onclick = addWorldItem;
+    document.getElementById('ew-add-vehicle-btn').onclick = () => addWorldEntity('vehicle');
+    document.getElementById('ew-add-vehicle-btn-bottom').onclick = () => addWorldEntity('vehicle');
+    document.getElementById('ew-add-traversal-method-btn')?.addEventListener('click', () => addWorldTraversalMethod());
+    document.getElementById('ew-add-faction-btn').onclick = () => addWorldFaction('top');
+    document.getElementById('ew-add-faction-btn-bottom').onclick = () => addWorldFaction('bottom');
+    document.getElementById('ew-add-world-origin-btn').onclick = addWorldStartingLife;
+    document.getElementById('ew-add-w-lore-btn').onclick = () => { addWorldLore(); updateWorldTokenCount(); };
+    document.getElementById('ew-add-world-stat-btn').onclick = addWorldStat;
+    document.getElementById('ew-w-fetch-model-btn').onclick = fetchWorldModelSettings;
+    document.getElementById('ew-w-sidecar-mode').onchange = () => {
         // Kept as an informational control for existing Studio markup. It
         // cannot re-enable the retired Inline execution path.
         const config = ExperimentalWorldsState.editingWorld
             && window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
         if (config) config.mode = 'sidecar';
     };
-    document.getElementById('w-inline-legacy-migrate-btn').onclick = () => {
+    document.getElementById('ew-w-inline-legacy-migrate-btn').onclick = () => {
         if (ExperimentalWorldsState.editingWorld?.id) openSidecarMigrationWizard(ExperimentalWorldsState.editingWorld.id);
     };
-    document.getElementById('w-sidecar-inherit-narrator').onchange = event => {
+    document.getElementById('ew-w-sidecar-inherit-narrator').onchange = event => {
         if (!ExperimentalWorldsState.editingWorld) return;
         const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
         if (!config) return;
         config.tracker.inheritNarrator = event.target.checked;
         renderWorldSidecarConfigEditor(ExperimentalWorldsState.editingWorld);
     };
-    document.getElementById('w-sidecar-reader-enabled').onchange = event => {
+    document.getElementById('ew-w-sidecar-reader-enabled').onchange = event => {
         if (!ExperimentalWorldsState.editingWorld) return;
         const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
         if (!config) return;
         config.tracker.readerEnabled = event.target.checked;
         renderWorldSidecarConfigEditor(ExperimentalWorldsState.editingWorld);
     };
-    document.getElementById('w-sidecar-reader-profile-inherit').onchange = event => {
+    document.getElementById('ew-w-sidecar-reader-profile-inherit').onchange = event => {
         if (!ExperimentalWorldsState.editingWorld) return;
         const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
         if (!config) return;
         config.tracker.readerProfileInherit = event.target.checked;
         renderWorldSidecarConfigEditor(ExperimentalWorldsState.editingWorld);
     };
-    document.getElementById('w-sidecar-reasoning-mode').onchange = event => {
-        document.getElementById('w-sidecar-reasoning-effort-row')?.classList.toggle('hidden', event.target.value === 'disabled');
+    document.getElementById('ew-w-sidecar-reasoning-mode').onchange = event => {
+        document.getElementById('ew-w-sidecar-reasoning-effort-row')?.classList.toggle('hidden', event.target.value === 'disabled');
     };
-    document.getElementById('w-sidecar-provider').onchange = () => {
-        renderSidecarModelOptions(ExperimentalWorldsHost.normalizedProviderId(document.getElementById('w-sidecar-provider').value));
+    document.getElementById('ew-w-sidecar-provider').onchange = () => {
+        renderSidecarModelOptions(ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider').value));
         updateSidecarOverrideVisibility();
     };
-    document.getElementById('w-sidecar-fetch-model-btn').onclick = fetchSidecarModelSettings;
+    document.getElementById('ew-w-sidecar-fetch-model-btn').onclick = fetchSidecarModelSettings;
     setupSidecarModelSearch();
     setupRoleplayOSConfigHandlers();
-    document.getElementById('w-sidecar-memory-inherit').onchange = event => {
+    document.getElementById('ew-w-sidecar-memory-inherit').onchange = event => {
         if (!ExperimentalWorldsState.editingWorld) return;
         const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
         if (!config) return;
@@ -373,16 +373,16 @@ function setupWorldStudioLogic() {
     };
 
     const sandboxBindings = {
-        'w-sandbox-enabled': ['enabled', 'checked'],
-        'w-sandbox-politics': ['politics', 'checked'],
-        'w-sandbox-conflict': ['conflict', 'checked'],
-        'w-sandbox-law': ['law', 'checked'],
-        'w-sandbox-seasons': ['seasons', 'checked'],
-        'w-sandbox-growth': ['growth', 'checked'],
-        'w-sandbox-scale': ['scale', 'value'],
-        'w-sandbox-calendar': ['calendar', 'value'],
-        'w-sandbox-season-days': ['seasonDays', 'value'],
-        'w-sandbox-principles': ['principles', 'value']
+        'ew-w-sandbox-enabled': ['enabled', 'checked'],
+        'ew-w-sandbox-politics': ['politics', 'checked'],
+        'ew-w-sandbox-conflict': ['conflict', 'checked'],
+        'ew-w-sandbox-law': ['law', 'checked'],
+        'ew-w-sandbox-seasons': ['seasons', 'checked'],
+        'ew-w-sandbox-growth': ['growth', 'checked'],
+        'ew-w-sandbox-scale': ['scale', 'value'],
+        'ew-w-sandbox-calendar': ['calendar', 'value'],
+        'ew-w-sandbox-season-days': ['seasonDays', 'value'],
+        'ew-w-sandbox-principles': ['principles', 'value']
     };
     Object.entries(sandboxBindings).forEach(([id, [field, property]]) => {
         const input = document.getElementById(id);
@@ -400,15 +400,15 @@ function setupWorldStudioLogic() {
     });
 
     // Token Count Triggers
-    ['w-studio-name', 'w-studio-desc', 'w-studio-dm-prompt', 'w-studio-intro', 'w-studio-note'].forEach(id => {
+    ['ew-w-studio-name', 'ew-w-studio-desc', 'ew-w-studio-dm-prompt', 'ew-w-studio-intro', 'ew-w-studio-note'].forEach(id => {
         document.getElementById(id).oninput = updateWorldTokenCount;
     });
     
-    document.getElementById('w-studio-reasoning').onchange = (e) => {
-        document.getElementById('w-reasoning-effort-row').classList.toggle('hidden', !e.target.checked);
+    document.getElementById('ew-w-studio-reasoning').onchange = (e) => {
+        document.getElementById('ew-w-reasoning-effort-row').classList.toggle('hidden', !e.target.checked);
     };
 
-    const wUnlockBtn = document.getElementById('w-unlock-all-params-btn');
+    const wUnlockBtn = document.getElementById('ew-w-unlock-all-params-btn');
     if (wUnlockBtn) {
         wUnlockBtn.onclick = () => {
             updateReasoningVisibility([], '', true, 'w-');
@@ -417,11 +417,11 @@ function setupWorldStudioLogic() {
     }
 
     // HUD Config Hooks
-    document.getElementById('w-hud-show-clock').onchange = (e) => ExperimentalWorldsState.editingWorld.hudConfig.showClock = e.target.checked;
-    document.getElementById('w-hud-show-quests').onchange = (e) => ExperimentalWorldsState.editingWorld.hudConfig.showQuests = e.target.checked;
-    document.getElementById('w-hud-show-ledger').onchange = (e) => ExperimentalWorldsState.editingWorld.hudConfig.showLedger = e.target.checked;
-    document.getElementById('w-hud-show-inventory').onchange = (e) => ExperimentalWorldsState.editingWorld.hudConfig.showInventory = e.target.checked;
-    document.getElementById('w-hud-enable-schedules').onchange = (e) => {
+    document.getElementById('ew-w-hud-show-clock').onchange = (e) => ExperimentalWorldsState.editingWorld.hudConfig.showClock = e.target.checked;
+    document.getElementById('ew-w-hud-show-quests').onchange = (e) => ExperimentalWorldsState.editingWorld.hudConfig.showQuests = e.target.checked;
+    document.getElementById('ew-w-hud-show-ledger').onchange = (e) => ExperimentalWorldsState.editingWorld.hudConfig.showLedger = e.target.checked;
+    document.getElementById('ew-w-hud-show-inventory').onchange = (e) => ExperimentalWorldsState.editingWorld.hudConfig.showInventory = e.target.checked;
+    document.getElementById('ew-w-hud-enable-schedules').onchange = (e) => {
         const world = ExperimentalWorldsState.editingWorld;
         if (!world) return;
         const rules = normalizeWorldGameRules(world);
@@ -430,7 +430,7 @@ function setupWorldStudioLogic() {
         world.hudConfig.enableSchedules = e.target.checked;
         loadWorldGameRuleControls(world);
     };
-    document.getElementById('w-rules-profile').onchange = (e) => {
+    document.getElementById('ew-w-rules-profile').onchange = (e) => {
         const world = ExperimentalWorldsState.editingWorld;
         if (!world) return;
         if (e.target.value === 'custom') {
@@ -438,11 +438,11 @@ function setupWorldStudioLogic() {
         } else {
             applyWorldRuleProfile(world, e.target.value);
         }
-        document.getElementById('w-hud-show-quests').checked = !!world.hudConfig.showQuests;
-        document.getElementById('w-hud-show-inventory').checked = !!world.hudConfig.showInventory;
+        document.getElementById('ew-w-hud-show-quests').checked = !!world.hudConfig.showQuests;
+        document.getElementById('ew-w-hud-show-inventory').checked = !!world.hudConfig.showInventory;
         loadWorldGameRuleControls(world);
     };
-    document.querySelectorAll('#w-rules-modules-grid [data-rule-module]').forEach(input => {
+    document.querySelectorAll('#ew-w-rules-modules-grid [data-rule-module]').forEach(input => {
         input.onchange = () => {
             const world = ExperimentalWorldsState.editingWorld;
             if (!world) return;
@@ -464,37 +464,37 @@ function setupWorldStudioLogic() {
             world.hudConfig.enableSchedules = !!rules.modules.schedules;
             if (!rules.modules.quests) world.hudConfig.showQuests = false;
             if (!rules.modules.inventory) world.hudConfig.showInventory = false;
-            document.getElementById('w-hud-show-quests').checked = !!world.hudConfig.showQuests;
-            document.getElementById('w-hud-show-inventory').checked = !!world.hudConfig.showInventory;
+            document.getElementById('ew-w-hud-show-quests').checked = !!world.hudConfig.showQuests;
+            document.getElementById('ew-w-hud-show-inventory').checked = !!world.hudConfig.showInventory;
             loadWorldGameRuleControls(world);
         };
     });
-    document.getElementById('w-hud-start-time').oninput = (e) => {
+    document.getElementById('ew-w-hud-start-time').oninput = (e) => {
         if (!ExperimentalWorldsState.editingWorld.hudConfig) ExperimentalWorldsState.editingWorld.hudConfig = {};
         const parsed = parseInt(e.target.value, 10);
         ExperimentalWorldsState.editingWorld.hudConfig.startTimeHours = Number.isFinite(parsed) ? Math.max(0, Math.min(23, parsed)) : 8;
     };
-    document.getElementById('w-hud-start-minute').oninput = (e) => {
+    document.getElementById('ew-w-hud-start-minute').oninput = (e) => {
         if (!ExperimentalWorldsState.editingWorld.hudConfig) ExperimentalWorldsState.editingWorld.hudConfig = {};
         const parsed = parseInt(e.target.value, 10);
         ExperimentalWorldsState.editingWorld.hudConfig.startTimeMinutes = Number.isFinite(parsed) ? Math.max(0, Math.min(59, parsed)) : 0;
     };
-    document.getElementById('w-hud-time-step').oninput = (e) => {
+    document.getElementById('ew-w-hud-time-step').oninput = (e) => {
         if (!ExperimentalWorldsState.editingWorld.hudConfig) ExperimentalWorldsState.editingWorld.hudConfig = {};
         ExperimentalWorldsState.editingWorld.hudConfig.timeStep = isNaN(parseInt(e.target.value)) ? 5 : parseInt(e.target.value);
     };
-    document.getElementById('w-hud-start-weekday').onchange = (e) => {
+    document.getElementById('ew-w-hud-start-weekday').onchange = (e) => {
         if (!ExperimentalWorldsState.editingWorld.hudConfig) ExperimentalWorldsState.editingWorld.hudConfig = {};
         ExperimentalWorldsState.editingWorld.hudConfig.startWeekday = WORLD_WEEKDAYS.includes(e.target.value) ? e.target.value : 'Monday';
     };
-    document.getElementById('w-hud-show-days').onchange = (e) => {
+    document.getElementById('ew-w-hud-show-days').onchange = (e) => {
         if (!ExperimentalWorldsState.editingWorld.hudConfig) ExperimentalWorldsState.editingWorld.hudConfig = {};
         ExperimentalWorldsState.editingWorld.hudConfig.showDays = e.target.checked;
     };
 
     // World Banner Uploader
-    const bannerArea = document.getElementById('w-banner-upload-area');
-    const bannerInput = document.getElementById('w-banner-input');
+    const bannerArea = document.getElementById('ew-w-banner-upload-area');
+    const bannerInput = document.getElementById('ew-w-banner-input');
     if (bannerArea && bannerInput) {
         bannerArea.onclick = () => bannerInput.click();
         bannerInput.onchange = async (e) => {
@@ -505,7 +505,7 @@ function setupWorldStudioLogic() {
                 // as the chat background, so 1280px wide at 0.7 quality is plenty.
                 const optimized = await experimentalNormalizeUploadedImage(file, 1280, 0.7);
                 ExperimentalWorldsState.editingWorld.banner = optimized;
-                const preview = document.getElementById('w-banner-preview');
+                const preview = document.getElementById('ew-w-banner-preview');
                 preview.style.backgroundImage = `url('${optimized}')`;
                 preview.innerHTML = '';
                 renderWorlds(); // Update the card in library
@@ -517,11 +517,11 @@ function setupWorldStudioLogic() {
     }
 
     // World System Presets
-    const wPresetSelect = document.getElementById('w-studio-system-preset');
+    const wPresetSelect = document.getElementById('ew-w-studio-system-preset');
     if (wPresetSelect) {
         wPresetSelect.onchange = (e) => {
             const val = e.target.value;
-            const ftBtn = document.getElementById('w-fine-tune-preset-btn');
+            const ftBtn = document.getElementById('ew-w-fine-tune-preset-btn');
             if (ftBtn) ftBtn.style.display = val ? 'block' : 'none';
             if (ExperimentalWorldsState.editingWorld) {
                 if (ExperimentalWorldsState.editingWorld.activePresetId !== val) ExperimentalWorldsState.editingWorld.presetOverrides = {};
@@ -531,8 +531,8 @@ function setupWorldStudioLogic() {
         };
     }
 
-    const wImportBtn = document.getElementById('w-import-preset-btn');
-    const wPresetInput = document.getElementById('w-preset-file-input');
+    const wImportBtn = document.getElementById('ew-w-import-preset-btn');
+    const wPresetInput = document.getElementById('ew-w-preset-file-input');
     if (wImportBtn && wPresetInput) {
         wImportBtn.onclick = () => wPresetInput.click();
         wPresetInput.onchange = (e) => {
@@ -559,7 +559,7 @@ function setupWorldStudioLogic() {
 // Rebuild the World Studio system-preset dropdown from the current preset list,
 // keeping the given selection. Used on studio open and after preset import.
 function populateWorldPresetDropdown(activePresetId) {
-    const presetSelect = document.getElementById('w-studio-system-preset');
+    const presetSelect = document.getElementById('ew-w-studio-system-preset');
     if (!presetSelect) return;
     const keep = activePresetId !== undefined ? activePresetId : presetSelect.value;
     presetSelect.innerHTML = '<option value="">None (Custom DM Persona Only)</option>';
@@ -570,12 +570,12 @@ function populateWorldPresetDropdown(activePresetId) {
         opt.selected = p.id === keep;
         presetSelect.appendChild(opt);
     });
-    const ftBtn = document.getElementById('w-fine-tune-preset-btn');
+    const ftBtn = document.getElementById('ew-w-fine-tune-preset-btn');
     if (ftBtn) ftBtn.style.display = keep ? 'block' : 'none';
 }
 
 function setupWorldImport() {
-    const btn = document.getElementById('import-world-btn');
+    const btn = document.getElementById('ew-import-world-btn');
     if (!btn) return;
 
     btn.onclick = () => {
@@ -660,8 +660,8 @@ async function fetchWorldModelSettings() {
     // This control discovers the model catalogue for the current host text
     // provider.  It must not treat an inherited model as a World override, or
     // require an author to type an ID merely to open the available-model list.
-    const button = document.getElementById('w-fetch-model-btn');
-    const input = document.getElementById('w-studio-model');
+    const button = document.getElementById('ew-w-fetch-model-btn');
+    const input = document.getElementById('ew-w-studio-model');
     const oldText = button?.textContent || 'Fetch models';
     if (!input) return;
     if (button) {
@@ -695,7 +695,7 @@ async function fetchWorldModelSettings() {
 const sidecarProviderModelCatalogs = new Map();
 
 function updateSidecarProviderConnectionHint(providerId) {
-    const hint = document.getElementById('w-sidecar-provider-connection-hint');
+    const hint = document.getElementById('ew-w-sidecar-provider-connection-hint');
     if (!hint) return;
     const provider = ExperimentalWorldsHost.normalizedProviderId(providerId);
     const configured = ExperimentalWorldsHost.providerHasCredentials(provider);
@@ -704,20 +704,20 @@ function updateSidecarProviderConnectionHint(providerId) {
 }
 
 function renderSidecarModelOptions(provider, selected = '') {
-    const input = document.getElementById('w-sidecar-model');
+    const input = document.getElementById('ew-w-sidecar-model');
     if (!input) return;
     const models = sidecarProviderModelCatalogs.get(provider) || [];
     input.value = String(selected || '').trim();
     input.placeholder = models.length ? 'Search provider models or type an exact ID' : 'Fetch models or type an exact model ID';
     input.setAttribute('aria-expanded', 'false');
-    document.getElementById('w-sidecar-model-results')?.classList.add('hidden');
+    document.getElementById('ew-w-sidecar-model-results')?.classList.add('hidden');
 }
 
 function renderSidecarModelSearchResults() {
-    const input = document.getElementById('w-sidecar-model');
-    const results = document.getElementById('w-sidecar-model-results');
+    const input = document.getElementById('ew-w-sidecar-model');
+    const results = document.getElementById('ew-w-sidecar-model-results');
     if (!input || !results) return;
-    const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
+    const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider')?.value);
     const query = input.value.trim().toLowerCase();
     const models = (sidecarProviderModelCatalogs.get(provider) || []).filter(model =>
         !query || `${model.name || ''} ${model.id || ''}`.toLowerCase().includes(query)
@@ -751,8 +751,8 @@ function renderSidecarModelSearchResults() {
 }
 
 function setupSidecarModelSearch() {
-    const input = document.getElementById('w-sidecar-model');
-    const results = document.getElementById('w-sidecar-model-results');
+    const input = document.getElementById('ew-w-sidecar-model');
+    const results = document.getElementById('ew-w-sidecar-model-results');
     if (!input || !results) return;
     if (input.dataset.sidecarSearchReady !== 'true') {
         input.dataset.sidecarSearchReady = 'true';
@@ -776,14 +776,14 @@ function setupSidecarModelSearch() {
 
 function applySidecarSelectedModelMetadata() {
     const world = ExperimentalWorldsState.editingWorld;
-    const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
-    const model = document.getElementById('w-sidecar-model')?.value || '';
+    const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider')?.value);
+    const model = document.getElementById('ew-w-sidecar-model')?.value || '';
     const match = (sidecarProviderModelCatalogs.get(provider) || []).find(item => item.id === model);
     const config = world && window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world);
     if (config && match) config.tracker.supportedParams = Array.isArray(match.supported_parameters)
         ? match.supported_parameters : [];
     else if (config && model !== String(config.tracker.model || '').trim()) config.tracker.supportedParams = [];
-    const status = document.getElementById('w-sidecar-model-status');
+    const status = document.getElementById('ew-w-sidecar-model-status');
     if (status && model) status.textContent = match
         ? `${match.name || match.id} selected${config?.tracker?.supportedParams?.length ? ` · ${config.tracker.supportedParams.join(', ')}` : ''}`
         : `${model} will be sent as an exact custom model ID.`;
@@ -791,9 +791,9 @@ function applySidecarSelectedModelMetadata() {
 
 async function fetchSidecarModelSettings() {
     const world = ExperimentalWorldsState.editingWorld;
-    const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
-    const status = document.getElementById('w-sidecar-model-status');
-    const button = document.getElementById('w-sidecar-fetch-model-btn');
+    const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider')?.value);
+    const status = document.getElementById('ew-w-sidecar-model-status');
+    const button = document.getElementById('ew-w-sidecar-fetch-model-btn');
     if (!world) return;
     if (status) status.textContent = `Fetching ${provider} model metadata…`;
     if (button) { button.disabled = true; button.textContent = 'Fetching…'; }
@@ -807,11 +807,11 @@ async function fetchSidecarModelSettings() {
             .filter(item => item?.id).map(item => ({ ...item, id: String(item.id), name: String(item.name || item.id) }))
             .sort((left, right) => left.name.localeCompare(right.name));
         if (!models.length) throw new Error(`${provider} did not return any usable models.`);
-        const selected = document.getElementById('w-sidecar-model')?.value || '';
+        const selected = document.getElementById('ew-w-sidecar-model')?.value || '';
         sidecarProviderModelCatalogs.set(provider, models);
         renderSidecarModelOptions(provider, selected);
         applySidecarSelectedModelMetadata();
-        if (document.activeElement === document.getElementById('w-sidecar-model')) renderSidecarModelSearchResults();
+        if (document.activeElement === document.getElementById('ew-w-sidecar-model')) renderSidecarModelSearchResults();
         if (status) status.textContent = `${models.length} ${provider} models available. Choose one to use it for Sidecar.`;
         ExperimentalWorldsHost.notify(`${models.length} Sidecar models loaded from ${provider}.`, 'success');
     } catch (error) {
@@ -823,13 +823,13 @@ async function fetchSidecarModelSettings() {
 }
 
 function updateSidecarOverrideVisibility() {
-    const inheriting = document.getElementById('w-sidecar-inherit-narrator')?.checked !== false;
-    document.getElementById('w-sidecar-override-config')?.classList.toggle('hidden', inheriting);
-    document.getElementById('world-sidecar-openrouter-routing')?.classList.toggle('hidden',
-        inheriting || ExperimentalWorldsHost.normalizedProviderId(document.getElementById('w-sidecar-provider')?.value) !== 'openrouter');
+    const inheriting = document.getElementById('ew-w-sidecar-inherit-narrator')?.checked !== false;
+    document.getElementById('ew-w-sidecar-override-config')?.classList.toggle('hidden', inheriting);
+    document.getElementById('ew-world-sidecar-openrouter-routing')?.classList.toggle('hidden',
+        inheriting || ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider')?.value) !== 'openrouter');
     if (!inheriting) {
-        const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
-        renderSidecarModelOptions(provider, document.getElementById('w-sidecar-model')?.value || '');
+        const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider')?.value);
+        renderSidecarModelOptions(provider, document.getElementById('ew-w-sidecar-model')?.value || '');
         updateSidecarProviderConnectionHint(provider);
         initializeOpenRouterRoutingPanel('sidecar', { force: false });
     }
@@ -923,8 +923,8 @@ function renderRoleplayOSChoiceBlock(block, os, hasSource) {
 }
 
 function renderRoleplayOSConfigEditor(world) {
-    const host = document.getElementById('w-roleplay-os-choices');
-    const sourceSelect = document.getElementById('w-roleplay-os-source');
+    const host = document.getElementById('ew-w-roleplay-os-choices');
+    const sourceSelect = document.getElementById('ew-w-roleplay-os-source');
     if (!host || !sourceSelect || !world) return;
     const registry = getInstalledRoleplayOSSources();
     const stored = experimentalIsPlainObject(world?.sidecarConfig?.roleplayOS) ? world.sidecarConfig.roleplayOS : {};
@@ -946,7 +946,7 @@ function renderRoleplayOSConfigEditor(world) {
     }
     sourceSelect.innerHTML = options.join('');
 
-    const info = document.getElementById('w-roleplay-os-source-info');
+    const info = document.getElementById('ew-w-roleplay-os-source-info');
     if (info) {
         if (source) {
             const label = stored.sourceId && stored.sourceId !== 'builtin' ? 'Source active' : 'Auto-detected source';
@@ -959,7 +959,7 @@ function renderRoleplayOSConfigEditor(world) {
         }
     }
 
-    const stateBadge = document.getElementById('w-roleplay-os-state');
+    const stateBadge = document.getElementById('ew-w-roleplay-os-state');
     if (stateBadge) {
         const customCount = Object.keys(experimentalIsPlainObject(stored.choices) ? stored.choices : {}).filter(key => key !== 'state_mode').length;
         stateBadge.textContent = customCount ? 'Customized · ' + customCount + ' choice' + (customCount === 1 ? '' : 's') : 'Defaults active';
@@ -1022,7 +1022,7 @@ function renderRoleplayOSConfigEditor(world) {
 }
 
 function renderRoleplayOSMigration(world) {
-    const host = document.getElementById('w-roleplay-os-migration');
+    const host = document.getElementById('ew-w-roleplay-os-migration');
     if (!host) return;
     const migration = experimentalIsPlainObject(world?.sidecarConfig?.roleplayOS?.lastMigration) ? world.sidecarConfig.roleplayOS.lastMigration : null;
     const notes = migration ? (Array.isArray(migration.notes) ? migration.notes : []) : [];
@@ -1032,7 +1032,7 @@ function renderRoleplayOSMigration(world) {
     }
     host.innerHTML = '<div class="os-migration-report"><strong>Selection reconciliation</strong>'
         + '<ul>' + notes.map(note => '<li>' + experimentalEscapeHTML(note) + '</li>').join('') + '</ul>'
-        + '<button type="button" id="w-roleplay-os-migration-dismiss" class="btn btn-ghost" style="font-size:0.7rem; padding:2px 10px;">Dismiss</button></div>';
+        + '<button type="button" id="ew-w-roleplay-os-migration-dismiss" class="btn btn-ghost" style="font-size:0.7rem; padding:2px 10px;">Dismiss</button></div>';
 }
 
 function setRoleplayOSChoice(world, variable, value) {
@@ -1101,16 +1101,16 @@ async function importRoleplayOSourcePreset(raw) {
 }
 
 function setupRoleplayOSConfigHandlers() {
-    const host = document.getElementById('w-roleplay-os-choices');
+    const host = document.getElementById('ew-w-roleplay-os-choices');
     if (host) host.onclick = event => {
         const chip = event.target.closest('[data-os-variable]');
         if (!chip || chip.disabled) return;
         setRoleplayOSChoice(ExperimentalWorldsState.editingWorld, chip.dataset.osVariable, chip.dataset.osValue);
     };
-    const sourceSelect = document.getElementById('w-roleplay-os-source');
+    const sourceSelect = document.getElementById('ew-w-roleplay-os-source');
     if (sourceSelect) sourceSelect.onchange = event => pinRoleplayOSSource(ExperimentalWorldsState.editingWorld, event.target.value);
-    const importBtn = document.getElementById('w-roleplay-os-import-btn');
-    const fileInput = document.getElementById('w-roleplay-os-file-input');
+    const importBtn = document.getElementById('ew-w-roleplay-os-import-btn');
+    const fileInput = document.getElementById('ew-w-roleplay-os-file-input');
     if (importBtn && fileInput) {
         importBtn.onclick = () => fileInput.click();
         fileInput.onchange = e => {
@@ -1129,9 +1129,9 @@ function setupRoleplayOSConfigHandlers() {
             reader.readAsText(file);
         };
     }
-    const migrationHost = document.getElementById('w-roleplay-os-migration');
+    const migrationHost = document.getElementById('ew-w-roleplay-os-migration');
     if (migrationHost) migrationHost.onclick = async event => {
-        if (!event.target.closest('#w-roleplay-os-migration-dismiss')) return;
+        if (!event.target.closest('#ew-w-roleplay-os-migration-dismiss')) return;
         const world = ExperimentalWorldsState.editingWorld;
         if (!world) return;
         delete roleplayOSDraft(world).lastMigration;
@@ -1147,62 +1147,62 @@ function renderWorldSidecarConfigEditor(world) {
     renderStatePipelineConfig(world);
     const tracker = config.tracker || {};
     const debug = config.debug || {};
-    document.getElementById('w-sidecar-mode').value = config.mode;
-    document.getElementById('w-sidecar-inherit-narrator').checked = tracker.inheritNarrator !== false;
-    document.getElementById('w-sidecar-reader-enabled').checked = tracker.readerEnabled !== false;
-    document.getElementById('w-sidecar-reader-profile-inherit').checked = tracker.readerProfileInherit !== false;
+    document.getElementById('ew-w-sidecar-mode').value = config.mode;
+    document.getElementById('ew-w-sidecar-inherit-narrator').checked = tracker.inheritNarrator !== false;
+    document.getElementById('ew-w-sidecar-reader-enabled').checked = tracker.readerEnabled !== false;
+    document.getElementById('ew-w-sidecar-reader-profile-inherit').checked = tracker.readerProfileInherit !== false;
     const readerProfile = effectiveSidecarReaderProfile(world);
-    document.getElementById('w-sidecar-reader-timeout').value = readerProfile.timeoutSeconds;
-    document.getElementById('w-sidecar-reader-refresh').value = readerProfile.fullRefreshCadence;
-    document.getElementById('w-sidecar-reader-tools').value = readerProfile.maxToolCalls;
-    document.getElementById('w-sidecar-reader-provider').value = readerProfile.provider || '';
-    document.getElementById('w-sidecar-reader-model').value = readerProfile.model || '';
-    document.getElementById('w-sidecar-reader-profile-max-tokens').value = readerProfile.maxTokens || '';
-    document.getElementById('w-sidecar-reader-context-budget').value = readerProfile.contextBudget || 24000;
-    document.getElementById('w-sidecar-reader-lookup-budget').value = readerProfile.maxLookupPayload || 12000;
-    document.getElementById('w-sidecar-reader-reasoning').value = readerProfile.reasoningMode || 'inherit';
-    document.getElementById('w-sidecar-reader-reasoning-effort').value = readerProfile.reasoningEffort || 'auto';
-    document.getElementById('w-sidecar-reader-retry').value = readerProfile.retryPolicy || 'bounded';
-    document.querySelectorAll('#w-sidecar-reader-timeout, #w-sidecar-reader-refresh, #w-sidecar-reader-tools, #w-sidecar-reader-provider, #w-sidecar-reader-model, #w-sidecar-reader-profile-max-tokens, #w-sidecar-reader-context-budget, #w-sidecar-reader-lookup-budget, #w-sidecar-reader-reasoning, #w-sidecar-reader-reasoning-effort, #w-sidecar-reader-retry').forEach(input => input.disabled = tracker.readerProfileInherit !== false);
-    document.getElementById('w-sidecar-provider').value = tracker.provider || '';
+    document.getElementById('ew-w-sidecar-reader-timeout').value = readerProfile.timeoutSeconds;
+    document.getElementById('ew-w-sidecar-reader-refresh').value = readerProfile.fullRefreshCadence;
+    document.getElementById('ew-w-sidecar-reader-tools').value = readerProfile.maxToolCalls;
+    document.getElementById('ew-w-sidecar-reader-provider').value = readerProfile.provider || '';
+    document.getElementById('ew-w-sidecar-reader-model').value = readerProfile.model || '';
+    document.getElementById('ew-w-sidecar-reader-profile-max-tokens').value = readerProfile.maxTokens || '';
+    document.getElementById('ew-w-sidecar-reader-context-budget').value = readerProfile.contextBudget || 24000;
+    document.getElementById('ew-w-sidecar-reader-lookup-budget').value = readerProfile.maxLookupPayload || 12000;
+    document.getElementById('ew-w-sidecar-reader-reasoning').value = readerProfile.reasoningMode || 'inherit';
+    document.getElementById('ew-w-sidecar-reader-reasoning-effort').value = readerProfile.reasoningEffort || 'auto';
+    document.getElementById('ew-w-sidecar-reader-retry').value = readerProfile.retryPolicy || 'bounded';
+    document.querySelectorAll('#ew-w-sidecar-reader-timeout, #ew-w-sidecar-reader-refresh, #ew-w-sidecar-reader-tools, #ew-w-sidecar-reader-provider, #ew-w-sidecar-reader-model, #ew-w-sidecar-reader-profile-max-tokens, #ew-w-sidecar-reader-context-budget, #ew-w-sidecar-reader-lookup-budget, #ew-w-sidecar-reader-reasoning, #ew-w-sidecar-reader-reasoning-effort, #ew-w-sidecar-reader-retry').forEach(input => input.disabled = tracker.readerProfileInherit !== false);
+    document.getElementById('ew-w-sidecar-provider').value = tracker.provider || '';
     renderSidecarModelOptions(ExperimentalWorldsHost.normalizedProviderId(tracker.provider), tracker.model || '');
-    document.getElementById('w-sidecar-reasoning-mode').value = tracker.reasoningMode || (tracker.reasoning === true ? 'enabled' : 'inherit');
-    document.getElementById('w-sidecar-reasoning-effort').value = tracker.reasoningEffort || 'auto';
-    document.getElementById('w-sidecar-reasoning-effort-row').classList.toggle('hidden',
+    document.getElementById('ew-w-sidecar-reasoning-mode').value = tracker.reasoningMode || (tracker.reasoning === true ? 'enabled' : 'inherit');
+    document.getElementById('ew-w-sidecar-reasoning-effort').value = tracker.reasoningEffort || 'auto';
+    document.getElementById('ew-w-sidecar-reasoning-effort-row').classList.toggle('hidden',
         (tracker.reasoningMode || (tracker.reasoning === true ? 'enabled' : 'inherit')) === 'disabled');
     const reasoningEnabled = sidecarReasoningPolicy(tracker, world).enabled;
     const readerTokens = Number(tracker.readerMaxTokens) || 0;
     const receiptTokens = Number(tracker.maxTokens) || 0;
-    const readerInput = document.getElementById('w-sidecar-reader-max-tokens');
-    const receiptInput = document.getElementById('w-sidecar-max-tokens');
+    const readerInput = document.getElementById('ew-w-sidecar-reader-max-tokens');
+    const receiptInput = document.getElementById('ew-w-sidecar-max-tokens');
     readerInput.value = readerTokens || '';
     receiptInput.value = receiptTokens || '';
     readerInput.placeholder = `Adaptive default · ${(reasoningEnabled ? 5000 : 3000).toLocaleString()}`;
     receiptInput.placeholder = `Adaptive default · ${(reasoningEnabled ? 8000 : 6000).toLocaleString()}`;
-    document.getElementById('w-sidecar-debug').checked = debug.enabled === true;
-    document.getElementById('w-sidecar-trace-count').value = Number(debug.retainTraceCount) || 20;
+    document.getElementById('ew-w-sidecar-debug').checked = debug.enabled === true;
+    document.getElementById('ew-w-sidecar-trace-count').value = Number(debug.retainTraceCount) || 20;
     const memory = config.memory || {};
     const effectiveMemory = effectiveSidecarMemoryConfig(world);
-    document.getElementById('w-sidecar-memory-inherit').checked = memory.inheritGlobal !== false;
-    document.getElementById('w-sidecar-episode-size').value = effectiveMemory.episodeChunkTurns;
-    document.getElementById('w-sidecar-episode-cadence').value = effectiveMemory.episodeCadenceTurns;
-    document.getElementById('w-sidecar-verbatim-window').value = effectiveMemory.verbatimTurnWindow;
-    document.getElementById('w-sidecar-retrieval-limit').value = effectiveMemory.retrievalLimit;
-    document.getElementById('w-sidecar-job-concurrency').value = effectiveMemory.consolidationConcurrency;
-    document.getElementById('w-sidecar-provider-concurrency').value = effectiveMemory.backgroundProviderConcurrency;
-    document.querySelectorAll('#w-sidecar-memory-grid input').forEach(input => input.disabled = memory.inheritGlobal !== false);
-    const memoryStatus = document.getElementById('w-sidecar-memory-status');
+    document.getElementById('ew-w-sidecar-memory-inherit').checked = memory.inheritGlobal !== false;
+    document.getElementById('ew-w-sidecar-episode-size').value = effectiveMemory.episodeChunkTurns;
+    document.getElementById('ew-w-sidecar-episode-cadence').value = effectiveMemory.episodeCadenceTurns;
+    document.getElementById('ew-w-sidecar-verbatim-window').value = effectiveMemory.verbatimTurnWindow;
+    document.getElementById('ew-w-sidecar-retrieval-limit').value = effectiveMemory.retrievalLimit;
+    document.getElementById('ew-w-sidecar-job-concurrency').value = effectiveMemory.consolidationConcurrency;
+    document.getElementById('ew-w-sidecar-provider-concurrency').value = effectiveMemory.backgroundProviderConcurrency;
+    document.querySelectorAll('#ew-w-sidecar-memory-grid input').forEach(input => input.disabled = memory.inheritGlobal !== false);
+    const memoryStatus = document.getElementById('ew-w-sidecar-memory-status');
     if (memoryStatus) memoryStatus.textContent = memory.inheritGlobal !== false
         ? `Using global controls · ${effectiveMemory.episodeChunkTurns}-turn Episodes · ${effectiveMemory.verbatimTurnWindow} active verbatim turns · ${effectiveMemory.consolidationConcurrency}/${effectiveMemory.backgroundProviderConcurrency} jobs · ${effectiveMemory.consolidationModel || 'default consolidation model'} / ${effectiveMemory.consolidationMaxTokens} tokens.`
         : `World override active · ${effectiveMemory.episodeChunkTurns}-turn Episodes · ${effectiveMemory.verbatimTurnWindow} active verbatim turns · ${effectiveMemory.consolidationConcurrency}/${effectiveMemory.backgroundProviderConcurrency} jobs · ${effectiveMemory.consolidationModel || 'global model'} / ${effectiveMemory.consolidationMaxTokens} tokens.`;
     const inheriting = tracker.inheritNarrator !== false;
     updateSidecarOverrideVisibility();
-    const hint = document.getElementById('w-sidecar-mode-hint');
+    const hint = document.getElementById('ew-w-sidecar-mode-hint');
     hint.textContent = config.mode === 'sidecar'
         ? 'Active: Narrator writes visible prose and hidden handoff notes; Sidecar performs one native canonical commit. Legacy repair and Chronicle classifier paths are bypassed.'
         : 'Inline Legacy is retained for compatibility. It uses the existing receipt/classifier adapters; migrate a selected world deliberately before switching a live timeline to Sidecar.';
-    const restore = document.getElementById('w-sidecar-restore-backup');
-    const migrate = document.getElementById('w-sidecar-migrate-btn');
+    const restore = document.getElementById('ew-w-sidecar-restore-backup');
+    const migrate = document.getElementById('ew-w-sidecar-migrate-btn');
     const backups = Array.isArray(world.sidecarMigrationBackups) ? world.sidecarMigrationBackups : [];
     if (restore) {
         restore.classList.toggle('hidden', !backups.length);
@@ -1230,7 +1230,7 @@ function renderWorldSidecarConfigEditor(world) {
         else migrate.textContent = 'Review Sidecar migration';
         migrate.onclick = () => openSidecarMigrationWizard(world.id);
     }
-    const report = document.getElementById('w-sidecar-migration-report');
+    const report = document.getElementById('ew-w-sidecar-migration-report');
     if (report) {
         const sessions = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
         const inlineSessions = sessions.filter(session => window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, session)?.mode !== 'sidecar');
@@ -1266,13 +1266,13 @@ function openWorldStudio(worldId = null, options = {}) {
     }
 
     const w = ExperimentalWorldsState.editingWorld;
-    document.getElementById('w-studio-name').value = w.name || '';
-    document.getElementById('w-studio-desc').value = w.description || '';
-    document.getElementById('w-studio-dm-prompt').value = w.dmPrompt || '';
-    document.getElementById('w-studio-intro').value = w.intro || '';
-    document.getElementById('w-studio-note').value = w.authorNote || '';
+    document.getElementById('ew-w-studio-name').value = w.name || '';
+    document.getElementById('ew-w-studio-desc').value = w.description || '';
+    document.getElementById('ew-w-studio-dm-prompt').value = w.dmPrompt || '';
+    document.getElementById('ew-w-studio-intro').value = w.intro || '';
+    document.getElementById('ew-w-studio-note').value = w.authorNote || '';
     
-    const bannerPreview = document.getElementById('w-banner-preview');
+    const bannerPreview = document.getElementById('ew-w-banner-preview');
     if (w.banner) {
         bannerPreview.style.backgroundImage = `url('${experimentalCssUrl(w.banner)}')`;
         bannerPreview.innerHTML = '';
@@ -1284,60 +1284,60 @@ function openWorldStudio(worldId = null, options = {}) {
     // Populate Presets
     populateWorldPresetDropdown(w.activePresetId);
 
-    const worldModelInput = document.getElementById('w-studio-model');
+    const worldModelInput = document.getElementById('ew-w-studio-model');
     worldModelInput.value = w.model || '';
     worldModelInput.placeholder = w.model
         ? 'Search provider models…'
         : `Use Settings default · ${ExperimentalWorldsState.globalSettings.defaultModel || 'choose a model in Settings'}`;
 
     const agentConfig = normalizeWorldAgentConfig(w);
-    document.getElementById('w-agent-enabled').checked = agentConfig.enabled;
-    document.getElementById('w-agent-interval').value = agentConfig.intervalTurns;
-    document.getElementById('w-agent-model').value = agentConfig.model;
-    document.getElementById('w-agent-proposal-only').checked = agentConfig.proposalOnly === true;
+    document.getElementById('ew-w-agent-enabled').checked = agentConfig.enabled;
+    document.getElementById('ew-w-agent-interval').value = agentConfig.intervalTurns;
+    document.getElementById('ew-w-agent-model').value = agentConfig.model;
+    document.getElementById('ew-w-agent-proposal-only').checked = agentConfig.proposalOnly === true;
     initializeOpenRouterRoutingPanel('world');
     initializeOpenRouterRoutingPanel('worldAgent');
     const kernelConfig = normalizeWorldKernelConfig(w);
-    document.getElementById('w-kernel-enabled').checked = kernelConfig.enabled;
-    document.getElementById('w-kernel-location-limit').value = kernelConfig.sceneLocationLimit;
-    document.getElementById('w-kernel-memory-mode').value = kernelConfig.memoryMode;
-    document.getElementById('w-kernel-repair-mode').value = kernelConfig.repairMode;
-    document.getElementById('w-kernel-compact-tools').checked = kernelConfig.compactTools;
+    document.getElementById('ew-w-kernel-enabled').checked = kernelConfig.enabled;
+    document.getElementById('ew-w-kernel-location-limit').value = kernelConfig.sceneLocationLimit;
+    document.getElementById('ew-w-kernel-memory-mode').value = kernelConfig.memoryMode;
+    document.getElementById('ew-w-kernel-repair-mode').value = kernelConfig.repairMode;
+    document.getElementById('ew-w-kernel-compact-tools').checked = kernelConfig.compactTools;
     renderWorldSidecarConfigEditor(w);
 
-    document.getElementById('w-studio-temp').value = w.temp ?? 0.9;
-    document.getElementById('w-studio-min-p').value = w.minP ?? 0.0;
-    document.getElementById('w-studio-top-p').value = w.topP ?? 1.0;
-    document.getElementById('w-studio-top-k').value = w.topK ?? 0;
-    document.getElementById('w-studio-freq-penalty').value = w.freqPenalty ?? 0.0;
-    document.getElementById('w-studio-pres-penalty').value = w.presPenalty ?? 0.0;
-    document.getElementById('w-studio-rep-penalty').value = w.repPenalty ?? 1.0;
-    document.getElementById('w-studio-max-tokens').value = w.maxTokens ?? 2048;
+    document.getElementById('ew-w-studio-temp').value = w.temp ?? 0.9;
+    document.getElementById('ew-w-studio-min-p').value = w.minP ?? 0.0;
+    document.getElementById('ew-w-studio-top-p').value = w.topP ?? 1.0;
+    document.getElementById('ew-w-studio-top-k').value = w.topK ?? 0;
+    document.getElementById('ew-w-studio-freq-penalty').value = w.freqPenalty ?? 0.0;
+    document.getElementById('ew-w-studio-pres-penalty').value = w.presPenalty ?? 0.0;
+    document.getElementById('ew-w-studio-rep-penalty').value = w.repPenalty ?? 1.0;
+    document.getElementById('ew-w-studio-max-tokens').value = w.maxTokens ?? 2048;
     
-    const contextSizeInput = document.getElementById('w-studio-context-size');
+    const contextSizeInput = document.getElementById('ew-w-studio-context-size');
     if (contextSizeInput) {
-        configureContextSliderForModel('w-studio-context-size', w.model || ExperimentalWorldsState.globalSettings.defaultModel);
+        configureContextSliderForModel('ew-w-studio-context-size', w.model || ExperimentalWorldsState.globalSettings.defaultModel);
         contextSizeInput.value = w.contextSize ?? 8192;
-        updateContextSliderUI('w-studio-context-size', 'w-studio-context-size-val', 'w-studio-context-size-badge');
+        updateContextSliderUI('ew-w-studio-context-size', 'ew-w-studio-context-size-val', 'ew-w-studio-context-size-badge');
     }
 
-    document.getElementById('w-studio-reasoning').checked = w.reasoning || false;
-    document.getElementById('w-studio-reasoning-effort').value = w.reasoningEffort || 'auto';
-    document.getElementById('w-reasoning-effort-row').classList.toggle('hidden', !w.reasoning);
+    document.getElementById('ew-w-studio-reasoning').checked = w.reasoning || false;
+    document.getElementById('ew-w-studio-reasoning-effort').value = w.reasoningEffort || 'auto';
+    document.getElementById('ew-w-reasoning-effort-row').classList.toggle('hidden', !w.reasoning);
 
     // Load HUD Config
     if (!w.hudConfig) w.hudConfig = { showClock: true, showQuests: true, showLedger: true, showInventory: true, timeStep: 5, startTimeHours: 8, showDays: false, stats: [{id:'hp', name:'HP', value:100, min:0, max:100, color:'var(--red)'}, {id:'gold', name:'Gold', value:0, min:0, max:0, color:'var(--yellow)'}] };
     normalizeWorldGameRules(w);
-    document.getElementById('w-hud-show-clock').checked = w.hudConfig.showClock;
-    document.getElementById('w-hud-show-quests').checked = w.hudConfig.showQuests;
-    document.getElementById('w-hud-show-ledger').checked = w.hudConfig.showLedger;
-    document.getElementById('w-hud-show-inventory').checked = w.hudConfig.showInventory;
-    document.getElementById('w-hud-start-time').value = w.hudConfig.startTimeHours !== undefined ? w.hudConfig.startTimeHours : 8;
-    document.getElementById('w-hud-start-minute').value = w.hudConfig.startTimeMinutes !== undefined ? w.hudConfig.startTimeMinutes : 0;
-    document.getElementById('w-hud-time-step').value = w.hudConfig.timeStep !== undefined ? w.hudConfig.timeStep : 5;
-    document.getElementById('w-hud-start-weekday').value = WORLD_WEEKDAYS.includes(w.hudConfig.startWeekday) ? w.hudConfig.startWeekday : 'Monday';
-    document.getElementById('w-hud-show-days').checked = w.hudConfig.showDays || false;
-    document.getElementById('w-hud-enable-schedules').checked = !!w.hudConfig.enableSchedules;
+    document.getElementById('ew-w-hud-show-clock').checked = w.hudConfig.showClock;
+    document.getElementById('ew-w-hud-show-quests').checked = w.hudConfig.showQuests;
+    document.getElementById('ew-w-hud-show-ledger').checked = w.hudConfig.showLedger;
+    document.getElementById('ew-w-hud-show-inventory').checked = w.hudConfig.showInventory;
+    document.getElementById('ew-w-hud-start-time').value = w.hudConfig.startTimeHours !== undefined ? w.hudConfig.startTimeHours : 8;
+    document.getElementById('ew-w-hud-start-minute').value = w.hudConfig.startTimeMinutes !== undefined ? w.hudConfig.startTimeMinutes : 0;
+    document.getElementById('ew-w-hud-time-step').value = w.hudConfig.timeStep !== undefined ? w.hudConfig.timeStep : 5;
+    document.getElementById('ew-w-hud-start-weekday').value = WORLD_WEEKDAYS.includes(w.hudConfig.startWeekday) ? w.hudConfig.startWeekday : 'Monday';
+    document.getElementById('ew-w-hud-show-days').checked = w.hudConfig.showDays || false;
+    document.getElementById('ew-w-hud-enable-schedules').checked = !!w.hudConfig.enableSchedules;
     renderWorldStudioStats();
     loadWorldGameRuleControls(w);
 
@@ -1402,9 +1402,9 @@ function migrateWorldTimelinesToSidecar(world, legacyConfig = null, options = {}
 
 function openSidecarMigrationWizard(worldId = ExperimentalWorldsState.editingWorld?.id) {
     const world = ExperimentalWorldsState.worlds.find(item => item.id === worldId) || ExperimentalWorldsState.editingWorld;
-    const overlay = document.getElementById('sidecar-migration-wizard-overlay');
-    const list = document.getElementById('sidecar-migration-wizard-list');
-    const status = document.getElementById('sidecar-migration-wizard-status');
+    const overlay = document.getElementById('ew-sidecar-migration-wizard-overlay');
+    const list = document.getElementById('ew-sidecar-migration-wizard-list');
+    const status = document.getElementById('ew-sidecar-migration-wizard-status');
     if (!world || !overlay || !list) return;
     const sessions = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
     const inline = sessions.filter(sess => {
@@ -1426,21 +1426,21 @@ function openSidecarMigrationWizard(worldId = ExperimentalWorldsState.editingWor
     status.textContent = inline.length
         ? `${inline.length} timeline${inline.length === 1 ? '' : 's'} available. Select the timelines to migrate.`
         : (sessions.length ? 'Every existing timeline is already on Sidecar.' : (alreadySidecar ? 'The world is already on Sidecar.' : 'No timelines to migrate. You can still enable Sidecar for this world.'));
-    const runBtn = document.getElementById('run-sidecar-migration-btn');
+    const runBtn = document.getElementById('ew-run-sidecar-migration-btn');
     if (runBtn) {
         runBtn.disabled = alreadySidecar && !inline.length;
         runBtn.textContent = inline.length ? 'Back up & migrate selected' : 'Back up & enable Sidecar';
     }
     overlay.classList.remove('hidden');
     const close = () => overlay.classList.add('hidden');
-    document.getElementById('close-sidecar-migration-wizard-btn').onclick = close;
-    document.getElementById('cancel-sidecar-migration-btn').onclick = close;
-    document.getElementById('sidecar-migration-select-all-btn').onclick = () => {
+    document.getElementById('ew-close-sidecar-migration-wizard-btn').onclick = close;
+    document.getElementById('ew-cancel-sidecar-migration-btn').onclick = close;
+    document.getElementById('ew-sidecar-migration-select-all-btn').onclick = () => {
         const boxes = [...list.querySelectorAll('.sidecar-migration-session')];
         const shouldSelect = boxes.some(box => !box.checked);
         boxes.forEach(box => { box.checked = shouldSelect; });
     };
-    document.getElementById('run-sidecar-migration-btn').onclick = async () => {
+    document.getElementById('ew-run-sidecar-migration-btn').onclick = async () => {
         const selectedIds = [...list.querySelectorAll('.sidecar-migration-session:checked')].map(box => box.dataset.sessionId);
         if (inline.length && !selectedIds.length) return ExperimentalWorldsHost.notify('Select at least one Inline timeline to migrate.', 'info');
         if (!inline.length && world.sidecarConfig?.mode === 'sidecar') return ExperimentalWorldsHost.notify('This world is already on Sidecar.', 'info');
@@ -1453,7 +1453,7 @@ function openSidecarMigrationWizard(worldId = ExperimentalWorldsState.editingWor
         if (index >= 0) ExperimentalWorldsState.worlds[index] = experimentalSafeJsonClone(world);
         if (ExperimentalWorldsState.editingWorld?.id === world.id) {
             ExperimentalWorldsState.editingWorld = experimentalSafeJsonClone(world);
-            const modeSelect = document.getElementById('w-sidecar-mode');
+            const modeSelect = document.getElementById('ew-w-sidecar-mode');
             if (modeSelect) modeSelect.value = 'sidecar';
         }
         await ExperimentalWorldsHost.persist();
@@ -1473,28 +1473,28 @@ async function saveWorld() {
     const storedBeforeSave = ExperimentalWorldsState.worlds.find(world => world.id === w.id);
     const wasSidecar = storedBeforeSave?.sidecarConfig?.mode === 'sidecar';
 
-    w.name = document.getElementById('w-studio-name').value.trim();
-    w.description = document.getElementById('w-studio-desc').value.trim();
-    w.dmPrompt = document.getElementById('w-studio-dm-prompt').value.trim();
-    w.intro = document.getElementById('w-studio-intro').value.trim();
-    w.authorNote = document.getElementById('w-studio-note').value.trim();
-    w.model = document.getElementById('w-studio-model').value.trim();
+    w.name = document.getElementById('ew-w-studio-name').value.trim();
+    w.description = document.getElementById('ew-w-studio-desc').value.trim();
+    w.dmPrompt = document.getElementById('ew-w-studio-dm-prompt').value.trim();
+    w.intro = document.getElementById('ew-w-studio-intro').value.trim();
+    w.authorNote = document.getElementById('ew-w-studio-note').value.trim();
+    w.model = document.getElementById('ew-w-studio-model').value.trim();
     w.openRouterRouting = readOpenRouterRoutingPanel('world');
     w.worldAgent = normalizeWorldAgentConfig({
         worldAgent: {
-            enabled: document.getElementById('w-agent-enabled').checked,
-            intervalTurns: document.getElementById('w-agent-interval').value,
-            model: document.getElementById('w-agent-model').value,
-            proposalOnly: document.getElementById('w-agent-proposal-only').checked,
+            enabled: document.getElementById('ew-w-agent-enabled').checked,
+            intervalTurns: document.getElementById('ew-w-agent-interval').value,
+            model: document.getElementById('ew-w-agent-model').value,
+            proposalOnly: document.getElementById('ew-w-agent-proposal-only').checked,
             openRouterRouting: readOpenRouterRoutingPanel('worldAgent')
         }
     });
     w.kernel = normalizeWorldKernelConfig({ kernel: {
-        enabled: document.getElementById('w-kernel-enabled').checked,
-        sceneLocationLimit: document.getElementById('w-kernel-location-limit').value,
-        memoryMode: document.getElementById('w-kernel-memory-mode').value,
-        repairMode: document.getElementById('w-kernel-repair-mode').value,
-        compactTools: document.getElementById('w-kernel-compact-tools').checked
+        enabled: document.getElementById('ew-w-kernel-enabled').checked,
+        sceneLocationLimit: document.getElementById('ew-w-kernel-location-limit').value,
+        memoryMode: document.getElementById('ew-w-kernel-memory-mode').value,
+        repairMode: document.getElementById('ew-w-kernel-repair-mode').value,
+        compactTools: document.getElementById('ew-w-kernel-compact-tools').checked
     } });
     const priorSidecarConfig = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(w) || {};
     const sidecarDraftWorld = {
@@ -1504,46 +1504,46 @@ async function saveWorld() {
             mode: 'sidecar',
             tracker: {
                 ...(priorSidecarConfig.tracker || {}),
-                inheritNarrator: document.getElementById('w-sidecar-inherit-narrator').checked,
-                provider: document.getElementById('w-sidecar-provider').value,
-                model: document.getElementById('w-sidecar-model').value.trim(),
+                inheritNarrator: document.getElementById('ew-w-sidecar-inherit-narrator').checked,
+                provider: document.getElementById('ew-w-sidecar-provider').value,
+                model: document.getElementById('ew-w-sidecar-model').value.trim(),
                 openRouterRouting: readOpenRouterRoutingPanel('sidecar'),
-                reasoningMode: document.getElementById('w-sidecar-reasoning-mode').value,
-                reasoning: document.getElementById('w-sidecar-reasoning-mode').value === 'enabled',
-                reasoningEffort: document.getElementById('w-sidecar-reasoning-effort').value,
-                readerEnabled: document.getElementById('w-sidecar-reader-enabled').checked,
-                readerProfileInherit: document.getElementById('w-sidecar-reader-profile-inherit').checked,
+                reasoningMode: document.getElementById('ew-w-sidecar-reasoning-mode').value,
+                reasoning: document.getElementById('ew-w-sidecar-reasoning-mode').value === 'enabled',
+                reasoningEffort: document.getElementById('ew-w-sidecar-reasoning-effort').value,
+                readerEnabled: document.getElementById('ew-w-sidecar-reader-enabled').checked,
+                readerProfileInherit: document.getElementById('ew-w-sidecar-reader-profile-inherit').checked,
                 readerProfile: deriveSidecarReaderProfileRevision({
                     ...(priorSidecarConfig.tracker?.readerProfile || {}),
-                    provider: document.getElementById('w-sidecar-reader-provider').value,
-                    model: document.getElementById('w-sidecar-reader-model').value.trim(),
-                    maxTokens: document.getElementById('w-sidecar-reader-profile-max-tokens').value,
-                    timeoutSeconds: document.getElementById('w-sidecar-reader-timeout').value,
-                    fullRefreshCadence: document.getElementById('w-sidecar-reader-refresh').value,
-                    maxToolCalls: document.getElementById('w-sidecar-reader-tools').value,
-                    maxLookupPayload: document.getElementById('w-sidecar-reader-lookup-budget').value,
-                    contextBudget: document.getElementById('w-sidecar-reader-context-budget').value,
-                    reasoningMode: document.getElementById('w-sidecar-reader-reasoning').value,
-                    reasoningEffort: document.getElementById('w-sidecar-reader-reasoning-effort').value,
-                    retryPolicy: document.getElementById('w-sidecar-reader-retry').value
+                    provider: document.getElementById('ew-w-sidecar-reader-provider').value,
+                    model: document.getElementById('ew-w-sidecar-reader-model').value.trim(),
+                    maxTokens: document.getElementById('ew-w-sidecar-reader-profile-max-tokens').value,
+                    timeoutSeconds: document.getElementById('ew-w-sidecar-reader-timeout').value,
+                    fullRefreshCadence: document.getElementById('ew-w-sidecar-reader-refresh').value,
+                    maxToolCalls: document.getElementById('ew-w-sidecar-reader-tools').value,
+                    maxLookupPayload: document.getElementById('ew-w-sidecar-reader-lookup-budget').value,
+                    contextBudget: document.getElementById('ew-w-sidecar-reader-context-budget').value,
+                    reasoningMode: document.getElementById('ew-w-sidecar-reader-reasoning').value,
+                    reasoningEffort: document.getElementById('ew-w-sidecar-reader-reasoning-effort').value,
+                    retryPolicy: document.getElementById('ew-w-sidecar-reader-retry').value
                 }),
-                readerMaxTokens: document.getElementById('w-sidecar-reader-max-tokens').value,
-                maxTokens: document.getElementById('w-sidecar-max-tokens').value
+                readerMaxTokens: document.getElementById('ew-w-sidecar-reader-max-tokens').value,
+                maxTokens: document.getElementById('ew-w-sidecar-max-tokens').value
             },
             debug: {
                 ...(priorSidecarConfig.debug || {}),
-                enabled: document.getElementById('w-sidecar-debug').checked,
-                retainTraceCount: document.getElementById('w-sidecar-trace-count').value
+                enabled: document.getElementById('ew-w-sidecar-debug').checked,
+                retainTraceCount: document.getElementById('ew-w-sidecar-trace-count').value
             },
             memory: {
                 ...(priorSidecarConfig.memory || {}),
-                inheritGlobal: document.getElementById('w-sidecar-memory-inherit').checked,
-                episodeChunkTurns: document.getElementById('w-sidecar-episode-size').value,
-                episodeCadenceTurns: document.getElementById('w-sidecar-episode-cadence').value,
-                verbatimTurnWindow: document.getElementById('w-sidecar-verbatim-window').value,
-                retrievalLimit: document.getElementById('w-sidecar-retrieval-limit').value,
-                consolidationConcurrency: document.getElementById('w-sidecar-job-concurrency').value,
-                backgroundProviderConcurrency: document.getElementById('w-sidecar-provider-concurrency').value
+                inheritGlobal: document.getElementById('ew-w-sidecar-memory-inherit').checked,
+                episodeChunkTurns: document.getElementById('ew-w-sidecar-episode-size').value,
+                episodeCadenceTurns: document.getElementById('ew-w-sidecar-episode-cadence').value,
+                verbatimTurnWindow: document.getElementById('ew-w-sidecar-verbatim-window').value,
+                retrievalLimit: document.getElementById('ew-w-sidecar-retrieval-limit').value,
+                consolidationConcurrency: document.getElementById('ew-w-sidecar-job-concurrency').value,
+                backgroundProviderConcurrency: document.getElementById('ew-w-sidecar-provider-concurrency').value
             }
         }
     };
@@ -1567,34 +1567,34 @@ async function saveWorld() {
         });
         w.sidecarMigrationBackups = backups.slice(-3);
     }
-    w.temp = parseFloat(document.getElementById('w-studio-temp').value) || 0.9;
-    w.minP = parseFloat(document.getElementById('w-studio-min-p').value) || 0.0;
-    w.topP = parseFloat(document.getElementById('w-studio-top-p').value) || 1.0;
-    w.topK = parseInt(document.getElementById('w-studio-top-k').value) || 0;
-    w.freqPenalty = parseFloat(document.getElementById('w-studio-freq-penalty').value) || 0.0;
-    w.presPenalty = parseFloat(document.getElementById('w-studio-pres-penalty').value) || 0.0;
-    w.repPenalty = parseFloat(document.getElementById('w-studio-rep-penalty').value) || 1.0;
-    w.maxTokens = parseInt(document.getElementById('w-studio-max-tokens').value) || 2048;
-    w.contextSize = parseInt(document.getElementById('w-studio-context-size').value) || 8192;
-    w.reasoning = document.getElementById('w-studio-reasoning').checked;
-    w.reasoningEffort = document.getElementById('w-studio-reasoning-effort').value;
-    w.activePresetId = document.getElementById('w-studio-system-preset').value;
+    w.temp = parseFloat(document.getElementById('ew-w-studio-temp').value) || 0.9;
+    w.minP = parseFloat(document.getElementById('ew-w-studio-min-p').value) || 0.0;
+    w.topP = parseFloat(document.getElementById('ew-w-studio-top-p').value) || 1.0;
+    w.topK = parseInt(document.getElementById('ew-w-studio-top-k').value) || 0;
+    w.freqPenalty = parseFloat(document.getElementById('ew-w-studio-freq-penalty').value) || 0.0;
+    w.presPenalty = parseFloat(document.getElementById('ew-w-studio-pres-penalty').value) || 0.0;
+    w.repPenalty = parseFloat(document.getElementById('ew-w-studio-rep-penalty').value) || 1.0;
+    w.maxTokens = parseInt(document.getElementById('ew-w-studio-max-tokens').value) || 2048;
+    w.contextSize = parseInt(document.getElementById('ew-w-studio-context-size').value) || 8192;
+    w.reasoning = document.getElementById('ew-w-studio-reasoning').checked;
+    w.reasoningEffort = document.getElementById('ew-w-studio-reasoning-effort').value;
+    w.activePresetId = document.getElementById('ew-w-studio-system-preset').value;
     
     // Save HUD Config
     w.hudConfig = w.hudConfig || {};
-    w.hudConfig.showClock = document.getElementById('w-hud-show-clock').checked;
-    w.hudConfig.showQuests = document.getElementById('w-hud-show-quests').checked;
-    w.hudConfig.showLedger = document.getElementById('w-hud-show-ledger').checked;
-    w.hudConfig.showInventory = document.getElementById('w-hud-show-inventory').checked;
-    const startHour = parseInt(document.getElementById('w-hud-start-time').value, 10);
+    w.hudConfig.showClock = document.getElementById('ew-w-hud-show-clock').checked;
+    w.hudConfig.showQuests = document.getElementById('ew-w-hud-show-quests').checked;
+    w.hudConfig.showLedger = document.getElementById('ew-w-hud-show-ledger').checked;
+    w.hudConfig.showInventory = document.getElementById('ew-w-hud-show-inventory').checked;
+    const startHour = parseInt(document.getElementById('ew-w-hud-start-time').value, 10);
     w.hudConfig.startTimeHours = Number.isFinite(startHour) ? Math.max(0, Math.min(23, startHour)) : 8;
-    const startMinute = parseInt(document.getElementById('w-hud-start-minute').value, 10);
+    const startMinute = parseInt(document.getElementById('ew-w-hud-start-minute').value, 10);
     w.hudConfig.startTimeMinutes = Number.isFinite(startMinute) ? Math.max(0, Math.min(59, startMinute)) : 0;
-    w.hudConfig.timeStep = isNaN(parseInt(document.getElementById('w-hud-time-step').value)) ? 5 : parseInt(document.getElementById('w-hud-time-step').value);
-    w.hudConfig.startWeekday = WORLD_WEEKDAYS.includes(document.getElementById('w-hud-start-weekday').value)
-        ? document.getElementById('w-hud-start-weekday').value : 'Monday';
-    w.hudConfig.showDays = document.getElementById('w-hud-show-days').checked;
-    w.hudConfig.enableSchedules = document.getElementById('w-hud-enable-schedules').checked;
+    w.hudConfig.timeStep = isNaN(parseInt(document.getElementById('ew-w-hud-time-step').value)) ? 5 : parseInt(document.getElementById('ew-w-hud-time-step').value);
+    w.hudConfig.startWeekday = WORLD_WEEKDAYS.includes(document.getElementById('ew-w-hud-start-weekday').value)
+        ? document.getElementById('ew-w-hud-start-weekday').value : 'Monday';
+    w.hudConfig.showDays = document.getElementById('ew-w-hud-show-days').checked;
+    w.hudConfig.enableSchedules = document.getElementById('ew-w-hud-enable-schedules').checked;
     const statIdRenames = syncWorldStudioStatsFromDOM(w);
     saveWorldGameRuleControls(w, statIdRenames);
     // Half-written rows and references to things deleted this session must not
@@ -2338,15 +2338,15 @@ function renderWorldStudio() {
 
 const WORLD_VISUAL_PIPELINE_UI = Object.freeze({
     new: {
-        provider: 'w-visual-new-image-provider', model: 'w-visual-new-image-model',
-        results: 'w-visual-new-image-model-results', status: 'w-visual-new-image-model-status',
-        refresh: 'w-visual-new-refresh-models', providerField: 'newImageProvider',
+        provider: 'ew-w-visual-new-image-provider', model: 'ew-w-visual-new-image-model',
+        results: 'ew-w-visual-new-image-model-results', status: 'ew-w-visual-new-image-model-status',
+        refresh: 'ew-w-visual-new-refresh-models', providerField: 'newImageProvider',
         modelField: 'newImageModel', label: 'new image'
     },
     revision: {
-        provider: 'w-visual-revision-image-provider', model: 'w-visual-revision-image-model',
-        results: 'w-visual-revision-image-model-results', status: 'w-visual-revision-image-model-status',
-        refresh: 'w-visual-revision-refresh-models', providerField: 'revisionImageProvider',
+        provider: 'ew-w-visual-revision-image-provider', model: 'ew-w-visual-revision-image-model',
+        results: 'ew-w-visual-revision-image-model-results', status: 'ew-w-visual-revision-image-model-status',
+        refresh: 'ew-w-visual-revision-refresh-models', providerField: 'revisionImageProvider',
         modelField: 'revisionImageModel', label: 'revision image'
     }
 });
@@ -2436,11 +2436,11 @@ const AI_FIELD_DESCRIPTORS = Object.freeze({
         label: 'Portrait image prompt',
         guidance: 'A single image-generation prompt describing this character\'s appearance for a portrait: age, build, colouring, hair, face, characteristic clothing and expression. Obey the world art bible. No camera brand names, no negative prompts, no narrative.'
     },
-    'world-visual-primary': {
+    'ew-world-visual-primary': {
         label: 'Appearance & public impression',
         guidance: 'Two or three sentences of how this character looks and presents themselves: age, build, colouring, hair, face, how they habitually dress and carry themselves in public. A general impression, not one specific outfit or scene. No pose, no lighting.'
     },
-    'world-outfit-description': {
+    'ew-world-outfit-description': {
         label: 'Outfit description',
         guidance: 'One to three sentences describing everything worn in this single outfit: garments and layers, footwear, accessories, jewellery, colours, materials and condition. Third person, present tense. No pose, no lighting, no scene, no camera language.'
     },
@@ -2642,20 +2642,20 @@ function renderWorldVisuals() {
     if (!world) return;
     const presentation = normalizeWorldPresentation(world);
     const byId = id => document.getElementById(id);
-    byId('w-visual-enabled').checked = presentation.enabled;
-    byId('w-visual-player-override').checked = presentation.playerCanOverride;
-    byId('w-visual-mode').value = presentation.mode;
-    byId('w-visual-art-style').value = presentation.artStyle;
-    byId('w-visual-art-direction').value = presentation.artDirection;
+    byId('ew-w-visual-enabled').checked = presentation.enabled;
+    byId('ew-w-visual-player-override').checked = presentation.playerCanOverride;
+    byId('ew-w-visual-mode').value = presentation.mode;
+    byId('ew-w-visual-art-style').value = presentation.artStyle;
+    byId('ew-w-visual-art-direction').value = presentation.artDirection;
     Object.entries(WORLD_VISUAL_PIPELINE_UI).forEach(([pipeline, ui]) => {
         byId(ui.provider).value = presentation[ui.providerField];
         byId(ui.model).value = presentation[ui.modelField];
     });
     // Fal advanced request settings: visible only when the resolved image
     // provider is fal (including inherit falling back to a fal global).
-    const falAdvancedSection = byId('w-visual-fal-advanced');
-    const falToleranceInput = byId('w-visual-fal-safety-tolerance');
-    const falSafetyCheckerInput = byId('w-visual-fal-enable-safety-checker');
+    const falAdvancedSection = byId('ew-w-visual-fal-advanced');
+    const falToleranceInput = byId('ew-w-visual-fal-safety-tolerance');
+    const falSafetyCheckerInput = byId('ew-w-visual-fal-enable-safety-checker');
     const syncFalAdvancedVisibility = () => {
         falAdvancedSection?.classList.toggle('hidden', worldVisualProvider(world, 'new') !== 'fal'
             && worldVisualProvider(world, 'revision') !== 'fal');
@@ -2688,7 +2688,7 @@ function renderWorldVisuals() {
             falSafetyCheckerInput.value = next === '' ? '' : String(next);
         };
     }
-    const falSeedInput = byId('w-visual-fal-seed');
+    const falSeedInput = byId('ew-w-visual-fal-seed');
     if (falSeedInput) {
         falSeedInput.value = advancedSettings.seed === '' ? '' : String(advancedSettings.seed);
         falSeedInput.onchange = event => {
@@ -2719,8 +2719,8 @@ function renderWorldVisuals() {
             input.value = presentation.imageGuide[field.key];
         };
     });
-    const presetSelect = byId('w-visual-guide-preset');
-    const presetNameInput = byId('w-visual-guide-preset-name');
+    const presetSelect = byId('ew-w-visual-guide-preset');
+    const presetNameInput = byId('ew-w-visual-guide-preset-name');
     const refreshGuidePresets = () => {
         const presets = normalizeImageGuidePresets(ExperimentalWorldsState.globalSettings.imageGuidePresets);
         const names = Object.keys(presets).sort((a, b) => a.localeCompare(b));
@@ -2732,9 +2732,9 @@ function renderWorldVisuals() {
         let presets = refreshGuidePresets();
         // The preset authoring controls carry the brief's own aspect and
         // framing so a saved preset is a complete generation setup.
-        const presetAspect = byId('w-visual-guide-preset-aspect');
-        const presetFraming = byId('w-visual-guide-preset-framing');
-        const presetDescription = byId('w-visual-guide-preset-description');
+        const presetAspect = byId('ew-w-visual-guide-preset-aspect');
+        const presetFraming = byId('ew-w-visual-guide-preset-framing');
+        const presetDescription = byId('ew-w-visual-guide-preset-description');
         presetSelect.onchange = () => {
             const name = presetSelect.value;
             if (!name || !presets[name]) return;
@@ -2749,7 +2749,7 @@ function renderWorldVisuals() {
             if (presetFraming) presetFraming.value = preset.framing || '';
             ExperimentalWorldsHost.notify(`Applied visual brief “${name}”. Aspect and framing apply per visual in the image editor.`, 'success');
         };
-        const savePresetButton = byId('w-visual-guide-preset-save');
+        const savePresetButton = byId('ew-w-visual-guide-preset-save');
         if (savePresetButton) savePresetButton.onclick = () => {
             const name = String(presetNameInput?.value || '').trim().slice(0, 80);
             if (!name) return ExperimentalWorldsHost.notify('Name the preset before saving it.', 'error');
@@ -2768,7 +2768,7 @@ function renderWorldVisuals() {
             presetNameInput.value = '';
             ExperimentalWorldsHost.notify(`Saved visual brief “${name}” — look only, character data stays with the character.`, 'success');
         };
-        const deletePresetButton = byId('w-visual-guide-preset-delete');
+        const deletePresetButton = byId('ew-w-visual-guide-preset-delete');
         if (deletePresetButton) deletePresetButton.onclick = () => {
             const name = presetSelect.value;
             const next = normalizeImageGuidePresets(ExperimentalWorldsState.globalSettings.imageGuidePresets);
@@ -2780,21 +2780,21 @@ function renderWorldVisuals() {
             ExperimentalWorldsHost.notify(`Deleted visual brief “${name}”.`, 'success');
         };
     }
-    byId('w-visual-accent').value = presentation.accent;
-    byId('w-visual-background-dim').value = presentation.backgroundDim;
-    byId('w-visual-panel-opacity').value = presentation.panelOpacity;
-    byId('w-visual-dim-value').textContent = `${presentation.backgroundDim}%`;
-    byId('w-visual-opacity-value').textContent = `${presentation.panelOpacity}%`;
+    byId('ew-w-visual-accent').value = presentation.accent;
+    byId('ew-w-visual-background-dim').value = presentation.backgroundDim;
+    byId('ew-w-visual-panel-opacity').value = presentation.panelOpacity;
+    byId('ew-w-visual-dim-value').textContent = `${presentation.backgroundDim}%`;
+    byId('ew-w-visual-opacity-value').textContent = `${presentation.panelOpacity}%`;
     const summary = worldMediaSummary(world);
-    byId('w-visual-media-summary').textContent = `${summary.count} asset${summary.count === 1 ? '' : 's'} · ${formatByteSize(summary.bytes)}`;
+    byId('ew-w-visual-media-summary').textContent = `${summary.count} asset${summary.count === 1 ? '' : 's'} · ${formatByteSize(summary.bytes)}`;
     const mapSkin = worldMediaSource(world, presentation.mapSkinAssetId);
-    const mapPreview = byId('w-visual-map-skin-preview');
+    const mapPreview = byId('ew-w-visual-map-skin-preview');
     mapPreview.style.backgroundImage = mapSkin ? `url('${experimentalCssUrl(mapSkin)}')` : 'none';
     mapPreview.textContent = mapSkin ? '' : 'No map skin';
-    byId('w-visual-map-skin-clear').disabled = !mapSkin;
+    byId('ew-w-visual-map-skin-clear').disabled = !mapSkin;
 
-    const mapInput = byId('w-visual-map-skin-input');
-    byId('w-visual-map-skin-upload').onclick = () => mapInput.click();
+    const mapInput = byId('ew-w-visual-map-skin-input');
+    byId('ew-w-visual-map-skin-upload').onclick = () => mapInput.click();
     mapInput.onchange = async event => {
         const file = event.target.files?.[0];
         if (!file) return;
@@ -2808,7 +2808,7 @@ function renderWorldVisuals() {
             ExperimentalWorldsHost.notify(`Map skin upload failed: ${error.message}`, 'error');
         } finally { event.target.value = ''; }
     };
-    byId('w-visual-map-skin-generate').onclick = async event => {
+    byId('ew-w-visual-map-skin-generate').onclick = async event => {
         const button = event.currentTarget;
         button.disabled = true;
         button.textContent = 'Generating…';
@@ -2824,7 +2824,7 @@ function renderWorldVisuals() {
             button.textContent = '✨ Generate';
         }
     };
-    byId('w-visual-map-skin-clear').onclick = () => {
+    byId('ew-w-visual-map-skin-clear').onclick = () => {
         presentation.mapSkinAssetId = '';
         pruneWorldMediaAssets(world);
         renderWorldVisuals();
@@ -2836,12 +2836,12 @@ function renderWorldVisuals() {
             presentation[field] = property === 'checked' ? event.target.checked : event.target.value;
         };
     };
-    assign('w-visual-enabled', 'enabled', 'checked');
-    assign('w-visual-player-override', 'playerCanOverride', 'checked');
-    assign('w-visual-mode', 'mode');
-    assign('w-visual-art-style', 'artStyle');
-    assign('w-visual-art-direction', 'artDirection');
-    assign('w-visual-accent', 'accent');
+    assign('ew-w-visual-enabled', 'enabled', 'checked');
+    assign('ew-w-visual-player-override', 'playerCanOverride', 'checked');
+    assign('ew-w-visual-mode', 'mode');
+    assign('ew-w-visual-art-style', 'artStyle');
+    assign('ew-w-visual-art-direction', 'artDirection');
+    assign('ew-w-visual-accent', 'accent');
     const bindPipeline = pipeline => {
         const ui = WORLD_VISUAL_PIPELINE_UI[pipeline];
         const providerInput = byId(ui.provider);
@@ -2902,13 +2902,13 @@ function renderWorldVisuals() {
     };
     bindPipeline('new');
     bindPipeline('revision');
-    byId('w-visual-background-dim').oninput = event => {
+    byId('ew-w-visual-background-dim').oninput = event => {
         presentation.backgroundDim = livingClamp(event.target.value, 0, 95);
-        byId('w-visual-dim-value').textContent = `${presentation.backgroundDim}%`;
+        byId('ew-w-visual-dim-value').textContent = `${presentation.backgroundDim}%`;
     };
-    byId('w-visual-panel-opacity').oninput = event => {
+    byId('ew-w-visual-panel-opacity').oninput = event => {
         presentation.panelOpacity = livingClamp(event.target.value, 35, 100);
-        byId('w-visual-opacity-value').textContent = `${presentation.panelOpacity}%`;
+        byId('ew-w-visual-opacity-value').textContent = `${presentation.panelOpacity}%`;
     };
     // Opening the panel should be enough to discover compatible models; users
     // should never have to know that a catalog exists or press Refresh first.
@@ -3330,7 +3330,7 @@ function worldDirectoryUsedBy(kind, id) {
 
 function setWorldInspectorTab(tab) {
     worldRecordInspector.tab = tab;
-    document.querySelectorAll('#world-record-tabs .world-record-tab').forEach(button => {
+    document.querySelectorAll('#ew-world-record-tabs .world-record-tab').forEach(button => {
         const active = button.dataset.tab === tab;
         button.classList.toggle('active', active);
         button.setAttribute('aria-selected', String(active));
@@ -3341,7 +3341,7 @@ function setWorldInspectorTab(tab) {
     // The tab strip is anchor navigation, not a segmentation control.
     const labels = worldRecordInspector.sections || {};
     const headed = new Set();
-    document.querySelectorAll('#world-record-body [data-inspector-section]').forEach(section => {
+    document.querySelectorAll('#ew-world-record-body [data-inspector-section]').forEach(section => {
         section.classList.remove('hidden-by-inspector');
         section.hidden = false;
         const id = section.dataset.inspectorSection;
@@ -3358,7 +3358,7 @@ function setWorldInspectorTab(tab) {
         }
         headed.add(id);
     });
-    const body = document.getElementById('world-record-body');
+    const body = document.getElementById('ew-world-record-body');
     if (!body) return;
     const visuals = body.querySelector('[data-inspector-section="visuals"]');
     if (visuals) {
@@ -3382,7 +3382,7 @@ function renderWorldInspectorTabs(kind, record) {
             ? [['overview', 'Overview'], ['placement', 'Placement'], ['secrets', 'Knowledge & secrets']]
             : [['visuals', 'Visuals'], ['overview', 'Overview'], ['persona', 'Persona & voice'], ['relationships', 'Relationships'], ['simulation', 'Life & autonomy'], ['secrets', 'Knowledge & secrets']];
     worldRecordInspector.sections = Object.fromEntries(tabs);
-    const host = document.getElementById('world-record-tabs');
+    const host = document.getElementById('ew-world-record-tabs');
     if (!tabs.some(([id]) => id === worldRecordInspector.tab)) worldRecordInspector.tab = tabs[0][0];
     host.setAttribute('role', 'tablist');
     host.innerHTML = tabs.map(([id, label]) => `<button type="button" role="tab" aria-selected="${worldRecordInspector.tab === id}" class="world-record-tab ${worldRecordInspector.tab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`).join('');
@@ -3396,13 +3396,13 @@ function openWorldRecordInspector(kind, id, tab = '', directory = '') {
     worldRecordInspector.id = id;
     worldRecordInspector.tab = tab;
     worldRecordInspector.directory = directory || (kind === 'entity' && record.type === 'item' ? 'items' : kind === 'entity' ? 'people' : 'locations');
-    const overlay = document.getElementById('world-record-overlay');
+    const overlay = document.getElementById('ew-world-record-overlay');
     overlay.classList.remove('hidden');
     overlay.setAttribute('aria-hidden', 'false');
-    document.getElementById('world-record-kicker').textContent = kind === 'region' ? 'REGION' : kind === 'location' ? 'LOCATION' : record.type === 'item' ? 'ITEM' : 'PERSON';
-    document.getElementById('world-record-title').textContent = record.name || (kind === 'region' ? 'New region' : kind === 'location' ? 'New location' : record.type === 'item' ? 'New item' : 'New person');
+    document.getElementById('ew-world-record-kicker').textContent = kind === 'region' ? 'REGION' : kind === 'location' ? 'LOCATION' : record.type === 'item' ? 'ITEM' : 'PERSON';
+    document.getElementById('ew-world-record-title').textContent = record.name || (kind === 'region' ? 'New region' : kind === 'location' ? 'New location' : record.type === 'item' ? 'New item' : 'New person');
     const locationLineage = kind === 'location' ? worldLocationLineage(ExperimentalWorldsState.editingWorld, record) : [];
-    document.getElementById('world-record-subtitle').textContent = kind === 'region'
+    document.getElementById('ew-world-record-subtitle').textContent = kind === 'region'
         ? `${(ExperimentalWorldsState.editingWorld?.locations || []).filter(location => location.regionId === record.id).length} locations · canonical link ${record.id}`
         : kind === 'location'
         ? `${locationLineage.length ? `${locationLineage.map(place => place.name || place.id).join(' › ')} › ` : ''}${formatWorldMapType(record.mapType || inferWorldMapType(record))} · canonical link ${record.id}`
@@ -3417,10 +3417,10 @@ function closeWorldRecordInspector() {
     const directory = worldRecordInspector.directory;
     worldRecordInspector.kind = '';
     worldRecordInspector.id = '';
-    const overlay = document.getElementById('world-record-overlay');
+    const overlay = document.getElementById('ew-world-record-overlay');
     overlay.classList.add('hidden');
     overlay.setAttribute('aria-hidden', 'true');
-    document.getElementById('world-record-body').innerHTML = '';
+    document.getElementById('ew-world-record-body').innerHTML = '';
     if (kind === 'location' || kind === 'region') renderWorldLocations();
     if (kind === 'entity' && directory === 'items') renderWorldItems();
     else if (kind === 'entity') renderWorldEntities();
@@ -3607,7 +3607,7 @@ function renderWorldRegionLocationTreeHTML(world, locations) {
 function renderWorldRegionInspector() {
     const world = ExperimentalWorldsState.editingWorld;
     const region = worldDirectoryRecord('region', worldRecordInspector.id);
-    const container = document.getElementById('world-record-body');
+    const container = document.getElementById('ew-world-record-body');
     if (!world || !region || !container) return closeWorldRecordInspector();
     const locations = (world.locations || []).filter(location => location.regionId === region.id);
     const otherLocations = (world.locations || []).filter(location => location.regionId !== region.id);
@@ -3629,7 +3629,7 @@ function renderWorldRegionInspector() {
             <div class="world-travel-builder">
                 <label><span>Depart from</span><select class="form-select travel-origin"><option value="">Choose a location…</option>${locations.map(location => `<option value="${experimentalEscapeHTML(location.id)}">${experimentalEscapeHTML(location.name || location.id)}</option>`).join('')}</select></label>
                 <label><span>Arrive at</span><select class="form-select travel-target"><option value="">Choose another region's location…</option>${otherLocations.map(location => { const targetRegion = world.regions.find(item => item.id === location.regionId); return `<option value="${experimentalEscapeHTML(location.id)}">${experimentalEscapeHTML(targetRegion?.name || 'Unassigned')} · ${experimentalEscapeHTML(location.name || location.id)}</option>`; }).join('')}</select></label>
-                <label><span>Transport</span><input class="form-input travel-mode" list="world-transport-suggestions" value="walk" placeholder="horse, dragon, train…"><datalist id="world-transport-suggestions">${Object.entries(WORLD_TRAVEL_MODES).map(([id, label]) => `<option value="${id}">${label}</option>`).join('')}</datalist></label>
+                <label><span>Transport</span><input class="form-input travel-mode" list="ew-world-transport-suggestions" value="walk" placeholder="horse, dragon, train…"><datalist id="ew-world-transport-suggestions">${Object.entries(WORLD_TRAVEL_MODES).map(([id, label]) => `<option value="${id}">${label}</option>`).join('')}</datalist></label>
                 <label><span>Minutes</span><input type="number" min="0" class="form-input travel-minutes" value="15"></label>
                 <label><span>Route / service</span><input class="form-input travel-route" placeholder="A12, Red Line, Ferry 4…"></label>
                 <label><span>Cost (optional)</span><input class="form-input travel-cost" placeholder="$3, two tokens…"></label>
@@ -3643,7 +3643,7 @@ function renderWorldRegionInspector() {
         const oldName = region.name;
         region.name = event.target.value.trim() || 'Unnamed region';
         locations.forEach(location => { if (location.region === oldName || location.regionId === region.id) location.region = region.name; });
-        document.getElementById('world-record-title').textContent = region.name;
+        document.getElementById('ew-world-record-title').textContent = region.name;
     };
     container.querySelector('.region-tags').onchange = event => { region.tags = event.target.value.split(',').map(value => value.trim()).filter(Boolean).slice(0, 30); };
     container.querySelector('.region-description').onchange = event => { region.description = event.target.value.slice(0, 1200); };
@@ -3815,7 +3815,7 @@ function renderWorldLocations() {
     if (!world) return;
     normalizeAuthoredWorld(world);   // a malformed shop must not break the panel
     const inspecting = worldRecordInspector.kind === 'location' && worldRecordInspector.id;
-    const container = inspecting ? document.getElementById('world-record-body') : document.getElementById('w-locations-list');
+    const container = inspecting ? document.getElementById('ew-world-record-body') : document.getElementById('ew-w-locations-list');
     container.innerHTML = '';
     if (!inspecting) {
         renderWorldLocationDirectory(world, container);
@@ -3826,10 +3826,10 @@ function renderWorldLocations() {
     const pageData = { view: worldStudioListState.locations, filtered: [selected], pages: 1, items: [selected] };
     
     // Update global datalist for location references across the entire app
-    let datalist = document.getElementById('world-location-datalist');
+    let datalist = document.getElementById('ew-world-location-datalist');
     if (!datalist) {
         datalist = document.createElement('datalist');
-        datalist.id = 'world-location-datalist';
+        datalist.id = 'ew-world-location-datalist';
         globalThis.ExperimentalWorldsDom.portalRoot().appendChild(datalist);
     }
     datalist.innerHTML = '';
@@ -3838,18 +3838,18 @@ function renderWorldLocations() {
         opt.value = l.name;
         datalist.appendChild(opt);
     });
-    let regionDatalist = document.getElementById('world-region-datalist');
+    let regionDatalist = document.getElementById('ew-world-region-datalist');
     if (!regionDatalist) {
         regionDatalist = document.createElement('datalist');
-        regionDatalist.id = 'world-region-datalist';
+        regionDatalist.id = 'ew-world-region-datalist';
         globalThis.ExperimentalWorldsDom.portalRoot().appendChild(regionDatalist);
     }
     regionDatalist.innerHTML = (world.regions || []).slice().sort((a, b) => a.name.localeCompare(b.name))
         .map(region => `<option value="${experimentalEscapeHTML(region.name)}"></option>`).join('');
-    let floorDatalist = document.getElementById('world-floor-datalist');
+    let floorDatalist = document.getElementById('ew-world-floor-datalist');
     if (!floorDatalist) {
         floorDatalist = document.createElement('datalist');
-        floorDatalist.id = 'world-floor-datalist';
+        floorDatalist.id = 'ew-world-floor-datalist';
         globalThis.ExperimentalWorldsDom.portalRoot().appendChild(floorDatalist);
     }
     floorDatalist.innerHTML = ['Auto', 'Outside', 'Basement', 'Lower ground', 'Ground', 'Mezzanine', '1', '2', '3', 'Roof']
@@ -3879,7 +3879,7 @@ function renderWorldLocations() {
             const parentLocation = getLocationRef(world, loc.parentLocationId);
             const childLocations = worldLocationDirectChildren(world, loc.id);
             const div = document.createElement('div');
-            div.id = `loc-card-${loc.id}`;
+            div.id = `ew-loc-card-${loc.id}`;
             div.className = 'studio-card';
             div.style.padding = '16px';
             div.style.background = 'var(--surface2)';
@@ -3899,7 +3899,7 @@ function renderWorldLocations() {
                     </div>
                     <div style="flex:1">
                         <label class="form-label" style="font-size:0.7rem; opacity:0.6;">Region</label>
-                        <input type="text" list="world-region-datalist" class="form-input loc-region" value="${experimentalEscapeHTML(loc.region || '')}" placeholder="Search existing or create a region…">
+                        <input type="text" list="ew-world-region-datalist" class="form-input loc-region" value="${experimentalEscapeHTML(loc.region || '')}" placeholder="Search existing or create a region…">
                     </div>
                     <div style="display:flex; flex-direction:column; gap:4px; align-self:flex-end;">
                         <button class="tool-btn set-start-btn ${world.startLocationId === loc.id ? 'btn-success' : ''}" style="width:100%; white-space:nowrap; font-size:10px;" title="Set as player starting point">
@@ -3970,7 +3970,7 @@ function renderWorldLocations() {
                     </div>
                     <div>
                         <label class="form-label" style="font-size:0.7rem;">Floor / Level</label>
-                        <input type="text" list="world-floor-datalist" class="form-input loc-map-floor" value="${experimentalEscapeHTML(loc.mapFloor || '')}" placeholder="Choose or enter a floor…">
+                        <input type="text" list="ew-world-floor-datalist" class="form-input loc-map-floor" value="${experimentalEscapeHTML(loc.mapFloor || '')}" placeholder="Choose or enter a floor…">
                     </div>
                     <div class="world-contained-places">
                         <div class="world-contained-places-head">
@@ -4495,7 +4495,7 @@ function renderWorldLocations() {
     });
     if (inspecting) {
         const links = worldDirectoryUsedBy('location', selected.id);
-        document.getElementById('world-record-reference-status').textContent = links.length
+        document.getElementById('ew-world-record-reference-status').textContent = links.length
             ? `Canon Links · used by ${links.slice(0, 3).join(', ')}${links.length > 3 ? ` and ${links.length - 3} more` : ''}.`
             : 'Canon Links · this location has no incoming references yet.';
         setWorldInspectorTab(worldRecordInspector.tab);
@@ -4569,11 +4569,11 @@ function updateWorldTokenCount() {
     const w = ExperimentalWorldsState.editingWorld;
     if (!w) return;
     
-    const name = document.getElementById('w-studio-name').value;
-    const desc = document.getElementById('w-studio-desc').value;
-    const prompt = document.getElementById('w-studio-dm-prompt').value;
-    const intro = document.getElementById('w-studio-intro').value;
-    const note = document.getElementById('w-studio-note').value;
+    const name = document.getElementById('ew-w-studio-name').value;
+    const desc = document.getElementById('ew-w-studio-desc').value;
+    const prompt = document.getElementById('ew-w-studio-dm-prompt').value;
+    const intro = document.getElementById('ew-w-studio-intro').value;
+    const note = document.getElementById('ew-w-studio-note').value;
 
     // Estimate based on current state + inputs
     const lore = (w.lorebook || []).map(l => (l.keyword || '') + (l.text || '')).join('');
@@ -4591,7 +4591,7 @@ function updateWorldTokenCount() {
     const totalChars = name.length + desc.length + prompt.length + intro.length + note.length + lore.length + locations.length + entities.length + society.length;
     const estTokens = Math.ceil(totalChars / 3.5);
     
-    const el = document.getElementById('w-studio-token-count');
+    const el = document.getElementById('ew-w-studio-token-count');
     if (el) el.textContent = estTokens.toLocaleString();
 }
 
@@ -5324,7 +5324,7 @@ function focusWorldLocationCard(locationId) {
     const tabButton = document.querySelector('.world-studio-tab[data-tab="w-locations"]');
     if (tabButton) tabButton.click();
     setTimeout(() => {
-        const card = document.getElementById(`loc-card-${locationId}`);
+        const card = document.getElementById(`ew-loc-card-${locationId}`);
         if (!card) return;
         card.scrollIntoView({ behavior: 'smooth', block: 'center' });
         card.style.outline = '2px solid var(--red)';
@@ -5405,7 +5405,7 @@ function renderSemanticWorldMap(container, world, options = {}) {
 
     const defs = document.createElementNS(ns, 'defs');
     const marker = document.createElementNS(ns, 'marker');
-    marker.setAttribute('id', options.architect ? 'semantic-arrow-architect' : 'semantic-arrow-play');
+    marker.setAttribute('id', options.architect ? 'ew-semantic-arrow-architect' : 'ew-semantic-arrow-play');
     marker.setAttribute('markerWidth', '9');
     marker.setAttribute('markerHeight', '7');
     marker.setAttribute('refX', '8');
@@ -5479,7 +5479,7 @@ function renderSemanticWorldMap(container, world, options = {}) {
         const path = document.createElementNS(ns, 'path');
         path.setAttribute('class', `semantic-map-edge${mode === 'map' ? ` cartographic-map-edge ${isRoad ? 'is-road' : 'is-trail'}` : ''}${edge.isOneWay ? ' is-one-way' : ''}${edge.internalParentId ? ' is-internal' : ''}`);
         path.setAttribute('d', d);
-        if (edge.isOneWay) path.setAttribute('marker-end', `url(#${options.architect ? 'semantic-arrow-architect' : 'semantic-arrow-play'})`);
+        if (edge.isOneWay) path.setAttribute('marker-end', `url(#${options.architect ? 'ew-semantic-arrow-architect' : 'ew-semantic-arrow-play'})`);
         const title = document.createElementNS(ns, 'title');
         const sourceName = graph.nodeById.get(edge.sourceId)?.location.name || edge.sourceId;
         const targetName = graph.nodeById.get(edge.targetId)?.location.name || edge.targetId;
@@ -5599,7 +5599,7 @@ function renderSemanticWorldMap(container, world, options = {}) {
 
 function renderWorldArchitectMap() {
     const world = ExperimentalWorldsState.editingWorld;
-    const container = document.getElementById('world-visual-canvas');
+    const container = document.getElementById('ew-world-visual-canvas');
     if (!world || !container) return;
     renderSemanticWorldMap(container, world, {
         architect: true,
@@ -5721,9 +5721,9 @@ function addWorldTraversalMethod() {
 function renderWorldTravel() {
     const world = ExperimentalWorldsState.editingWorld;
     if (!world) return;
-    const methodsHost = document.getElementById('w-traversal-methods-list');
-    const vehiclesHost = document.getElementById('w-vehicles-list');
-    const journeysHost = document.getElementById('w-journeys-list');
+    const methodsHost = document.getElementById('ew-w-traversal-methods-list');
+    const vehiclesHost = document.getElementById('ew-w-vehicles-list');
+    const journeysHost = document.getElementById('ew-w-journeys-list');
     const config = ensureWorldTraversalConfig(world);
     const locations = Array.isArray(world.locations) ? world.locations : [];
     const locationName = id => locations.find(location => location.id === id)?.name || id || '—';
@@ -5818,7 +5818,7 @@ function renderWorldEntities(mode = 'people') {
     normalizeAuthoredWorld(world);   // a malformed relationship list must not break the panel
     const inspecting = worldRecordInspector.kind === 'entity' && worldRecordInspector.id;
     const activeMode = inspecting ? (worldRecordInspector.directory || (world.entities.find(entity => entity.id === worldRecordInspector.id)?.type === 'item' ? 'items' : 'people')) : mode;
-    const container = inspecting ? document.getElementById('world-record-body') : document.getElementById(activeMode === 'items' ? 'w-items-list' : 'w-entities-list');
+    const container = inspecting ? document.getElementById('ew-world-record-body') : document.getElementById(activeMode === 'items' ? 'ew-w-items-list' : 'ew-w-entities-list');
     container.innerHTML = '';
     if (!inspecting) {
         renderWorldEntityDirectory(world, container, activeMode);
@@ -6349,7 +6349,7 @@ div.querySelector('.ent-simulation-depth').onchange = (e) => {
     });
     if (inspecting) {
         const links = worldDirectoryUsedBy('entity', selected.id);
-        document.getElementById('world-record-reference-status').textContent = links.length
+        document.getElementById('ew-world-record-reference-status').textContent = links.length
             ? `Canon Links · ${links.slice(0, 3).join(', ')}${links.length > 3 ? ` and ${links.length - 3} more` : ''}.`
             : 'Canon Links · no authored relationships reference this record yet.';
         setWorldInspectorTab(worldRecordInspector.tab);
@@ -6390,7 +6390,7 @@ function addWorldFaction(position = 'top') {
 
 function renderWorldFactions() {
     const world = ExperimentalWorldsState.editingWorld;
-    const container = document.getElementById('w-factions-list');
+    const container = document.getElementById('ew-w-factions-list');
     if (!world || !container) return;
     // The editor draws whatever is in memory, and that can arrive from an
     // import or an older save. Repair before drawing rather than trusting the
@@ -6648,20 +6648,20 @@ function addWorldStartingLife() {
 
 function renderWorldSandboxStudio() {
     const world = ExperimentalWorldsState.editingWorld;
-    const list = document.getElementById('w-world-origins-list');
+    const list = document.getElementById('ew-w-world-origins-list');
     if (!world || !list) return;
     const config = normalizeWorldSandboxConfig(world);
     const setChecked = (id, value) => { const input = document.getElementById(id); if (input) input.checked = !!value; };
-    setChecked('w-sandbox-enabled', config.enabled);
-    setChecked('w-sandbox-politics', config.politics);
-    setChecked('w-sandbox-conflict', config.conflict);
-    setChecked('w-sandbox-law', config.law);
-    setChecked('w-sandbox-seasons', config.seasons);
-    setChecked('w-sandbox-growth', config.growth);
-    document.getElementById('w-sandbox-scale').value = config.scale;
-    document.getElementById('w-sandbox-calendar').value = config.calendar;
-    document.getElementById('w-sandbox-season-days').value = config.seasonDays;
-    document.getElementById('w-sandbox-principles').value = config.principles;
+    setChecked('ew-w-sandbox-enabled', config.enabled);
+    setChecked('ew-w-sandbox-politics', config.politics);
+    setChecked('ew-w-sandbox-conflict', config.conflict);
+    setChecked('ew-w-sandbox-law', config.law);
+    setChecked('ew-w-sandbox-seasons', config.seasons);
+    setChecked('ew-w-sandbox-growth', config.growth);
+    document.getElementById('ew-w-sandbox-scale').value = config.scale;
+    document.getElementById('ew-w-sandbox-calendar').value = config.calendar;
+    document.getElementById('ew-w-sandbox-season-days').value = config.seasonDays;
+    document.getElementById('ew-w-sandbox-principles').value = config.principles;
     list.innerHTML = '';
     if (!world.startingLives.length) {
         list.innerHTML = '<div class="form-hint" style="padding:18px; text-align:center; border:1px dashed var(--border); border-radius:12px;">No starting lives yet. The world will use its single default start.</div>';
@@ -6827,14 +6827,14 @@ function addWorldLore() {
 }
 
 function renderWorldLore() {
-    const container = document.getElementById('w-lore-list');
+    const container = document.getElementById('ew-w-lore-list');
     if (!container) return;
     container.innerHTML = '';
 
     const importBar = document.createElement('div');
     importBar.style.cssText = 'display:flex; justify-content:flex-end; margin-bottom:8px;';
-    importBar.innerHTML = `<button class="tool-btn" id="w-lore-import-btn">Import SillyTavern Pack</button>`;
-    importBar.querySelector('#w-lore-import-btn').onclick = () => {
+    importBar.innerHTML = `<button class="tool-btn" id="ew-w-lore-import-btn">Import SillyTavern Pack</button>`;
+    importBar.querySelector('#ew-w-lore-import-btn').onclick = () => {
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.json';
@@ -7015,8 +7015,8 @@ async function planAndApproveWorldSequence() {
     }
     const authorIntent = prompt('What cut or continuation do you want for the next sequence?\n\nThis is an authorial planning request, not in-character dialogue.', '');
     if (!authorIntent?.trim()) return;
-    const typing = document.getElementById('world-dm-typing');
-    const label = document.getElementById('world-dm-typing-label');
+    const typing = document.getElementById('ew-world-dm-typing');
+    const label = document.getElementById('ew-world-dm-typing-label');
     if (typing) typing.style.display = 'flex';
     if (label) label.textContent = 'The Narrator is preparing the next scene…';
     try {
@@ -7168,7 +7168,7 @@ async function promoteImpliedWorldRecord(options = {}) {
 }
 
 function renderWorldItemCatalogControls(world = ExperimentalWorldsState.editingWorld) {
-    const container = document.getElementById('w-rules-item-catalog');
+    const container = document.getElementById('ew-w-rules-item-catalog');
     if (!container || !world || !globalThis.ExperimentalWorldsRpgMechanics) return;
     const rules = normalizeWorldGameRules(world);
     container.innerHTML = rules.itemCatalog.length ? rules.itemCatalog.map(item => `
@@ -7186,7 +7186,7 @@ function renderWorldItemCatalogControls(world = ExperimentalWorldsState.editingW
             renderWorldItemCatalogControls(world); updateWorldTokenCount();
         };
     });
-    const add = document.getElementById('w-rules-add-item');
+    const add = document.getElementById('ew-w-rules-add-item');
     if (add) add.onclick = () => openWorldItemEditor(world);
 }
 
@@ -7194,8 +7194,8 @@ function openWorldItemEditor(world, value = null) {
     if (!world || !globalThis.ExperimentalWorldsRpgMechanics) return;
     const rules = normalizeWorldGameRules(world);
     const item = globalThis.ExperimentalWorldsRpgMechanics.normalizeItem(value || { name: 'New item', type: 'custom' });
-    let overlay = document.getElementById('world-item-editor-overlay');
-    if (!overlay) { overlay = document.createElement('div'); overlay.id = 'world-item-editor-overlay'; overlay.className = 'modal-overlay'; globalThis.ExperimentalWorldsDom.portalRoot().appendChild(overlay); }
+    let overlay = document.getElementById('ew-world-item-editor-overlay');
+    if (!overlay) { overlay = document.createElement('div'); overlay.id = 'ew-world-item-editor-overlay'; overlay.className = 'modal-overlay'; globalThis.ExperimentalWorldsDom.portalRoot().appendChild(overlay); }
     const options = globalThis.ExperimentalWorldsRpgMechanics.TYPES.map(type => `<option value="${type}" ${item.type === type ? 'selected' : ''}>${type}</option>`).join('');
     const slots = [...new Set(['', ...(rules.equipmentSlots || []), item.slot].filter(value => value !== undefined))]
         .map(slot => `<option value="${experimentalEscapeHTML(slot)}" ${item.slot === slot ? 'selected' : ''}>${experimentalEscapeHTML(slot || 'Not equipable')}</option>`).join('');
@@ -7226,15 +7226,15 @@ function openWorldItemEditor(world, value = null) {
 function loadWorldGameRuleControls(world) {
     if (!world) return;
     const rules = normalizeWorldGameRules(world);
-    const profile = document.getElementById('w-rules-profile');
+    const profile = document.getElementById('ew-w-rules-profile');
     if (profile) profile.value = rules.profileId;
-    const profileDescription = document.getElementById('w-rules-profile-description');
+    const profileDescription = document.getElementById('ew-w-rules-profile-description');
     if (profileDescription) profileDescription.textContent = worldRuleProfileDescription(rules.profileId);
-    document.querySelectorAll('#w-rules-modules-grid [data-rule-module]').forEach(input => {
+    document.querySelectorAll('#ew-w-rules-modules-grid [data-rule-module]').forEach(input => {
         input.checked = !!rules.modules[input.dataset.ruleModule];
     });
-    const vital = document.getElementById('w-rules-vital-stat');
-    const currency = document.getElementById('w-rules-currency-stat');
+    const vital = document.getElementById('ew-w-rules-vital-stat');
+    const currency = document.getElementById('ew-w-rules-currency-stat');
     if (!vital || !currency) return;
     const options = (world.hudConfig?.stats || [])
         .map(stat => `<option value="${experimentalEscapeHTML(stat.id)}">${experimentalEscapeHTML(stat.name || stat.id)}</option>`).join('');
@@ -7242,30 +7242,30 @@ function loadWorldGameRuleControls(world) {
     currency.innerHTML = `<option value="">None</option>${options}`;
     vital.value = rules.vitalStatId;
     currency.value = rules.currencyStatId;
-    document.getElementById('w-rules-zero-hp-mode').value = rules.zeroHpMode;
-    document.getElementById('w-rules-currency-name').value = rules.currencyName;
-    if (document.getElementById('w-rules-equipment-slots')) document.getElementById('w-rules-equipment-slots').value = rules.equipmentSlots.join(', ');
+    document.getElementById('ew-w-rules-zero-hp-mode').value = rules.zeroHpMode;
+    document.getElementById('ew-w-rules-currency-name').value = rules.currencyName;
+    if (document.getElementById('ew-w-rules-equipment-slots')) document.getElementById('ew-w-rules-equipment-slots').value = rules.equipmentSlots.join(', ');
     renderWorldItemCatalogControls(world);
     const dice = normalizeWorldDiceConfig(world);
-    if (document.getElementById('w-dice-resolution')) document.getElementById('w-dice-resolution').value = dice.resolution;
-    if (document.getElementById('w-dice-sides')) document.getElementById('w-dice-sides').value = String(dice.sides);
-    if (document.getElementById('w-dice-modifier-mode')) document.getElementById('w-dice-modifier-mode').value = dice.modifierMode;
-    if (document.getElementById('w-dice-default-difficulty')) document.getElementById('w-dice-default-difficulty').value = dice.defaultDifficulty;
-    if (document.getElementById('w-dice-visibility')) document.getElementById('w-dice-visibility').value = dice.visibility;
-    if (document.getElementById('w-dice-criticals')) document.getElementById('w-dice-criticals').checked = dice.criticals;
+    if (document.getElementById('ew-w-dice-resolution')) document.getElementById('ew-w-dice-resolution').value = dice.resolution;
+    if (document.getElementById('ew-w-dice-sides')) document.getElementById('ew-w-dice-sides').value = String(dice.sides);
+    if (document.getElementById('ew-w-dice-modifier-mode')) document.getElementById('ew-w-dice-modifier-mode').value = dice.modifierMode;
+    if (document.getElementById('ew-w-dice-default-difficulty')) document.getElementById('ew-w-dice-default-difficulty').value = dice.defaultDifficulty;
+    if (document.getElementById('ew-w-dice-visibility')) document.getElementById('ew-w-dice-visibility').value = dice.visibility;
+    if (document.getElementById('ew-w-dice-criticals')) document.getElementById('ew-w-dice-criticals').checked = dice.criticals;
     const capabilities = normalizeWorldCapabilities(world);
-    if (document.getElementById('w-capabilities-customizable')) document.getElementById('w-capabilities-customizable').checked = capabilities.customizable;
-    if (document.getElementById('w-capability-budget')) document.getElementById('w-capability-budget').value = capabilities.startingPointBudget;
-    if (document.getElementById('w-capability-skills')) document.getElementById('w-capability-skills').value = worldCapabilityLines(capabilities.skills);
-    if (document.getElementById('w-capability-perks')) document.getElementById('w-capability-perks').value = worldCapabilityLines(capabilities.perks);
-    if (document.getElementById('w-capability-flaws')) document.getElementById('w-capability-flaws').value = worldCapabilityLines(capabilities.flaws);
-    if (document.getElementById('w-progression-enabled')) document.getElementById('w-progression-enabled').checked = capabilities.progression.enabled;
-    if (document.getElementById('w-progression-method')) document.getElementById('w-progression-method').value = capabilities.progression.method;
+    if (document.getElementById('ew-w-capabilities-customizable')) document.getElementById('ew-w-capabilities-customizable').checked = capabilities.customizable;
+    if (document.getElementById('ew-w-capability-budget')) document.getElementById('ew-w-capability-budget').value = capabilities.startingPointBudget;
+    if (document.getElementById('ew-w-capability-skills')) document.getElementById('ew-w-capability-skills').value = worldCapabilityLines(capabilities.skills);
+    if (document.getElementById('ew-w-capability-perks')) document.getElementById('ew-w-capability-perks').value = worldCapabilityLines(capabilities.perks);
+    if (document.getElementById('ew-w-capability-flaws')) document.getElementById('ew-w-capability-flaws').value = worldCapabilityLines(capabilities.flaws);
+    if (document.getElementById('ew-w-progression-enabled')) document.getElementById('ew-w-progression-enabled').checked = capabilities.progression.enabled;
+    if (document.getElementById('ew-w-progression-method')) document.getElementById('ew-w-progression-method').value = capabilities.progression.method;
     const consequencePolicy = rules.consequences || {};
-    if (document.getElementById('w-consequences-enabled')) document.getElementById('w-consequences-enabled').checked = consequencePolicy.enabled !== false;
-    if (document.getElementById('w-consequences-max')) document.getElementById('w-consequences-max').value = consequencePolicy.maxActive || 120;
-    if (document.getElementById('w-consequences-escalation')) document.getElementById('w-consequences-escalation').value = consequencePolicy.escalationTurns ?? 4;
-    if (document.getElementById('w-consequences-decay')) document.getElementById('w-consequences-decay').value = consequencePolicy.decayTurns ?? 8;
+    if (document.getElementById('ew-w-consequences-enabled')) document.getElementById('ew-w-consequences-enabled').checked = consequencePolicy.enabled !== false;
+    if (document.getElementById('ew-w-consequences-max')) document.getElementById('ew-w-consequences-max').value = consequencePolicy.maxActive || 120;
+    if (document.getElementById('ew-w-consequences-escalation')) document.getElementById('ew-w-consequences-escalation').value = consequencePolicy.escalationTurns ?? 4;
+    if (document.getElementById('ew-w-consequences-decay')) document.getElementById('ew-w-consequences-decay').value = consequencePolicy.decayTurns ?? 8;
     document.querySelectorAll('[data-rule-detail]').forEach(container => {
         const enabled = !!rules.modules[container.dataset.ruleDetail];
         container.style.opacity = enabled ? '1' : '0.42';
@@ -7273,24 +7273,24 @@ function loadWorldGameRuleControls(world) {
             control.disabled = !enabled;
         });
     });
-    const schedulesControl = document.getElementById('w-hud-enable-schedules');
+    const schedulesControl = document.getElementById('ew-w-hud-enable-schedules');
     if (schedulesControl) schedulesControl.checked = !!rules.modules.schedules;
-    const questHudControl = document.getElementById('w-hud-show-quests');
+    const questHudControl = document.getElementById('ew-w-hud-show-quests');
     if (questHudControl) questHudControl.disabled = !rules.modules.quests;
-    const inventoryHudControl = document.getElementById('w-hud-show-inventory');
+    const inventoryHudControl = document.getElementById('ew-w-hud-show-inventory');
     if (inventoryHudControl) inventoryHudControl.disabled = !rules.modules.inventory;
 }
 
 function saveWorldGameRuleControls(world, statIdRenames = new Map()) {
     if (!world) return;
-    const vitalControl = document.getElementById('w-rules-vital-stat');
-    const currencyControl = document.getElementById('w-rules-currency-stat');
+    const vitalControl = document.getElementById('ew-w-rules-vital-stat');
+    const currencyControl = document.getElementById('ew-w-rules-currency-stat');
     const requestedVital = statIdRenames.get(vitalControl?.value || '') || vitalControl?.value || '';
     const requestedCurrency = statIdRenames.get(currencyControl?.value || '') || currencyControl?.value || '';
     world.gameRules = experimentalIsPlainObject(world.gameRules) ? world.gameRules : {};
-    world.gameRules.profileId = document.getElementById('w-rules-profile')?.value || 'custom';
+    world.gameRules.profileId = document.getElementById('ew-w-rules-profile')?.value || 'custom';
     world.gameRules.modules = {};
-    document.querySelectorAll('#w-rules-modules-grid [data-rule-module]').forEach(input => {
+    document.querySelectorAll('#ew-w-rules-modules-grid [data-rule-module]').forEach(input => {
         world.gameRules.modules[input.dataset.ruleModule] = !!input.checked;
     });
     const selectedProfile = WORLD_RULE_PROFILES[world.gameRules.profileId];
@@ -7302,37 +7302,37 @@ function saveWorldGameRuleControls(world, statIdRenames = new Map()) {
     const statIds = new Set((world.hudConfig?.stats || []).map(stat => stat.id));
     world.gameRules.vitalStatId = statIds.has(requestedVital) ? requestedVital : '';
     world.gameRules.currencyStatId = statIds.has(requestedCurrency) ? requestedCurrency : '';
-    world.gameRules.zeroHpMode = document.getElementById('w-rules-zero-hp-mode')?.value === 'lethal'
+    world.gameRules.zeroHpMode = document.getElementById('ew-w-rules-zero-hp-mode')?.value === 'lethal'
         ? 'lethal' : 'fail_forward';
-    world.gameRules.currencyName = String(document.getElementById('w-rules-currency-name')?.value || 'coin').trim().slice(0, 60) || 'coin';
-    world.gameRules.equipmentSlots = [...new Set(String(document.getElementById('w-rules-equipment-slots')?.value || '')
+    world.gameRules.currencyName = String(document.getElementById('ew-w-rules-currency-name')?.value || 'coin').trim().slice(0, 60) || 'coin';
+    world.gameRules.equipmentSlots = [...new Set(String(document.getElementById('ew-w-rules-equipment-slots')?.value || '')
         .split(',').map(slot => slot.trim().toLowerCase().replace(/\s+/g, '-')).filter(Boolean))].slice(0, 30);
     world.gameRules.dice = normalizeWorldDiceConfig({ gameRules: { dice: {
-        resolution: document.getElementById('w-dice-visibility')?.value === 'player_triggered'
-            ? 'player' : document.getElementById('w-dice-resolution')?.value,
-        sides: document.getElementById('w-dice-sides')?.value,
-        modifierMode: document.getElementById('w-dice-modifier-mode')?.value,
-        defaultDifficulty: document.getElementById('w-dice-default-difficulty')?.value,
-        visibility: document.getElementById('w-dice-visibility')?.value,
-        criticals: document.getElementById('w-dice-criticals')?.checked !== false
+        resolution: document.getElementById('ew-w-dice-visibility')?.value === 'player_triggered'
+            ? 'player' : document.getElementById('ew-w-dice-resolution')?.value,
+        sides: document.getElementById('ew-w-dice-sides')?.value,
+        modifierMode: document.getElementById('ew-w-dice-modifier-mode')?.value,
+        defaultDifficulty: document.getElementById('ew-w-dice-default-difficulty')?.value,
+        visibility: document.getElementById('ew-w-dice-visibility')?.value,
+        criticals: document.getElementById('ew-w-dice-criticals')?.checked !== false
     } } });
     world.gameRules.capabilities = {
-        customizable: document.getElementById('w-capabilities-customizable')?.checked !== false,
-        startingPointBudget: document.getElementById('w-capability-budget')?.value,
-        skills: parseWorldCapabilityLines(document.getElementById('w-capability-skills')?.value, 'skill'),
-        perks: parseWorldCapabilityLines(document.getElementById('w-capability-perks')?.value, 'perk'),
-        flaws: parseWorldCapabilityLines(document.getElementById('w-capability-flaws')?.value, 'flaw'),
+        customizable: document.getElementById('ew-w-capabilities-customizable')?.checked !== false,
+        startingPointBudget: document.getElementById('ew-w-capability-budget')?.value,
+        skills: parseWorldCapabilityLines(document.getElementById('ew-w-capability-skills')?.value, 'skill'),
+        perks: parseWorldCapabilityLines(document.getElementById('ew-w-capability-perks')?.value, 'perk'),
+        flaws: parseWorldCapabilityLines(document.getElementById('ew-w-capability-flaws')?.value, 'flaw'),
         progression: {
-            enabled: document.getElementById('w-progression-enabled')?.checked === true,
-            method: document.getElementById('w-progression-method')?.value || ''
+            enabled: document.getElementById('ew-w-progression-enabled')?.checked === true,
+            method: document.getElementById('ew-w-progression-method')?.value || ''
         }
     };
     normalizeWorldCapabilities(world);
     world.gameRules.consequences = {
-        enabled: document.getElementById('w-consequences-enabled')?.checked !== false,
-        maxActive: document.getElementById('w-consequences-max')?.value,
-        escalationTurns: document.getElementById('w-consequences-escalation')?.value,
-        decayTurns: document.getElementById('w-consequences-decay')?.value
+        enabled: document.getElementById('ew-w-consequences-enabled')?.checked !== false,
+        maxActive: document.getElementById('ew-w-consequences-max')?.value,
+        escalationTurns: document.getElementById('ew-w-consequences-escalation')?.value,
+        decayTurns: document.getElementById('ew-w-consequences-decay')?.value
     };
     normalizeWorldGameRules(world);
     world.hudConfig.enableSchedules = !!world.gameRules.modules.schedules;
@@ -7341,7 +7341,7 @@ function saveWorldGameRuleControls(world, statIdRenames = new Map()) {
 function syncWorldStudioStatsFromDOM(world) {
     const renames = new Map();
     if (!world?.hudConfig || !Array.isArray(world.hudConfig.stats)) return renames;
-    const cards = [...document.querySelectorAll('#w-hud-stats-list .studio-card')];
+    const cards = [...document.querySelectorAll('#ew-w-hud-stats-list .studio-card')];
     cards.forEach((card, index) => {
         const stat = world.hudConfig.stats[index];
         if (!stat) return;
@@ -7383,7 +7383,7 @@ function worldStatColorHex(value) {
 function renderWorldStudioStats() {
     const w = ExperimentalWorldsState.editingWorld;
     if (!w) return;
-    const container = document.getElementById('w-hud-stats-list');
+    const container = document.getElementById('ew-w-hud-stats-list');
     if (!container) return;
     container.innerHTML = '';
 
@@ -7484,14 +7484,14 @@ function renderWorldStudioStats() {
 }
 
 function renderWorlds() {
-    const grid = document.getElementById('world-grid');
+    const grid = document.getElementById('ew-world-grid');
     if (!grid) return;
     grid.innerHTML = '';
     
-    const searchVal = document.getElementById('world-search')?.value.toLowerCase() || '';
+    const searchVal = document.getElementById('ew-world-search')?.value.toLowerCase() || '';
     let list = ExperimentalWorldsState.worlds.filter(w => String(w.name || '').toLowerCase().includes(searchVal));
-    const visibleCount = document.getElementById('world-visible-count');
-    const totalCount = document.getElementById('world-total-count');
+    const visibleCount = document.getElementById('ew-world-visible-count');
+    const totalCount = document.getElementById('ew-world-total-count');
     if (visibleCount) visibleCount.textContent = list.length;
     if (totalCount) totalCount.textContent = ExperimentalWorldsState.worlds.length;
 
@@ -7572,6 +7572,6 @@ function renderWorlds() {
         const hasFilter = !!searchVal.trim();
         grid.innerHTML = `<div class="empty-state"><h3>${hasFilter ? 'No Worlds Match This Search' : 'No Worlds Found'}</h3><p>${hasFilter ? 'Clear the search to show every saved world.' : 'Import a world or click "+ Create New World" to begin.'}</p>${hasFilter ? '<button class="btn btn-ghost clear-world-search-btn">Clear Search</button>' : ''}</div>`;
         const clear = grid.querySelector('.clear-world-search-btn');
-        if (clear) clear.onclick = () => { document.getElementById('world-search').value = ''; renderWorlds(); };
+        if (clear) clear.onclick = () => { document.getElementById('ew-world-search').value = ''; renderWorlds(); };
     }
 }

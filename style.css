@@ -39,6 +39,44 @@
   --radius-lg: 20px;
 }
 
+/* Optional Experimental Worlds host attachment. The preserved mode owns its
+   internal presentation stylesheet; these rules cover only host navigation,
+   the permanent mount points, and the first-use acknowledgement. */
+.experimental-worlds-nav-item { position:relative; }
+.experimental-worlds-nav-badge,
+.experimental-worlds-heading-badge {
+    display:inline-flex; align-items:center; padding:2px 6px;
+    border:1px solid rgba(255,166,64,.38); border-radius:999px;
+    color:#ffc071; background:rgba(255,166,64,.1); font-size:8px;
+    font-weight:850; letter-spacing:.08em; vertical-align:middle;
+}
+.experimental-worlds-nav-badge { margin-left:auto; }
+#experimental-worlds-root { position:absolute; inset:0; min-width:0; min-height:0; overflow:hidden; }
+#experimental-worlds-portal-root { position:relative; z-index:0; }
+.experimental-worlds-loading {
+    min-height:calc(100vh - 2rem); display:grid; place-items:center;
+    color:var(--text-muted); font:600 .95rem/1.4 var(--font-body);
+    letter-spacing:.03em;
+}
+.experimental-worlds-ack-overlay {
+    position:fixed; inset:0; z-index:1600; display:grid; place-items:center;
+    padding:20px; background:rgba(5,7,13,.72); backdrop-filter:blur(6px);
+}
+.experimental-worlds-ack-dialog {
+    width:min(620px,100%); max-height:calc(100vh - 40px); overflow:auto;
+    padding:26px; border:1px solid rgba(132,103,218,.48); border-radius:16px;
+    background:linear-gradient(145deg,#1f1d30,#141722);
+    box-shadow:0 28px 90px rgba(0,0,0,.58); color:#e7e5f4;
+}
+.experimental-worlds-ack-dialog h2 { margin:10px 0 12px; color:#faf9ff; font-size:1.55rem; }
+.experimental-worlds-ack-dialog p { color:#c9c6dc; line-height:1.55; }
+.experimental-worlds-ack-check {
+    display:flex; gap:10px; align-items:flex-start; margin:20px 0;
+    color:#f1eff9; line-height:1.45; cursor:pointer;
+}
+.experimental-worlds-ack-check input { width:18px; height:18px; margin-top:2px; accent-color:#9275ea; }
+.experimental-worlds-ack-actions { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
+
 /* ═══════════════════════ VIDEO ADVENTURES · ALPHA ═══════════════════════ */
 .video-world-alpha-note {
     display: flex;

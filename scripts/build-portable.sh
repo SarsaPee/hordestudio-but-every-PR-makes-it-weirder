@@ -39,6 +39,9 @@ for file in \
   rpg-mechanics.js \
   multiplayer-engine.js \
   multiplayer.js \
+  backup-domain-coordinator.js \
+  rolling-recovery.js \
+  global-openrouter-routing.js \
   ashlyn-reynolds-human.js \
   jane-harlow-human.js \
   policy-panic-world.js \
@@ -53,6 +56,18 @@ for file in \
 do
   cp "$ROOT_DIR/$file" "$APP_DIR/"
 done
+
+# Fail packaging if the generated Experimental namespace/module boundary has
+# drifted from its reviewed sources.
+node "$ROOT_DIR/scripts/build-experimental-worlds-module.mjs" --check
+node "$ROOT_DIR/scripts/verify-experimental-worlds-dom-boundary.mjs"
+
+# Experimental Worlds is a lazy first-class mode. Ship its complete owned
+# runtime and the narrow host adapter, but never the retired Pass-0 stock
+# runtime, migration scratch files, reference trees, or development scripts.
+mkdir -p "$APP_DIR/experiences" "$APP_DIR/host-adapters"
+cp -R "$ROOT_DIR/experiences/experimental-worlds" "$APP_DIR/experiences/"
+cp -R "$ROOT_DIR/host-adapters/experimental-worlds" "$APP_DIR/host-adapters/"
 
 # Built-in humans follow the same boot path as the rest of the application.
 # Packaging must copy both definitions and must never rewrite them into inline

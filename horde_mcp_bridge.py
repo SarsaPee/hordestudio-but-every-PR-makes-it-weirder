@@ -158,6 +158,11 @@ STATIC_FILES = {
 STATIC_MEDIA_ROOTS = (
     ("/assets/bundled/", APP_DIR / "assets" / "bundled"),
     ("/assets/worlds/", APP_DIR / "assets" / "worlds"),
+    # Optional-mode code is served only from its two explicit application
+    # roots. This keeps lazy ES-module loading portable without turning the
+    # bridge into a general-purpose file server.
+    ("/experiences/experimental-worlds/", APP_DIR / "experiences" / "experimental-worlds"),
+    ("/host-adapters/experimental-worlds/", APP_DIR / "host-adapters" / "experimental-worlds"),
 )
 
 if os.name == "nt":
@@ -3176,7 +3181,8 @@ class MultiplayerHandler(BaseHTTPRequestHandler):
                     self.respond(403, {"error": "Invalid public asset path."})
                     return True
                 target = candidate
-                content_type = mimetypes.guess_type(candidate.name)[0] or content_type
+                content_type = ("text/javascript" if candidate.suffix == ".mjs"
+                                else mimetypes.guess_type(candidate.name)[0] or content_type)
                 break
             if target is None:
                 return False
@@ -3368,7 +3374,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     self.respond(403, {"error": "Static media path is outside the public asset tree."})
                     return True
                 target = candidate
-                content_type = mimetypes.guess_type(candidate.name)[0] or content_type
+                content_type = ("text/javascript" if candidate.suffix == ".mjs"
+                                else mimetypes.guess_type(candidate.name)[0] or content_type)
                 break
             if target is None:
                 return False

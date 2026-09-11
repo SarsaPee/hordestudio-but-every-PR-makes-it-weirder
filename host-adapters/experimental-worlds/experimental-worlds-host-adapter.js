@@ -13,7 +13,21 @@
     global.ExperimentalWorldsHost = Object.freeze({
         configure(nextHost) { host = Object.freeze({ ...nextHost }); },
         persistSharedContinuities: continuities => requireHost().persistSharedContinuities(continuities),
-        persist: () => requireHost().persist(),
+        // Persistence can be registered during ordinary host bootstrap before
+        // the gameplay service map exists. Once the full host is configured,
+        // an explicit host override still wins.
+        persist(...args) {
+            if (host?.persist) return host.persist(...args);
+            const persistence = global.ExperimentalWorldsPersistenceBootstrap;
+            if (!persistence?.persist) throw new Error('Experimental Worlds persistence is unavailable.');
+            return persistence.persist(...args);
+        },
+        persistenceStatus: () => global.ExperimentalWorldsPersistenceBootstrap?.discover?.()
+            || Promise.reject(new Error('Experimental Worlds persistence is unavailable.')),
+        captureRestoreGeneration: () => global.ExperimentalWorldsPersistenceBootstrap?.captureRestoreGeneration?.()
+            ?? (Number(global.ExperimentalWorldsRestoreGeneration) || 0),
+        isRestoreGenerationCurrent: value => global.ExperimentalWorldsPersistenceBootstrap?.isRestoreGenerationCurrent?.(value)
+            ?? Number(value) === (Number(global.ExperimentalWorldsRestoreGeneration) || 0),
         navigate: (...args) => requireHost().navigate(...args),
         markMediaChanged: () => requireHost().markMediaChanged(),
         mediaDirty: () => requireHost().mediaDirty(),

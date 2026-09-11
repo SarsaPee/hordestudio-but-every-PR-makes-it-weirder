@@ -2474,7 +2474,7 @@
                 // the user's reading position.
                 const restoreSceneContext = () => {
                     const body = document.getElementById('sp-panel-body');
-                    if (body?.closest('#world-sidecar-workspace')) body.scrollTop = 0;
+                    if (body?.closest('#ew-world-sidecar-workspace')) body.scrollTop = 0;
                 };
                 restoreSceneContext();
                 requestAnimationFrame(restoreSceneContext);
@@ -2759,7 +2759,7 @@
             runtime.resetPanelScrollOnNextMount = false;
             const resetDashboardPosition = () => {
                 const body = document.getElementById('sp-panel-body');
-                if (body?.closest('#world-sidecar-workspace')) body.scrollTop = 0;
+                if (body?.closest('#ew-world-sidecar-workspace')) body.scrollTop = 0;
             };
             resetDashboardPosition();
             requestAnimationFrame(resetDashboardPosition);

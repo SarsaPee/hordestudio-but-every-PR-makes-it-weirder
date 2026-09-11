@@ -1,5 +1,5 @@
 /* Pinned World-composer sizing behaviour; independent of the host Chat input. */
-function resizeExperimentalWorldMessageInput(input = document.getElementById('world-user-input')) {
+function resizeExperimentalWorldMessageInput(input = document.getElementById('ew-world-user-input')) {
     if (!input) return;
     const defaultHeight = Number(input.dataset.defaultHeight)
         || Math.max(1, Math.ceil(parseFloat(getComputedStyle(input).minHeight) || input.clientHeight || 22));
@@ -13,7 +13,7 @@ function resizeExperimentalWorldMessageInput(input = document.getElementById('wo
     input.style.overflowY = input.scrollHeight > height ? 'auto' : 'hidden';
 }
 
-function resetExperimentalWorldMessageInput(input = document.getElementById('world-user-input')) {
+function resetExperimentalWorldMessageInput(input = document.getElementById('ew-world-user-input')) {
     if (!input) return;
     input.value = '';
     delete input.dataset.manualHeight;

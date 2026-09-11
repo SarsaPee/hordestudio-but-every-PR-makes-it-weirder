@@ -6193,7 +6193,7 @@ async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
             commitTool: sidecarCommitToolFor(world, sess),
             handoffComplete: turn.handoffComplete !== false,
             onStage: stage => {
-                const label = document.getElementById('world-dm-typing');
+                const label = document.getElementById('ew-world-dm-typing');
                 if (label) label.textContent = stage === 'reading' ? 'Sidecar is reading the authored beat…' : 'Sidecar is reconciling world state…';
             }
         });
@@ -6968,20 +6968,20 @@ function returnToWorldNarrator() {
     activeProtocol.inputMode = 'narrator';
     activeProtocol.workspace = {};
     renderWorldPlayState();
-    document.getElementById('world-user-input')?.focus();
+    document.getElementById('ew-world-user-input')?.focus();
     ExperimentalWorldsHost.persist().catch(error => console.warn('Could not persist narrator mode:', error));
 }
 
 function renderSidecarConversation(world, sess) {
-    const panel = document.getElementById('world-sidecar-conversation');
-    const log = document.getElementById('world-sidecar-conversation-log');
+    const panel = document.getElementById('ew-world-sidecar-conversation');
+    const log = document.getElementById('ew-world-sidecar-conversation-log');
     if (!panel || !log) return;
     const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const enabled = protocol?.inputMode === 'sidecar'
         && window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     panel.classList.toggle('hidden', !enabled);
     if (!enabled) return;
-    const closeSidecarConversation = document.getElementById('world-close-sidecar-conversation');
+    const closeSidecarConversation = document.getElementById('ew-world-close-sidecar-conversation');
     if (closeSidecarConversation) closeSidecarConversation.onclick = returnToWorldNarrator;
     const entries = (protocol?.conversations || []).slice(-80);
     const questionCards = (protocol?.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-20).map(question => `
@@ -7048,7 +7048,7 @@ function renderSidecarConversation(world, sess) {
 // view over the active Sidecar timeline instead of reviving the old parallel
 // V3 world-state system.
 function closeWorldSidecarInspector() {
-    document.getElementById('world-sidecar-inspector-overlay')?.remove();
+    document.getElementById('ew-world-sidecar-inspector-overlay')?.remove();
 }
 
 function sidecarInspectorJson(value, fallback = 'Nothing has been recorded yet.') {
@@ -7069,7 +7069,7 @@ function openWorldSidecarLine(workspace = {}) {
         openedAt: new Date().toISOString(),
         provenance: { source: 'direct_user_refinement' }
     };
-    const input = document.getElementById('world-user-input');
+    const input = document.getElementById('ew-world-user-input');
     protocol.inputMode = 'sidecar';
     if (input) {
         input.placeholder = workspace.placeholder || 'Ask Sidecar about continuity, questions, or a refinement…';
@@ -8176,7 +8176,7 @@ function stageScenePulseStoryIdea({ direction = '', inject = false } = {}) {
         ? direction.trim()
         : (name || hook ? `[OOC: Take the story in ${article} ${type} direction — "${name || 'Story direction'}". ${hook}]` : '');
     if (!text) throw new Error('The selected Story Idea has no direction text.');
-    const input = document.getElementById('world-user-input');
+    const input = document.getElementById('ew-world-user-input');
     if (!input) throw new Error('The World composer is unavailable.');
     if (inject && ExperimentalWorldsRuntime.turnInProgress()) throw new Error('The current World turn is still generating.');
     input.value = text;
@@ -8187,7 +8187,7 @@ function stageScenePulseStoryIdea({ direction = '', inject = false } = {}) {
         ExperimentalWorldsHost.notify('Story direction pasted into the World draft — edit and send when ready.', 'success');
         return;
     }
-    const send = document.getElementById('world-send-btn');
+    const send = document.getElementById('ew-world-send-btn');
     if (!send) throw new Error('The World send control is unavailable.');
     send.click();
     ExperimentalWorldsHost.notify('Story direction injected as a new World turn.', 'success');
@@ -9755,8 +9755,8 @@ function scenePulseThoughtPanel(data, ui, persist, onRegenerate = null) {
 }
 
 function renderScenePulseWorldsWorkspace(world, sess) {
-    const host = document.getElementById('world-sidecar-workspace');
-    const column = document.querySelector('#world-play-view .world-status-col');
+    const host = document.getElementById('ew-world-sidecar-workspace');
+    const column = document.querySelector('#ew-world-play-view .world-status-col');
     if (!host || !column) return;
     // The upstream panel has a document-level weather/effects layer.  A late
     // Sidecar redraw must never remount it over the library or another Horde
@@ -9874,7 +9874,7 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     host.querySelectorAll('[data-sp-action]').forEach(button => button.addEventListener('click', async () => { const action = button.dataset.spAction; if (action === 'demo') { ui.demo = !ui.demo; ui.view = 'scene'; persist(); renderScenePulseWorldsWorkspace(world, sess); return; } if (action === 'thoughts') { scenePulseThoughtPanel(data, ui, persist, async () => { if (ui.demo) { ExperimentalWorldsHost.notify('The tour fixture has no live Reader to regenerate.', 'info'); return null; } await refreshScenePulseThoughts(world, sess, model.latestTurn?.id || ''); const nextModel = buildSidecarWorkspaceModel(world, sess); const nextData = nextModel ? scenePulseWorldsAdapter(world, sess, nextModel, false) : null; renderScenePulseWorldsWorkspace(world, sess); ExperimentalWorldsHost.notify('Inner Thoughts regenerated from the settled turn.', 'success'); return nextData; }); return; } if (action === 'refresh') { if (ui.demo) { ExperimentalWorldsHost.notify('Switch to Live scene before refreshing.', 'info'); return; } button.disabled = true; try { await refreshSidecarSceneIntelligence(world, sess, model.latestTurn?.id || ''); ExperimentalWorldsHost.notify('ScenePulse refreshed for review.', 'success'); } catch (error) { ExperimentalWorldsHost.notify(`Could not refresh ScenePulse: ${error?.message || error}`, 'error'); } renderScenePulseWorldsWorkspace(world, sess); } }));
     host.querySelector('[data-sp-theme]')?.addEventListener('change', event => { ui.theme = event.target.value; persist(); renderScenePulseWorldsWorkspace(world, sess); });
     host.querySelector('[data-sp-effects]')?.addEventListener('change', event => { ui.reduceEffects = !event.target.checked; persist(); host.classList.toggle('spw-reduce-effects', ui.reduceEffects); });
-    host.querySelectorAll('[data-sp-idea]').forEach(button => button.addEventListener('click', () => { const idea = data.plotBranches[Number(button.dataset.spIdea)]; const input = document.getElementById('world-user-input'); if (!idea || !input) return; input.value = idea.hook || idea.name || ''; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); ExperimentalWorldsHost.notify('Story direction added to the draft.', 'success'); }));
+    host.querySelectorAll('[data-sp-idea]').forEach(button => button.addEventListener('click', () => { const idea = data.plotBranches[Number(button.dataset.spIdea)]; const input = document.getElementById('ew-world-user-input'); if (!idea || !input) return; input.value = idea.hook || idea.name || ''; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); ExperimentalWorldsHost.notify('Story direction added to the draft.', 'success'); }));
     host.querySelectorAll('[data-sp-quest-action]').forEach(button => button.addEventListener('click', () => {
         if (ui.demo) { ExperimentalWorldsHost.notify('The tour fixture is read-only. Switch to Live scene to change this timeline.', 'info'); return; }
         const action = button.dataset.spQuestAction;
@@ -9909,8 +9909,8 @@ function renderScenePulseWorldsWorkspace(world, sess) {
 
 function renderSidecarWorkspace(world, sess) {
     return renderScenePulseWorldsWorkspace(world, sess);
-    const host = document.getElementById('world-sidecar-workspace');
-    const column = document.querySelector('#world-play-view .world-status-col');
+    const host = document.getElementById('ew-world-sidecar-workspace');
+    const column = document.querySelector('#ew-world-play-view .world-status-col');
     if (!host || !column) return;
     const sidecar = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     column.classList.toggle('is-sidecar', sidecar);
@@ -10163,13 +10163,13 @@ function openWorldSidecarInspector(view = 'scene') {
         : view === 'migration' ? 'Enable Sidecar for this world'
         : 'Scene State';
     const overlay = document.createElement('div');
-    overlay.id = 'world-sidecar-inspector-overlay';
+    overlay.id = 'ew-world-sidecar-inspector-overlay';
     overlay.className = 'modal-overlay';
     overlay.style.zIndex = '1100';
     const legacy = `<section style="display:grid; gap:12px; padding:4px 0;">
         <div class="fallback-banner" style="display:block; margin:0;"><span class="banner-icon">◌</span><span class="banner-text"><strong>This timeline is using Inline Legacy.</strong> Sidecar packets, private Sidecar conversation, scene reconciliation and Sidecar-only controls are intentionally unavailable until this timeline is migrated.</span></div>
         <div class="form-hint">The existing narration history and canonical receipts will be retained. Derived vectors are rebuilt after migration; this does not create a new world.</div>
-        <div><button class="btn btn-primary" id="world-sidecar-inspector-migrate">Open Sidecar migration wizard</button></div>
+        <div><button class="btn btn-primary" id="ew-world-sidecar-inspector-migrate">Open Sidecar migration wizard</button></div>
     </section>`;
     let body = legacy;
     if (isSidecar) {
@@ -10184,7 +10184,7 @@ function openWorldSidecarInspector(view = 'scene') {
         if (view === 'line') { openWorldSidecarLine(); return; }
         else if (view === 'backstage') body = `${tabs}${sidecarInspectorJson({ narratorHandoff: latestTurn?.handoff || latestTurn?.sceneHandoff || null, sidecarReader: latestTurn?.reader || null, sidecarReceipt: latestTurn?.receipt || latestTurn?.reconciliationReceipt || null, roleplayOS: latestTurn?.ff54 || null, temporalBreakdown: latestTurn?.sceneHeader || null, controlledCharacterEvidence: latestTurn?.controlledCharacterEvidence || null, nextScenePacket: packet, proposals: (protocol.backgroundProposals || []).slice(-12), refinements: (protocol.refinements || []).slice(-12), readerRefreshes: (protocol.readerRefreshes || []).slice(-20), commitJournal: (sess.sidecarCommitJournal || []).slice(-40), incompleteCommit: sess.sidecarIncompleteCommit || null }, 'No Sidecar turn has been committed yet.')}`;
         else if (view === 'questions') body = `${tabs}${sidecarInspectorJson((protocol.questions || []).filter(question => question.status !== 'resolved'), 'There are no open Sidecar questions.')}`;
-        else if (view === 'memory') body = `${tabs}<div style="display:grid; gap:8px; margin-bottom:10px; padding:10px; border:1px solid var(--border); border-radius:8px;"><div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><strong>Reader backfill</strong><span class="form-hint">Derived evidence only; canonical turns and world history are never rewritten.</span></div><div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><label class="form-label" style="min-width:210px;">From turn<select id="world-sidecar-reader-backfill-start" class="form-select"><option value="">First eligible turn</option>${readerBackfillTurnOptions}</select></label><label class="form-label" style="min-width:210px;">Through turn<select id="world-sidecar-reader-backfill-end" class="form-select"><option value="">Last eligible turn</option>${readerBackfillTurnOptions}</select></label><button class="btn btn-primary" id="world-sidecar-reader-backfill">Backfill selected range</button></div></div>${protocol.readerBackfill ? `<div class="form-hint" style="margin-bottom:8px;">Reader backfill: ${experimentalEscapeHTML(protocol.readerBackfill.status || 'idle')} · ${Number(protocol.readerBackfill.completed) || 0} completed · ${Number(protocol.readerBackfill.failed) || 0} failed${protocol.readerBackfill.lastError ? ` · ${experimentalEscapeHTML(protocol.readerBackfill.lastError)}` : ''}</div>` : ''}${sidecarInspectorJson({
+        else if (view === 'memory') body = `${tabs}<div style="display:grid; gap:8px; margin-bottom:10px; padding:10px; border:1px solid var(--border); border-radius:8px;"><div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><strong>Reader backfill</strong><span class="form-hint">Derived evidence only; canonical turns and world history are never rewritten.</span></div><div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><label class="form-label" style="min-width:210px;">From turn<select id="ew-world-sidecar-reader-backfill-start" class="form-select"><option value="">First eligible turn</option>${readerBackfillTurnOptions}</select></label><label class="form-label" style="min-width:210px;">Through turn<select id="ew-world-sidecar-reader-backfill-end" class="form-select"><option value="">Last eligible turn</option>${readerBackfillTurnOptions}</select></label><button class="btn btn-primary" id="ew-world-sidecar-reader-backfill">Backfill selected range</button></div></div>${protocol.readerBackfill ? `<div class="form-hint" style="margin-bottom:8px;">Reader backfill: ${experimentalEscapeHTML(protocol.readerBackfill.status || 'idle')} · ${Number(protocol.readerBackfill.completed) || 0} completed · ${Number(protocol.readerBackfill.failed) || 0} failed${protocol.readerBackfill.lastError ? ` · ${experimentalEscapeHTML(protocol.readerBackfill.lastError)}` : ''}</div>` : ''}${sidecarInspectorJson({
             configuration: effectiveSidecarMemoryConfig(world),
             readerProfile: effectiveSidecarReaderProfile(world, sess),
             readerBackfill: protocol.readerBackfill || null,
@@ -10196,15 +10196,15 @@ function openWorldSidecarInspector(view = 'scene') {
                 scenes: protocol.memoryGraph?.scenes || [], sequences: protocol.memoryGraph?.sequences || [], cognition: protocol.memoryGraph?.cognition || []
             }
         }, 'No Sidecar memory work has been recorded yet.')}`;
-        else if (view === 'timelines') body = `${tabs}<p class="form-hint">Forks are immutable copies of a selected committed revision. Superseded takes stay auditable but do not leak into the active timeline.</p><button class="btn btn-primary" id="world-sidecar-inspector-timelines">Open timeline and fork browser</button>`;
+        else if (view === 'timelines') body = `${tabs}<p class="form-hint">Forks are immutable copies of a selected committed revision. Superseded takes stay auditable but do not leak into the active timeline.</p><button class="btn btn-primary" id="ew-world-sidecar-inspector-timelines">Open timeline and fork browser</button>`;
         else if (view === 'scene') body = `${tabs}${sidecarSceneProjectionMarkup(world, sess)}`;
         else body = `${tabs}${sidecarInspectorJson(packet, 'The next-turn scene packet has not been prepared yet.')}`;
     }
-    overlay.innerHTML = `<div class="modal" style="width:min(900px, calc(100vw - 36px)); max-height:86vh; display:flex; flex-direction:column;"><div class="modal-header"><h2>${experimentalEscapeHTML(title)}</h2><button class="modal-close" id="close-world-sidecar-inspector">×</button></div><div class="modal-body" style="overflow:auto;">${body}</div></div>`;
+    overlay.innerHTML = `<div class="modal" style="width:min(900px, calc(100vw - 36px)); max-height:86vh; display:flex; flex-direction:column;"><div class="modal-header"><h2>${experimentalEscapeHTML(title)}</h2><button class="modal-close" id="ew-close-world-sidecar-inspector">×</button></div><div class="modal-body" style="overflow:auto;">${body}</div></div>`;
     globalThis.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
     overlay.addEventListener('click', event => { if (event.target === overlay) closeWorldSidecarInspector(); });
-    document.getElementById('close-world-sidecar-inspector')?.addEventListener('click', closeWorldSidecarInspector);
-    document.getElementById('world-sidecar-inspector-migrate')?.addEventListener('click', () => { closeWorldSidecarInspector(); openSidecarMigrationWizard(world.id); });
+    document.getElementById('ew-close-world-sidecar-inspector')?.addEventListener('click', closeWorldSidecarInspector);
+    document.getElementById('ew-world-sidecar-inspector-migrate')?.addEventListener('click', () => { closeWorldSidecarInspector(); openSidecarMigrationWizard(world.id); });
     document.querySelectorAll('.sidecar-inspector-tab').forEach(button => button.addEventListener('click', () => openWorldSidecarInspector(button.dataset.view)));
     const openCandidateReview = button => {
         const candidate = protocol?.readerCandidates?.find(item => item.candidateId === button.dataset.candidateId);
@@ -10258,13 +10258,13 @@ function openWorldSidecarInspector(view = 'scene') {
             button.textContent = '↻';
         }
     });
-    document.getElementById('world-sidecar-inspector-timelines')?.addEventListener('click', () => { closeWorldSidecarInspector(); openWorldTimelineBrowser(); });
-    document.getElementById('world-sidecar-reader-backfill')?.addEventListener('click', async event => {
+    document.getElementById('ew-world-sidecar-inspector-timelines')?.addEventListener('click', () => { closeWorldSidecarInspector(); openWorldTimelineBrowser(); });
+    document.getElementById('ew-world-sidecar-reader-backfill')?.addEventListener('click', async event => {
         const button = event.currentTarget; button.disabled = true; button.textContent = 'Backfilling…';
         try {
             const result = await window.ExperimentalWorldsSidecarReaderBackfill?.run(world, sess, {
-                startTurnId: document.getElementById('world-sidecar-reader-backfill-start')?.value || '',
-                endTurnId: document.getElementById('world-sidecar-reader-backfill-end')?.value || '',
+                startTurnId: document.getElementById('ew-world-sidecar-reader-backfill-start')?.value || '',
+                endTurnId: document.getElementById('ew-world-sidecar-reader-backfill-end')?.value || '',
                 onProgress: progress => { button.textContent = `Backfilling… ${progress.completed || 0}/${progress.total || 0}`; }
             });
             ExperimentalWorldsHost.notify(`Reader backfill ${result?.status || 'completed'}: ${result?.completed || 0} completed, ${result?.failed || 0} failed.`, result?.failed ? 'warning' : 'success');

@@ -22,11 +22,11 @@ function openWorldCheckModal() {
     }
     const dice = normalizeWorldDiceConfig(world);
     const pending = (Array.isArray(sess.pendingChecks) ? sess.pendingChecks[0] : null) || sess.pendingCheck;
-    const modal = document.getElementById('world-check-modal');
-    const label = document.getElementById('world-check-label');
-    const stat = document.getElementById('world-check-stat');
-    const difficulty = document.getElementById('world-check-difficulty');
-    const modifier = document.getElementById('world-check-modifier');
+    const modal = document.getElementById('ew-world-check-modal');
+    const label = document.getElementById('ew-world-check-label');
+    const stat = document.getElementById('ew-world-check-stat');
+    const difficulty = document.getElementById('ew-world-check-difficulty');
+    const modifier = document.getElementById('ew-world-check-modifier');
     stat.innerHTML = '<option value="">No stat</option>' + (world.hudConfig?.stats || [])
         .filter(item => worldStatRollConfig(item).enabled)
         .map(item => `<option value="${experimentalEscapeHTML(item.id)}">${experimentalEscapeHTML(item.name || item.id)} · ${experimentalEscapeHTML(String(sess.playerStats?.[item.id] ?? item.value ?? 0))}</option>`).join('');
@@ -35,20 +35,20 @@ function openWorldCheckModal() {
     difficulty.value = pending?.difficulty || dice.defaultDifficulty;
     modifier.value = pending?.modifier || 0;
     [label, stat, difficulty, modifier].forEach(control => { control.disabled = !!pending; });
-    const note = document.getElementById('world-check-pending-note');
+    const note = document.getElementById('ew-world-check-pending-note');
     note.classList.toggle('hidden', !pending);
     note.innerHTML = pending
         ? `<strong>The DM requested this check.</strong><br>${experimentalEscapeHTML(pending.label)} · d${dice.sides} vs ${experimentalEscapeHTML(String(pending.difficulty))}. Its result will be locked into the timeline and survives rerolls.`
         : '<strong>Player-initiated check.</strong> Define an uncertain action before it is narrated. The roll is resolved first, so the DM receives the real result instead of inventing one.';
-    document.getElementById('world-check-title').textContent = pending ? 'Resolve requested check' : 'Create a check';
-    document.getElementById('confirm-world-check').textContent = `🎲 Roll d${dice.sides} & continue`;
+    document.getElementById('ew-world-check-title').textContent = pending ? 'Resolve requested check' : 'Create a check';
+    document.getElementById('ew-confirm-world-check').textContent = `🎲 Roll d${dice.sides} & continue`;
     modal.classList.remove('hidden');
     renderWorldCheckPreview();
     if (!pending) label.focus();
 }
 
 function closeWorldCheckModal() {
-    document.getElementById('world-check-modal')?.classList.add('hidden');
+    document.getElementById('ew-world-check-modal')?.classList.add('hidden');
 }
 
 function worldCheckModifier(world, sess, statId) {
@@ -81,13 +81,13 @@ function worldCheckModifier(world, sess, statId) {
 function renderWorldCheckPreview() {
     const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
-    const preview = document.getElementById('world-check-preview');
+    const preview = document.getElementById('ew-world-check-preview');
     if (!world || !sess || !preview) return;
     const dice = normalizeWorldDiceConfig(world);
-    const statId = document.getElementById('world-check-stat')?.value || '';
+    const statId = document.getElementById('ew-world-check-stat')?.value || '';
     const statModifier = worldCheckModifier(world, sess, statId);
-    const situation = Math.max(-5, Math.min(5, parseInt(document.getElementById('world-check-modifier')?.value) || 0));
-    const difficulty = Math.max(2, Math.min(dice.sides + 10, parseInt(document.getElementById('world-check-difficulty')?.value) || dice.defaultDifficulty));
+    const situation = Math.max(-5, Math.min(5, parseInt(document.getElementById('ew-world-check-modifier')?.value) || 0));
+    const difficulty = Math.max(2, Math.min(dice.sides + 10, parseInt(document.getElementById('ew-world-check-difficulty')?.value) || dice.defaultDifficulty));
     const combined = statModifier + situation;
     preview.innerHTML = `Roll <span class="world-check-result-chip">d${dice.sides}${combined ? `${combined > 0 ? '+' : ''}${combined}` : ''}</span> against <span class="world-check-result-chip">${difficulty}</span>. ${dice.criticals ? `Natural 1/${dice.sides} are critical.` : 'No automatic critical results.'}`;
 }
@@ -98,17 +98,17 @@ async function resolveWorldCheckFromModal() {
     const sess = getCurrentWorldSession();
     if (!world || !sess) return;
     const pending = (Array.isArray(sess.pendingChecks) ? sess.pendingChecks[0] : null) || sess.pendingCheck;
-    const label = String(pending?.label || document.getElementById('world-check-label')?.value || 'Unspecified check').trim().slice(0, 120);
+    const label = String(pending?.label || document.getElementById('ew-world-check-label')?.value || 'Unspecified check').trim().slice(0, 120);
     if (!label) return ExperimentalWorldsHost.notify('Describe what is being attempted first.', 'info');
     const dice = normalizeWorldDiceConfig(world);
     const roll = rollSecureDie(dice.sides);
     const check = {
         id: pending?.id || `manual_${Math.max(1, sess.turnCount || 1)}_${Date.now()}`,
         label,
-        stat_id: pending?.stat_id || document.getElementById('world-check-stat')?.value || '',
+        stat_id: pending?.stat_id || document.getElementById('ew-world-check-stat')?.value || '',
         capability_id: pending?.capability_id || '',
-        difficulty: pending?.difficulty || parseInt(document.getElementById('world-check-difficulty')?.value) || dice.defaultDifficulty,
-        modifier: pending?.modifier ?? (parseInt(document.getElementById('world-check-modifier')?.value) || 0),
+        difficulty: pending?.difficulty || parseInt(document.getElementById('ew-world-check-difficulty')?.value) || dice.defaultDifficulty,
+        modifier: pending?.modifier ?? (parseInt(document.getElementById('ew-world-check-modifier')?.value) || 0),
         failure_cost: pending?.failure_cost || undefined,
         provided_roll: roll,
         force_resolve: true
@@ -226,8 +226,8 @@ function setupMultiplayerHub() {
             ExperimentalWorldsHost.notify('Could not copy automatically. Select the commands and copy them manually.', 'error');
         }
     });
-    document.getElementById('world-party-online-help')?.addEventListener('click', () => {
-        const overlay = document.getElementById('world-multiplayer-overlay');
+    document.getElementById('ew-world-party-online-help')?.addEventListener('click', () => {
+        const overlay = document.getElementById('ew-world-multiplayer-overlay');
         overlay?.classList.add('hidden');
         overlay?.setAttribute('aria-hidden', 'true');
         multiplayerHubTransport = 'online';
@@ -254,7 +254,7 @@ function setupMultiplayerHub() {
 }
 
 function currentMultiplayerPersona() {
-    const inWorld = !document.getElementById('world-play-view')?.classList.contains('hidden');
+    const inWorld = !document.getElementById('ew-world-play-view')?.classList.contains('hidden');
     const sessionPersonaId = inWorld ? getCurrentWorldSession()?.personaId : '';
     const persona = ExperimentalWorldsHost.currentMultiplayerPersona(sessionPersonaId);
     if (!persona) return {};
@@ -463,45 +463,45 @@ function applyMultiplayerSnapshot(context, snapshot, type) {
         return;
     }
 
-    const view = document.getElementById('world-play-view');
+    const view = document.getElementById('ew-world-play-view');
     if (view?.classList.contains('hidden')) ExperimentalWorldsHost.navigate('worldPlay');
     view?.classList.add('multiplayer-guest-view');
     const hud = snapshot.hud || {};
-    document.getElementById('world-dm-name').textContent = snapshot.worldName || snapshot.experienceName || context?.name || 'Shared World';
-    document.getElementById('world-active-name').textContent = 'Shared living world';
-    document.getElementById('world-model-name').textContent = 'Host runs the model';
-    document.getElementById('world-dm-avatar').textContent = '🌐';
-    document.getElementById('world-loc-name').textContent = hud.location?.name || snapshot.location || 'Unknown Realm';
-    document.getElementById('world-loc-desc').textContent = hud.location?.description || 'Waiting for the host’s world state.';
-    const clockSection = document.getElementById('hud-section-clock');
+    document.getElementById('ew-world-dm-name').textContent = snapshot.worldName || snapshot.experienceName || context?.name || 'Shared World';
+    document.getElementById('ew-world-active-name').textContent = 'Shared living world';
+    document.getElementById('ew-world-model-name').textContent = 'Host runs the model';
+    document.getElementById('ew-world-dm-avatar').textContent = '🌐';
+    document.getElementById('ew-world-loc-name').textContent = hud.location?.name || snapshot.location || 'Unknown Realm';
+    document.getElementById('ew-world-loc-desc').textContent = hud.location?.description || 'Waiting for the host’s world state.';
+    const clockSection = document.getElementById('ew-hud-section-clock');
     if (clockSection) clockSection.style.display = hud.clock ? 'block' : 'none';
-    document.getElementById('world-clock-display').textContent = hud.clock || '';
-    document.getElementById('world-time-period').textContent = hud.period || '';
-    document.getElementById('world-weather-display').textContent = hud.weather || '';
+    document.getElementById('ew-world-clock-display').textContent = hud.clock || '';
+    document.getElementById('ew-world-time-period').textContent = hud.period || '';
+    document.getElementById('ew-world-weather-display').textContent = hud.weather || '';
 
-    const stats = document.getElementById('world-stats-container');
+    const stats = document.getElementById('ew-world-stats-container');
     stats.innerHTML = (hud.stats || []).map(stat => {
         const ranged = Number(stat.max) > Number(stat.min);
         const fill = ranged ? Math.max(0, Math.min(100, ((Number(stat.value) - Number(stat.min)) / (Number(stat.max) - Number(stat.min))) * 100)) : 0;
         return `<div class="world-card" style="padding:8px 12px"><div style="display:flex;justify-content:space-between"><span>${experimentalEscapeHTML(stat.name)}</span><strong>${experimentalEscapeHTML(String(stat.value))}${Number(stat.max) > 0 ? ` / ${experimentalEscapeHTML(String(stat.max))}` : ''}</strong></div>${ranged ? `<div class="world-stat-track"><span style="width:${fill}%;background:${experimentalCssColor(stat.color)}"></span></div>` : ''}</div>`;
     }).join('') || '<div class="world-card" style="padding:8px 12px;color:var(--text-3)">No meters configured.</div>';
-    document.getElementById('world-outfit-content').textContent = hud.outfit || 'Not specified.';
-    document.getElementById('world-ledger-content').textContent = hud.ledger || 'No public milestones recorded yet.';
-    document.getElementById('world-ledger-status').textContent = 'Synchronized from the host.';
-    const inventory = document.getElementById('world-inventory-list');
+    document.getElementById('ew-world-outfit-content').textContent = hud.outfit || 'Not specified.';
+    document.getElementById('ew-world-ledger-content').textContent = hud.ledger || 'No public milestones recorded yet.';
+    document.getElementById('ew-world-ledger-status').textContent = 'Synchronized from the host.';
+    const inventory = document.getElementById('ew-world-inventory-list');
     inventory.innerHTML = (hud.inventory || []).map(item => `<span class="inv-chip"><span class="inv-chip-name">${experimentalEscapeHTML(globalThis.ExperimentalWorldsRpgMechanics?.itemName(item) || item)}</span></span>`).join('') || '<span style="color:var(--text-3);font-size:.8rem">Empty</span>';
-    const present = document.getElementById('world-present-list');
+    const present = document.getElementById('ew-world-present-list');
     present.innerHTML = (hud.present || []).map(name => `<div class="world-present-npc" style="padding:8px;background:var(--surface2);border-radius:6px">${experimentalEscapeHTML(name)}</div>`).join('') || '<div style="color:var(--text-3);font-size:.8rem">No one here</div>';
-    document.getElementById('world-exits-list').innerHTML = '<div style="color:var(--text-3);font-size:.75rem">Travel is resolved through the shared party turn.</div>';
-    const quests = document.getElementById('world-quest-list');
+    document.getElementById('ew-world-exits-list').innerHTML = '<div style="color:var(--text-3);font-size:.75rem">Travel is resolved through the shared party turn.</div>';
+    const quests = document.getElementById('ew-world-quest-list');
     quests.innerHTML = (hud.quests || []).map(quest => `<div class="world-card" style="padding:8px 10px"><strong>${experimentalEscapeHTML(quest.title)}</strong></div>`).join('') || '<div style="color:var(--text-3);font-size:.75rem">No active quests.</div>';
-    document.getElementById('quest-count').textContent = (hud.quests || []).length;
-    renderRemoteMultiplayerHistory('world-messages-container', snapshot.history, 'world');
+    document.getElementById('ew-quest-count').textContent = (hud.quests || []).length;
+    renderRemoteMultiplayerHistory('ew-world-messages-container', snapshot.history, 'world');
 }
 
 function leaveMultiplayerExperience() {
-    document.getElementById('world-play-view')?.classList.remove('multiplayer-guest-view');
-    const worldInput = document.getElementById('world-user-input');
+    document.getElementById('ew-world-play-view')?.classList.remove('multiplayer-guest-view');
+    const worldInput = document.getElementById('ew-world-user-input');
     if (worldInput) { worldInput.disabled = false; worldInput.placeholder = 'What do you do?...'; }
     ExperimentalWorldsHost.clearHostChatMultiplayerPresentation();
 }
@@ -519,8 +519,8 @@ async function hardResetActiveWorldTimeline() {
 }
 
 function initWorldStatusResizeHandle() {
-    const handle = document.getElementById('world-status-resize-handle');
-    const column = document.querySelector('#world-play-view .world-status-col');
+    const handle = document.getElementById('ew-world-status-resize-handle');
+    const column = document.querySelector('#ew-world-play-view .world-status-col');
     if (!handle || !column || handle.dataset.initialized) return;
     handle.dataset.initialized = 'true';
     const applyWidth = value => {
@@ -599,12 +599,12 @@ function restoreScenePulseStatusColumnWidth(column) {
 
 function prepareWorldStatusSections(container) {
     const titles = {
-        'hud-section-clock': 'Time & Weather',
-        'hud-section-ledger': 'World Ledger',
-        'hud-section-quests': 'Active Quests',
-        'hud-section-secrets': 'Secrets Uncovered',
-        'hud-section-threads': 'Story Threads',
-        'hud-section-living-world': 'Living World'
+        'ew-hud-section-clock': 'Time & Weather',
+        'ew-hud-section-ledger': 'World Ledger',
+        'ew-hud-section-quests': 'Active Quests',
+        'ew-hud-section-secrets': 'Secrets Uncovered',
+        'ew-hud-section-threads': 'Story Threads',
+        'ew-hud-section-living-world': 'Living World'
     };
     const sections = [...container.children].filter(node => node.classList?.contains('world-status-section'));
     sections.forEach((section, index) => {
@@ -639,8 +639,8 @@ function prepareWorldStatusSections(container) {
 }
 
 function initWorldStatusPanel() {
-    const container = document.getElementById('world-status-columns');
-    const columnsButton = document.getElementById('world-status-columns-toggle');
+    const container = document.getElementById('ew-world-status-columns');
+    const columnsButton = document.getElementById('ew-world-status-columns-toggle');
     if (!container || container.dataset.initialized) return;
     container.dataset.initialized = 'true';
     prepareWorldStatusSections(container);
@@ -724,8 +724,8 @@ function initWorldStatusPanel() {
 }
 
 function initWorldScrollToBottom() {
-    const button = document.getElementById('world-scroll-bottom-btn');
-    const container = document.getElementById('world-messages-container');
+    const button = document.getElementById('ew-world-scroll-bottom-btn');
+    const container = document.getElementById('ew-world-messages-container');
     if (!button || !container || button.dataset.initialized) return;
     button.dataset.initialized = 'true';
     const update = () => button.classList.toggle('hidden', container.scrollHeight - container.scrollTop - container.clientHeight < 120);
@@ -738,16 +738,16 @@ function setupWorldPlayLogic() {
     initWorldStatusResizeHandle();
     initWorldStatusPanel();
     initWorldScrollToBottom();
-    document.getElementById('world-exit-btn').onclick = () => ExperimentalWorldsHost.navigate('worlds');
-    document.getElementById('world-map-btn').onclick = renderWorldMap;
-    document.getElementById('world-more-btn').onclick = () => {
-        const actions = document.getElementById('world-more-actions');
-        const button = document.getElementById('world-more-btn');
+    document.getElementById('ew-world-exit-btn').onclick = () => ExperimentalWorldsHost.navigate('worlds');
+    document.getElementById('ew-world-map-btn').onclick = renderWorldMap;
+    document.getElementById('ew-world-more-btn').onclick = () => {
+        const actions = document.getElementById('ew-world-more-actions');
+        const button = document.getElementById('ew-world-more-btn');
         const open = !actions.classList.contains('is-open');
         actions.classList.toggle('is-open', open);
         button.setAttribute('aria-expanded', String(open));
     };
-    document.getElementById('world-presentation-btn').onclick = async () => {
+    document.getElementById('ew-world-presentation-btn').onclick = async () => {
         const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
         const sess = getCurrentWorldSession();
         if (!world || !sess) return;
@@ -763,14 +763,14 @@ function setupWorldPlayLogic() {
         renderWorldPlayState();
         ExperimentalWorldsHost.notify(`World view: ${sess.presentationMode[0].toUpperCase() + sess.presentationMode.slice(1)}.`, 'success');
     };
-    document.getElementById('world-hud-toggle').onclick = () => {
-        const hud = document.querySelector('#world-play-view .world-status-col');
+    document.getElementById('ew-world-hud-toggle').onclick = () => {
+        const hud = document.querySelector('#ew-world-play-view .world-status-col');
         const collapsed = hud.classList.toggle('is-collapsed');
-        document.getElementById('world-hud-toggle').textContent = collapsed ? '◧ Show HUD' : '◫ Hide HUD';
+        document.getElementById('ew-world-hud-toggle').textContent = collapsed ? '◧ Show HUD' : '◫ Hide HUD';
     };
-    document.getElementById('close-map-modal').onclick = () => document.getElementById('map-modal').classList.add('hidden');
+    document.getElementById('ew-close-map-modal').onclick = () => document.getElementById('ew-map-modal').classList.add('hidden');
     
-    document.getElementById('w-hud-adjust-time-btn').onclick = () => {
+    document.getElementById('ew-w-hud-adjust-time-btn').onclick = () => {
         const sess = getCurrentWorldSession();
         const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
         if (!sess || !world) return;
@@ -785,48 +785,48 @@ function setupWorldPlayLogic() {
         const ampm = hours24 >= 12 ? 'PM' : 'AM';
         const hours12 = hours24 % 12 || 12;
         
-        document.getElementById('m-clock-offset').value = 0;
-        document.getElementById('m-clock-day').value = days;
-        document.getElementById('m-clock-hour').value = hours12;
-        document.getElementById('m-clock-minute').value = mins;
-        document.getElementById('m-clock-ampm').value = ampm;
+        document.getElementById('ew-m-clock-offset').value = 0;
+        document.getElementById('ew-m-clock-day').value = days;
+        document.getElementById('ew-m-clock-hour').value = hours12;
+        document.getElementById('ew-m-clock-minute').value = mins;
+        document.getElementById('ew-m-clock-ampm').value = ampm;
         
-        document.getElementById('world-clock-modal-overlay').classList.remove('hidden');
+        document.getElementById('ew-world-clock-modal-overlay').classList.remove('hidden');
     };
 
-    document.getElementById('close-world-clock-btn').onclick = () => {
-        document.getElementById('world-clock-modal-overlay').classList.add('hidden');
+    document.getElementById('ew-close-world-clock-btn').onclick = () => {
+        document.getElementById('ew-world-clock-modal-overlay').classList.add('hidden');
     };
 
-    document.getElementById('cancel-world-clock-btn').onclick = () => {
-        document.getElementById('world-clock-modal-overlay').classList.add('hidden');
+    document.getElementById('ew-cancel-world-clock-btn').onclick = () => {
+        document.getElementById('ew-world-clock-modal-overlay').classList.add('hidden');
     };
 
-    document.getElementById('apply-clock-offset-btn').onclick = () => {
+    document.getElementById('ew-apply-clock-offset-btn').onclick = () => {
         const sess = getCurrentWorldSession();
         if (!sess) return;
-        const input = document.getElementById('m-clock-offset').value;
+        const input = document.getElementById('ew-m-clock-offset').value;
         const mins = parseInt(input);
         if (!isNaN(mins)) {
             sess.bonusTimeMinutes = (sess.bonusTimeMinutes || 0) + mins;
             ExperimentalWorldsHost.persist().catch(() => {});
             renderWorldPlayState();
-            document.getElementById('world-clock-modal-overlay').classList.add('hidden');
+            document.getElementById('ew-world-clock-modal-overlay').classList.add('hidden');
             ExperimentalWorldsHost.notify(`Clock adjusted by ${mins} minutes.`, 'success');
         } else {
             ExperimentalWorldsHost.notify('Please enter a valid number of minutes.', 'error');
         }
     };
 
-    document.getElementById('save-world-clock-btn').onclick = () => {
+    document.getElementById('ew-save-world-clock-btn').onclick = () => {
         const sess = getCurrentWorldSession();
         const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
         if (!sess || !world) return;
 
-        const targetDay = parseInt(document.getElementById('m-clock-day').value);
-        const targetHour = parseInt(document.getElementById('m-clock-hour').value);
-        const targetMins = parseInt(document.getElementById('m-clock-minute').value);
-        const targetAmPm = document.getElementById('m-clock-ampm').value;
+        const targetDay = parseInt(document.getElementById('ew-m-clock-day').value);
+        const targetHour = parseInt(document.getElementById('ew-m-clock-hour').value);
+        const targetMins = parseInt(document.getElementById('ew-m-clock-minute').value);
+        const targetAmPm = document.getElementById('ew-m-clock-ampm').value;
         
         if (isNaN(targetDay) || targetDay < 1) {
             ExperimentalWorldsHost.notify('Please enter a valid Day (minimum 1).', 'error');
@@ -857,14 +857,14 @@ function setupWorldPlayLogic() {
         
         ExperimentalWorldsHost.persist().catch(() => {});
         renderWorldPlayState();
-        document.getElementById('world-clock-modal-overlay').classList.add('hidden');
+        document.getElementById('ew-world-clock-modal-overlay').classList.add('hidden');
         ExperimentalWorldsHost.notify('Clock updated to new date & time.', 'success');
     };
 
     
-    const sendBtn = document.getElementById('world-send-btn');
-    const input = document.getElementById('world-user-input');
-    const resizeHandle = document.getElementById('world-message-resize-handle');
+    const sendBtn = document.getElementById('ew-world-send-btn');
+    const input = document.getElementById('ew-world-user-input');
+    const resizeHandle = document.getElementById('ew-world-message-resize-handle');
     if (input) {
         input.addEventListener('input', () => resizeExperimentalWorldMessageInput(input));
         input.addEventListener('change', () => resizeExperimentalWorldMessageInput(input));
@@ -888,8 +888,8 @@ function setupWorldPlayLogic() {
         resetExperimentalWorldMessageInput(input);
         sendBtn.classList.add('stop');
         sendBtn.innerHTML = '⏹';
-        const typing = document.getElementById('world-dm-typing');
-        const typingLabel = document.getElementById('world-dm-typing-label');
+        const typing = document.getElementById('ew-world-dm-typing');
+        const typingLabel = document.getElementById('ew-world-dm-typing-label');
         if (typing) typing.style.display = 'flex';
         if (typingLabel) typingLabel.textContent = 'Sidecar is reviewing continuity…';
         try {
@@ -916,19 +916,19 @@ function setupWorldPlayLogic() {
     };
 
     // Ledger Modal Logic
-    const ledgerModal = document.getElementById('world-ledger-modal-overlay');
-    document.getElementById('edit-ledger-btn').onclick = () => {
+    const ledgerModal = document.getElementById('ew-world-ledger-modal-overlay');
+    document.getElementById('ew-edit-ledger-btn').onclick = () => {
         const session = getCurrentWorldSession();
         if (!session) return;
-        document.getElementById('m-ledger-content').value = session.ledger || "";
+        document.getElementById('ew-m-ledger-content').value = session.ledger || "";
         ledgerModal.classList.remove('hidden');
     };
-    document.getElementById('close-world-ledger-btn').onclick = () => ledgerModal.classList.add('hidden');
-    document.getElementById('cancel-world-ledger-btn').onclick = () => ledgerModal.classList.add('hidden');
-    document.getElementById('save-world-ledger-btn').onclick = async () => {
+    document.getElementById('ew-close-world-ledger-btn').onclick = () => ledgerModal.classList.add('hidden');
+    document.getElementById('ew-cancel-world-ledger-btn').onclick = () => ledgerModal.classList.add('hidden');
+    document.getElementById('ew-save-world-ledger-btn').onclick = async () => {
         const session = getCurrentWorldSession();
         if (!session) return;
-        const changed = replaceWorldLedger(session, document.getElementById('m-ledger-content').value);
+        const changed = replaceWorldLedger(session, document.getElementById('ew-m-ledger-content').value);
         try {
             await ExperimentalWorldsHost.persist();
             renderWorldPlayState();
@@ -940,8 +940,8 @@ function setupWorldPlayLogic() {
     };
 
     // Player Stats Modal Logic
-    const statsModal = document.getElementById('world-stats-modal-overlay');
-    document.getElementById('edit-player-stats-btn').onclick = () => {
+    const statsModal = document.getElementById('ew-world-stats-modal-overlay');
+    document.getElementById('ew-edit-player-stats-btn').onclick = () => {
         const sess = getCurrentWorldSession();
         const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
         if (!sess || !world) return;
@@ -967,9 +967,9 @@ function setupWorldPlayLogic() {
         }
         statsModal.classList.remove('hidden');
     };
-    document.getElementById('close-world-stats-btn').onclick = () => statsModal.classList.add('hidden');
-    document.getElementById('cancel-world-stats-btn').onclick = () => statsModal.classList.add('hidden');
-    document.getElementById('save-world-stats-btn').onclick = async () => {
+    document.getElementById('ew-close-world-stats-btn').onclick = () => statsModal.classList.add('hidden');
+    document.getElementById('ew-cancel-world-stats-btn').onclick = () => statsModal.classList.add('hidden');
+    document.getElementById('ew-save-world-stats-btn').onclick = async () => {
         const sess = getCurrentWorldSession();
         const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
         if (!sess || !world) return;
@@ -998,16 +998,16 @@ function setupWorldPlayLogic() {
     };
 
     // Quest Ledger Modal Logic
-    const questModal = document.getElementById('world-quest-modal-overlay');
+    const questModal = document.getElementById('ew-world-quest-modal-overlay');
     const closeQuestModal = () => questModal.classList.add('hidden');
-    document.getElementById('quest-manage-btn').onclick = () => openWorldQuestManager();
-    document.getElementById('close-world-quest-btn').onclick = closeQuestModal;
-    document.getElementById('cancel-world-quest-btn').onclick = closeQuestModal;
-    document.getElementById('save-world-quest-btn').onclick = () => {
+    document.getElementById('ew-quest-manage-btn').onclick = () => openWorldQuestManager();
+    document.getElementById('ew-close-world-quest-btn').onclick = closeQuestModal;
+    document.getElementById('ew-cancel-world-quest-btn').onclick = closeQuestModal;
+    document.getElementById('ew-save-world-quest-btn').onclick = () => {
         const sess = getCurrentWorldSession();
         const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
-        const id = document.getElementById('m-quest-id').value;
-        const title = document.getElementById('m-quest-title').value.trim();
+        const id = document.getElementById('ew-m-quest-id').value;
+        const title = document.getElementById('ew-m-quest-title').value.trim();
         if (!sess || !world || !normalizeWorldGameRules(world).modules.quests) {
             ExperimentalWorldsHost.notify('The quest engine is disabled for this world profile.', 'info');
             return;
@@ -1016,21 +1016,21 @@ function setupWorldPlayLogic() {
             ExperimentalWorldsHost.notify('A quest needs a title.', 'info');
             return;
         }
-        const objectiveText = document.getElementById('m-quest-objective').value.trim();
+        const objectiveText = document.getElementById('ew-m-quest-objective').value.trim();
         const existingQuest = id ? findSessionQuest(sess, id) : null;
         const statRewards = {};
-        document.getElementById('m-quest-reward-stats').value.split(',').forEach(part => {
+        document.getElementById('ew-m-quest-reward-stats').value.split(',').forEach(part => {
             const match = part.trim().match(/^(.+?):\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))$/);
             if (match) statRewards[match[1].trim().slice(0, 80)] = Number(match[2]);
         });
         const update = {
             id: id || undefined,
             title,
-            description: document.getElementById('m-quest-description').value.trim(),
-            giver: document.getElementById('m-quest-giver').value.trim(),
-            status: document.getElementById('m-quest-status').value,
+            description: document.getElementById('ew-m-quest-description').value.trim(),
+            giver: document.getElementById('ew-m-quest-giver').value.trim(),
+            status: document.getElementById('ew-m-quest-status').value,
             rewards: {
-                items: document.getElementById('m-quest-reward-items').value.split(',')
+                items: document.getElementById('ew-m-quest-reward-items').value.split(',')
                     .map(item => item.trim()).filter(Boolean),
                 stat_changes: statRewards,
                 faction_reputation: (existingQuest?.rewards?.factionReputation || []).map(entry => ({
@@ -1055,8 +1055,8 @@ function setupWorldPlayLogic() {
         closeQuestModal();
         ExperimentalWorldsHost.notify(id ? 'Quest updated.' : 'Quest added.', 'success');
     };
-    document.getElementById('delete-world-quest-btn').onclick = () => {
-        const id = document.getElementById('m-quest-id').value;
+    document.getElementById('ew-delete-world-quest-btn').onclick = () => {
+        const id = document.getElementById('ew-m-quest-id').value;
         const sess = getCurrentWorldSession();
         const quest = sess ? findSessionQuest(sess, id) : null;
         if (!quest) return;
@@ -1071,18 +1071,18 @@ function setupWorldPlayLogic() {
     };
 
     // Outfit Modal Logic
-    const outfitModal = document.getElementById('world-outfit-modal-overlay');
-    document.getElementById('edit-outfit-btn').onclick = () => {
+    const outfitModal = document.getElementById('ew-world-outfit-modal-overlay');
+    document.getElementById('ew-edit-outfit-btn').onclick = () => {
         const sess = getCurrentWorldSession();
         if (!sess) return;
-        document.getElementById('m-outfit-content').value = sess.outfit || "";
+        document.getElementById('ew-m-outfit-content').value = sess.outfit || "";
         outfitModal.classList.remove('hidden');
     };
-    document.getElementById('close-world-outfit-btn').onclick = () => outfitModal.classList.add('hidden');
-    document.getElementById('cancel-world-outfit-btn').onclick = () => outfitModal.classList.add('hidden');
-    document.getElementById('save-world-outfit-btn').onclick = () => {
+    document.getElementById('ew-close-world-outfit-btn').onclick = () => outfitModal.classList.add('hidden');
+    document.getElementById('ew-cancel-world-outfit-btn').onclick = () => outfitModal.classList.add('hidden');
+    document.getElementById('ew-save-world-outfit-btn').onclick = () => {
         const sess = getCurrentWorldSession();
-        sess.outfit = document.getElementById('m-outfit-content').value;
+        sess.outfit = document.getElementById('ew-m-outfit-content').value;
         ExperimentalWorldsHost.persist().catch(() => {});
         renderWorldPlayState();
         outfitModal.classList.add('hidden');
@@ -1090,15 +1090,15 @@ function setupWorldPlayLogic() {
     };
 
     // Parity Features
-    document.getElementById('world-new-session-btn').onclick = createNewWorldSession;
-    document.getElementById('world-timeline-browser-btn')?.addEventListener('click', openWorldTimelineBrowser);
-    document.getElementById('close-world-timeline-browser-btn')?.addEventListener('click', () => document.getElementById('world-timeline-browser-overlay')?.classList.add('hidden'));
-    document.getElementById('close-world-timeline-browser-ft-btn')?.addEventListener('click', () => document.getElementById('world-timeline-browser-overlay')?.classList.add('hidden'));
-    document.getElementById('world-timeline-browser-overlay')?.addEventListener('click', event => {
-        if (event.target.id === 'world-timeline-browser-overlay') event.currentTarget.classList.add('hidden');
+    document.getElementById('ew-world-new-session-btn').onclick = createNewWorldSession;
+    document.getElementById('ew-world-timeline-browser-btn')?.addEventListener('click', openWorldTimelineBrowser);
+    document.getElementById('ew-close-world-timeline-browser-btn')?.addEventListener('click', () => document.getElementById('ew-world-timeline-browser-overlay')?.classList.add('hidden'));
+    document.getElementById('ew-close-world-timeline-browser-ft-btn')?.addEventListener('click', () => document.getElementById('ew-world-timeline-browser-overlay')?.classList.add('hidden'));
+    document.getElementById('ew-world-timeline-browser-overlay')?.addEventListener('click', event => {
+        if (event.target.id === 'ew-world-timeline-browser-overlay') event.currentTarget.classList.add('hidden');
     });
 
-    document.getElementById('world-rename-session-btn').onclick = async () => {
+    document.getElementById('ew-world-rename-session-btn').onclick = async () => {
         const sess = getCurrentWorldSession();
         if (!sess) return;
         const newName = prompt('Enter new session name:', sess.name || 'Session');
@@ -1110,7 +1110,7 @@ function setupWorldPlayLogic() {
         }
     };
     
-    document.getElementById('world-del-session-btn').onclick = () => {
+    document.getElementById('ew-world-del-session-btn').onclick = () => {
         const sess = getCurrentWorldSession();
         if (!sess) return;
         ExperimentalWorldsHost.confirmModal('Delete current timeline',
@@ -1128,15 +1128,15 @@ function setupWorldPlayLogic() {
             }, 'Delete timeline');
     };
 
-    document.getElementById('world-session-select').onchange = (e) => {
+    document.getElementById('ew-world-session-select').onchange = (e) => {
         if (ExperimentalWorldsRuntime.turnInProgress()) ExperimentalWorldsRuntime.abortAll();
         ExperimentalWorldsState.worldInstances[ExperimentalWorldsState.activeWorldId].activeSessionId = e.target.value;
         ExperimentalWorldsHost.persist().catch(() => {});
         renderWorldPlayState();
     };
 
-    document.getElementById('world-session-zero-btn').onclick = () => openSessionZero(null);
-    document.getElementById('world-persona-btn').onclick = () => {
+    document.getElementById('ew-world-session-zero-btn').onclick = () => openSessionZero(null);
+    document.getElementById('ew-world-persona-btn').onclick = () => {
         if (ExperimentalWorldsHost.openSharedPersonaManager()) {
             ExperimentalWorldsHost.notify('Create or select a Persona, then choose “Set as Active” to bind it to this timeline.', 'info');
         } else {
@@ -1144,12 +1144,12 @@ function setupWorldPlayLogic() {
         }
     };
 
-    document.getElementById('world-plan-sequence-btn').onclick = () => openWorldSidecarLine({
+    document.getElementById('ew-world-plan-sequence-btn').onclick = () => openWorldSidecarLine({
         kind: 'sequence_planning', title: 'New Sequence planning',
         guidance: 'Discuss the intended cut, constraints, continuity and unresolved questions. When the plan is ready, explicitly tell Sidecar that it may prepare the approval packet.',
         placeholder: 'Describe the next sequence you want to author…'
     });
-    document.getElementById('world-close-sequence-btn').onclick = async () => {
+    document.getElementById('ew-world-close-sequence-btn').onclick = async () => {
         const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
         const sess = getCurrentWorldSession();
         if (!world || !sess || !window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
@@ -1182,7 +1182,7 @@ function setupWorldPlayLogic() {
         renderWorldPlayState();
         ExperimentalWorldsHost.notify('Sequence closed. Plan and approve the next sequence before resuming narration.', 'success');
     };
-    document.getElementById('world-v3-end-scene-btn')?.addEventListener('click', async () => {
+    document.getElementById('ew-world-v3-end-scene-btn')?.addEventListener('click', async () => {
         const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId); const sess = getCurrentWorldSession();
         if (!world || !sess) return;
         if (!window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) return openWorldSidecarInspector('migration');
@@ -1201,17 +1201,17 @@ function setupWorldPlayLogic() {
             });
         } catch (error) { ExperimentalWorldsHost.notify(`Scene review failed: ${error.message || error}`, 'error'); }
     });
-    document.getElementById('world-v3-gm-btn')?.addEventListener('click', () => openWorldSidecarLine());
+    document.getElementById('ew-world-v3-gm-btn')?.addEventListener('click', () => openWorldSidecarLine());
 
-    document.getElementById('world-continue-btn').onclick = () => {
+    document.getElementById('ew-world-continue-btn').onclick = () => {
         if (ExperimentalWorldsRuntime.turnInProgress()) return ExperimentalWorldsHost.notify('The DM is still responding — please wait.', 'info');
         const sess = getCurrentWorldSession();
         if (!sess || !sess.history.length) return ExperimentalWorldsHost.notify('Nothing to continue yet.', 'info');
         executeWorldTurn('continue');
     };
 
-    document.getElementById('world-toggle-headers-btn').onclick = (e) => {
-        const msgCont = document.getElementById('world-messages-container');
+    document.getElementById('ew-world-toggle-headers-btn').onclick = (e) => {
+        const msgCont = document.getElementById('ew-world-messages-container');
         if (msgCont) {
             const on = msgCont.classList.toggle('show-headers');
             e.currentTarget.style.color = on ? 'var(--accent)' : '';
@@ -1219,34 +1219,34 @@ function setupWorldPlayLogic() {
         }
     };
 
-    document.getElementById('world-roll-btn').onclick = openWorldCheckModal;
-    document.getElementById('close-world-check-modal').onclick = closeWorldCheckModal;
-    document.getElementById('cancel-world-check').onclick = closeWorldCheckModal;
-    document.getElementById('confirm-world-check').onclick = resolveWorldCheckFromModal;
-    ['world-check-stat', 'world-check-difficulty', 'world-check-modifier'].forEach(id => {
+    document.getElementById('ew-world-roll-btn').onclick = openWorldCheckModal;
+    document.getElementById('ew-close-world-check-modal').onclick = closeWorldCheckModal;
+    document.getElementById('ew-cancel-world-check').onclick = closeWorldCheckModal;
+    document.getElementById('ew-confirm-world-check').onclick = resolveWorldCheckFromModal;
+    ['ew-world-check-stat', 'ew-world-check-difficulty', 'ew-world-check-modifier'].forEach(id => {
         document.getElementById(id).oninput = renderWorldCheckPreview;
         document.getElementById(id).onchange = renderWorldCheckPreview;
     });
 
-    const sysModal = document.getElementById('system-inject-modal-overlay');
-    const sysInput = document.getElementById('system-inject-input');
+    const sysModal = document.getElementById('ew-system-inject-modal-overlay');
+    const sysInput = document.getElementById('ew-system-inject-input');
     
-    document.getElementById('world-system-btn').onclick = () => {
+    document.getElementById('ew-world-system-btn').onclick = () => {
         sysInput.value = '';
         sysModal.classList.remove('hidden');
         sysInput.focus();
     };
-    document.getElementById('world-mechanics-toggle-btn').onclick = toggleWorldOptionalRpg;
+    document.getElementById('ew-world-mechanics-toggle-btn').onclick = toggleWorldOptionalRpg;
 
-    document.getElementById('close-system-inject-btn').onclick = () => {
+    document.getElementById('ew-close-system-inject-btn').onclick = () => {
         sysModal.classList.add('hidden');
     };
     
-    document.getElementById('cancel-system-inject-btn').onclick = () => {
+    document.getElementById('ew-cancel-system-inject-btn').onclick = () => {
         sysModal.classList.add('hidden');
     };
 
-    document.getElementById('confirm-system-inject-btn').onclick = () => {
+    document.getElementById('ew-confirm-system-inject-btn').onclick = () => {
         const text = sysInput.value;
         if (text && text.trim()) {
             addWorldMessage('system', text.trim());
@@ -1254,12 +1254,12 @@ function setupWorldPlayLogic() {
         sysModal.classList.add('hidden');
     };
 
-    document.getElementById('world-summarize-btn').onclick = summarizeStory;
-    document.getElementById('world-reroll-btn').onclick = () => {
+    document.getElementById('ew-world-summarize-btn').onclick = summarizeStory;
+    document.getElementById('ew-world-reroll-btn').onclick = () => {
         executeWorldTurn(true);
     };
     
-    document.getElementById('world-download-btn').onclick = () => {
+    document.getElementById('ew-world-download-btn').onclick = () => {
         const sess = getCurrentWorldSession();
         const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
         if (!sess || !world) return;
@@ -1283,13 +1283,13 @@ function setupWorldPlayLogic() {
         a.click();
     };
 
-    document.getElementById('world-clear-btn').onclick = () => {
+    document.getElementById('ew-world-clear-btn').onclick = () => {
         ExperimentalWorldsHost.confirmModal('Clear World History', 'Perform a HARD RESET on this timeline? This wipes history, ledger, inventory, quests, discoveries, character memories, stats, and your current outfit.', async () => {
             await hardResetActiveWorldTimeline();
         });
     };
 
-    document.getElementById('world-studio-btn').onclick = () => {
+    document.getElementById('ew-world-studio-btn').onclick = () => {
         if (ExperimentalWorldsState.activeWorldId) openWorldStudio(ExperimentalWorldsState.activeWorldId);
     };
 }
@@ -2800,26 +2800,26 @@ function extractQuestUpdateDirective(text) {
 function openWorldQuestManager(questId = '') {
     const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
-    const modal = document.getElementById('world-quest-modal-overlay');
+    const modal = document.getElementById('ew-world-quest-modal-overlay');
     if (!world || !sess || !modal) return;
     normalizeQuestState(world, sess);
     const quest = questId ? findSessionQuest(sess, questId) : null;
-    document.getElementById('m-quest-id').value = quest?.id || '';
-    document.getElementById('m-quest-title').value = quest?.title || '';
-    document.getElementById('m-quest-description').value = quest?.description || '';
-    document.getElementById('m-quest-giver').value = quest?.giver || '';
-    document.getElementById('m-quest-status').value = quest?.status || 'active';
-    document.getElementById('m-quest-objective').value = '';
-    document.getElementById('delete-world-quest-btn').style.visibility = quest ? 'visible' : 'hidden';
-    const rewardItemsInput = document.getElementById('m-quest-reward-items');
-    const rewardStatsInput = document.getElementById('m-quest-reward-stats');
+    document.getElementById('ew-m-quest-id').value = quest?.id || '';
+    document.getElementById('ew-m-quest-title').value = quest?.title || '';
+    document.getElementById('ew-m-quest-description').value = quest?.description || '';
+    document.getElementById('ew-m-quest-giver').value = quest?.giver || '';
+    document.getElementById('ew-m-quest-status').value = quest?.status || 'active';
+    document.getElementById('ew-m-quest-objective').value = '';
+    document.getElementById('ew-delete-world-quest-btn').style.visibility = quest ? 'visible' : 'hidden';
+    const rewardItemsInput = document.getElementById('ew-m-quest-reward-items');
+    const rewardStatsInput = document.getElementById('ew-m-quest-reward-stats');
     rewardItemsInput.value = quest?.rewards?.items?.join(', ') || '';
     rewardStatsInput.value = Object.entries(quest?.rewards?.stats || {})
         .map(([key, value]) => `${key}: ${value}`).join(', ');
     rewardItemsInput.disabled = !!quest?.rewardsGranted;
     rewardStatsInput.disabled = !!quest?.rewardsGranted;
 
-    const objectives = document.getElementById('m-quest-objectives');
+    const objectives = document.getElementById('ew-m-quest-objectives');
     objectives.innerHTML = '';
     if (!quest?.objectives?.length) {
         objectives.textContent = 'No structured objectives yet.';
@@ -2853,11 +2853,11 @@ function openWorldQuestManager(questId = '') {
         });
     }
     const rewardSummary = quest ? formatQuestRewardSummary(quest) : '';
-    document.getElementById('m-quest-rewards').textContent = rewardSummary
+    document.getElementById('ew-m-quest-rewards').textContent = rewardSummary
         ? `${rewardSummary}${quest.rewardsGranted ? `\nGranted: ${quest.rewardReceipt}` : ''}`
         : 'No material reward declared.';
     modal.classList.remove('hidden');
-    document.getElementById('m-quest-title').focus();
+    document.getElementById('ew-m-quest-title').focus();
 }
 
 async function createNewWorldSession() {
@@ -3088,7 +3088,7 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
 }
 
 function renderWorldTimelineBrowser() {
-    const host = document.getElementById('world-timeline-browser-list');
+    const host = document.getElementById('ew-world-timeline-browser-list');
     const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sessions = ExperimentalWorldsState.worldInstances?.[ExperimentalWorldsState.activeWorldId]?.sessions || [];
     if (!host || !world) return;
@@ -3138,7 +3138,7 @@ function renderWorldTimelineBrowser() {
 }
 
 function openWorldTimelineBrowser() {
-    const overlay = document.getElementById('world-timeline-browser-overlay');
+    const overlay = document.getElementById('ew-world-timeline-browser-overlay');
     if (!overlay) return;
     renderWorldTimelineBrowser();
     overlay.classList.remove('hidden');
@@ -3152,22 +3152,22 @@ function openWorldTimelineBrowser() {
 function sessionRoleSelections(world, sess) {
     const selected = id => [...document.querySelectorAll(`#${id} input[type="checkbox"]:checked`)].map(input => input.value);
     const stats = {};
-    document.querySelectorAll('#sz-attribute-list [data-stat-id]').forEach(input => {
+    document.querySelectorAll('#ew-sz-attribute-list [data-stat-id]').forEach(input => {
         if (Number.isFinite(Number(input.value))) stats[input.dataset.statId] = Number(input.value);
     });
     return {
-        publicIdentity: String(document.getElementById('sz-public-identity')?.value || '').trim().slice(0, 240),
-        reputation: String(document.getElementById('sz-reputation')?.value || '').trim().slice(0, 240),
-        skills: selected('sz-skill-list'),
-        perks: selected('sz-trait-list').filter(value => !value.startsWith('flaw:')),
-        flaws: selected('sz-trait-list').filter(value => value.startsWith('flaw:')).map(value => value.slice(5)),
-        inventory: selected('sz-equipment-list'),
+        publicIdentity: String(document.getElementById('ew-sz-public-identity')?.value || '').trim().slice(0, 240),
+        reputation: String(document.getElementById('ew-sz-reputation')?.value || '').trim().slice(0, 240),
+        skills: selected('ew-sz-skill-list'),
+        perks: selected('ew-sz-trait-list').filter(value => !value.startsWith('flaw:')),
+        flaws: selected('ew-sz-trait-list').filter(value => value.startsWith('flaw:')).map(value => value.slice(5)),
+        inventory: selected('ew-sz-equipment-list'),
         stats
     };
 }
 
 function renderSessionRoleSetup(world, sess, persona) {
-    const section = document.getElementById('sz-role-section');
+    const section = document.getElementById('ew-sz-role-section');
     if (!section || !world || !sess) return;
     const rules = normalizeWorldGameRules(world);
     const capabilities = normalizeWorldCapabilities(world);
@@ -3176,8 +3176,8 @@ function renderSessionRoleSetup(world, sess, persona) {
         || capabilities.flaws.length || (life?.inventory || []).length;
     section.classList.toggle('hidden', !hasSetup);
     if (!hasSetup) return;
-    const publicIdentity = document.getElementById('sz-public-identity');
-    const reputation = document.getElementById('sz-reputation');
+    const publicIdentity = document.getElementById('ew-sz-public-identity');
+    const reputation = document.getElementById('ew-sz-reputation');
     publicIdentity.value = sess.playerIdentity?.publicIdentity || persona?.publicIdentity || life?.role || '';
     reputation.value = sess.playerIdentity?.reputation || persona?.reputation || '';
     publicIdentity.disabled = !capabilities.customizable;
@@ -3188,17 +3188,17 @@ function renderSessionRoleSetup(world, sess, persona) {
     const lifePerks = byName(life?.perks);
     const lifeFlaws = byName(life?.flaws);
     const option = (entry, checked, prefix = '') => `<label class="session-role-option"><input type="checkbox" value="${experimentalEscapeHTML(prefix + entry.name)}" ${checked ? 'checked' : ''} ${capabilities.customizable ? '' : 'disabled'}><span><strong>${experimentalEscapeHTML(entry.name)}</strong>${entry.description ? `<small>${experimentalEscapeHTML(entry.description)}</small>` : ''}</span><b>${prefix ? '+' : '−'}${entry.cost}</b></label>`;
-    document.getElementById('sz-skill-list').innerHTML = capabilities.skills.length
+    document.getElementById('ew-sz-skill-list').innerHTML = capabilities.skills.length
         ? capabilities.skills.map(entry => option(entry, lifeSkills.has(entry.name.toLowerCase()))).join('')
         : '<span class="form-hint">This World defines no selectable skills.</span>';
-    document.getElementById('sz-trait-list').innerHTML = capabilities.perks.map(entry => option(entry, lifePerks.has(entry.name.toLowerCase())))
+    document.getElementById('ew-sz-trait-list').innerHTML = capabilities.perks.map(entry => option(entry, lifePerks.has(entry.name.toLowerCase())))
         .concat(capabilities.flaws.map(entry => option(entry, lifeFlaws.has(entry.name.toLowerCase()), 'flaw:'))).join('')
         || '<span class="form-hint">This World defines no perks or flaws.</span>';
-    document.getElementById('sz-equipment-list').innerHTML = (life?.inventory || []).length
+    document.getElementById('ew-sz-equipment-list').innerHTML = (life?.inventory || []).length
         ? life.inventory.map(item => `<label class="session-role-option"><input type="checkbox" value="${experimentalEscapeHTML(item)}" checked ${capabilities.customizable ? '' : 'disabled'}><span>${experimentalEscapeHTML(item)}</span></label>`).join('')
         : '<span class="form-hint">No optional starting equipment.</span>';
 
-    const attributeList = document.getElementById('sz-attribute-list');
+    const attributeList = document.getElementById('ew-sz-attribute-list');
     const rollable = rules.modules.stats ? (world.hudConfig?.stats || []).filter(stat => worldStatRollConfig(stat).enabled).slice(0, 20) : [];
     attributeList.innerHTML = rollable.length
         ? `<label class="form-label">Attributes</label>${rollable.map(stat => {
@@ -3213,14 +3213,14 @@ function renderSessionRoleSetup(world, sess, persona) {
         const flawLookup = new Map(capabilities.flaws.map(item => [item.name, item.cost]));
         let spent = [...selection.skills, ...selection.perks].reduce((sum, name) => sum + (lookup.get(name) || 1), 0);
         spent -= selection.flaws.reduce((sum, name) => sum + (flawLookup.get(name) || 1), 0);
-        document.querySelectorAll('#sz-attribute-list [data-stat-id]').forEach(input => {
+        document.querySelectorAll('#ew-sz-attribute-list [data-stat-id]').forEach(input => {
             spent += Math.max(0, (Number(input.value) || 0) - (Number(input.dataset.base) || 0));
         });
         const remaining = capabilities.startingPointBudget - spent;
-        const points = document.getElementById('sz-points-status');
+        const points = document.getElementById('ew-sz-points-status');
         points.textContent = capabilities.customizable ? `${remaining} point${Math.abs(remaining) === 1 ? '' : 's'} left` : 'Preset locked';
         points.style.color = remaining < 0 ? 'var(--red)' : '';
-        document.getElementById('sz-role-summary').innerHTML = `<strong>${experimentalEscapeHTML(life?.name || 'Custom role')}</strong> · ${experimentalEscapeHTML(selection.publicIdentity || life?.role || 'unwritten public identity')}<br>${selection.skills.length ? `Skills: ${experimentalEscapeHTML(selection.skills.join(', '))}. ` : ''}${selection.perks.length ? `Perks: ${experimentalEscapeHTML(selection.perks.join(', '))}. ` : ''}${selection.flaws.length ? `Flaws: ${experimentalEscapeHTML(selection.flaws.join(', '))}. ` : ''}${selection.inventory.length ? `Equipment: ${experimentalEscapeHTML(selection.inventory.join(', '))}.` : ''}`;
+        document.getElementById('ew-sz-role-summary').innerHTML = `<strong>${experimentalEscapeHTML(life?.name || 'Custom role')}</strong> · ${experimentalEscapeHTML(selection.publicIdentity || life?.role || 'unwritten public identity')}<br>${selection.skills.length ? `Skills: ${experimentalEscapeHTML(selection.skills.join(', '))}. ` : ''}${selection.perks.length ? `Perks: ${experimentalEscapeHTML(selection.perks.join(', '))}. ` : ''}${selection.flaws.length ? `Flaws: ${experimentalEscapeHTML(selection.flaws.join(', '))}. ` : ''}${selection.inventory.length ? `Equipment: ${experimentalEscapeHTML(selection.inventory.join(', '))}.` : ''}`;
         return remaining;
     };
     section.querySelectorAll('input').forEach(input => input.addEventListener('input', updateSummary));
@@ -3229,26 +3229,26 @@ function renderSessionRoleSetup(world, sess, persona) {
 }
 
 function openSessionZero(onDone) {
-    const overlay = document.getElementById('world-session-zero-overlay');
+    const overlay = document.getElementById('ew-world-session-zero-overlay');
     const sess = getCurrentWorldSession();
     if (!overlay || !sess) { if (onDone) onDone(); return; }
 
-    const toneInput = document.getElementById('sz-tone');
-    const focusInput = document.getElementById('sz-focus');
-    const pacingInput = document.getElementById('sz-pacing');
-    const notesInput = document.getElementById('sz-notes');
-    const skipButton = document.getElementById('sz-skip-btn');
-    const saveButton = document.getElementById('sz-begin-btn');
-    const closeButton = document.getElementById('close-session-zero-btn');
-    const saveStatus = document.getElementById('sz-save-status');
-    const originSection = document.getElementById('sz-origin-section');
-    const originList = document.getElementById('sz-origin-list');
-    const personaSelect = document.getElementById('sz-persona-select');
-    const controlledEntitySelect = document.getElementById('sz-controlled-entity');
-    const personaPreview = document.getElementById('sz-persona-preview');
-    const lifeSeedOption = document.getElementById('sz-life-seed-option');
-    const lifeSeedEnabled = document.getElementById('sz-life-seed-enabled');
-    const lifeSeedStatus = document.getElementById('sz-life-seed-status');
+    const toneInput = document.getElementById('ew-sz-tone');
+    const focusInput = document.getElementById('ew-sz-focus');
+    const pacingInput = document.getElementById('ew-sz-pacing');
+    const notesInput = document.getElementById('ew-sz-notes');
+    const skipButton = document.getElementById('ew-sz-skip-btn');
+    const saveButton = document.getElementById('ew-sz-begin-btn');
+    const closeButton = document.getElementById('ew-close-session-zero-btn');
+    const saveStatus = document.getElementById('ew-sz-save-status');
+    const originSection = document.getElementById('ew-sz-origin-section');
+    const originList = document.getElementById('ew-sz-origin-list');
+    const personaSelect = document.getElementById('ew-sz-persona-select');
+    const controlledEntitySelect = document.getElementById('ew-sz-controlled-entity');
+    const personaPreview = document.getElementById('ew-sz-persona-preview');
+    const lifeSeedOption = document.getElementById('ew-sz-life-seed-option');
+    const lifeSeedEnabled = document.getElementById('ew-sz-life-seed-enabled');
+    const lifeSeedStatus = document.getElementById('ew-sz-life-seed-status');
     const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const isFirstRun = typeof onDone === 'function';
     // Every control in this modal is provisional until an explicit Begin/Save.
@@ -3392,7 +3392,7 @@ function openSessionZero(onDone) {
         const selectedPersona = ExperimentalWorldsHost.sharedPersonas().find(persona => persona.id === s.personaId) || null;
         const controlledEntity = s.controlledEntityId !== 'player'
             ? (world.entities || []).find(entity => entity.id === s.controlledEntityId && entity.type === 'npc') : null;
-        const roleSection = document.getElementById('sz-role-section');
+        const roleSection = document.getElementById('ew-sz-role-section');
         if (roleSection && !roleSection.classList.contains('hidden') && typeof roleSection._remainingPoints === 'function'
             && roleSection._remainingPoints() < 0) {
             saveStatus.textContent = 'Spend within the starting-point budget';
@@ -3417,7 +3417,7 @@ function openSessionZero(onDone) {
             s.playerIdentity.appearance = controlledEntity.description || s.playerIdentity.appearance;
             s.playerIdentity.publicIdentity = controlledEntity.name || s.playerIdentity.publicIdentity;
         } else delete s.controlledEntitySnapshot;
-        if (!document.getElementById('sz-role-section')?.classList.contains('hidden')) {
+        if (!document.getElementById('ew-sz-role-section')?.classList.contains('hidden')) {
             s.playerIdentity.skills = [...role.skills];
             s.playerIdentity.perks = [...role.perks];
             s.playerIdentity.flaws = [...role.flaws];
@@ -3486,7 +3486,7 @@ function openNpcDossier(npcId) {
     const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
     const npc = world ? world.entities.find(e => e.id === npcId) : null;
-    const overlay = document.getElementById('npc-dossier-overlay');
+    const overlay = document.getElementById('ew-npc-dossier-overlay');
     if (!world || !sess || !npc || !overlay) return;
 
     const entState = sess.entityStates[npc.id] || {};
@@ -3507,8 +3507,8 @@ function openNpcDossier(npcId) {
     const relationships = Object.entries(sess.npcRelationships || {}).filter(([key]) => key.split('|').includes(npc.id));
     const dossierClaims = window.ExperimentalWorldsDossierClaims?.history?.(world, sess, npc.id)?.active || [];
 
-    document.getElementById('npc-dossier-title').textContent = `📇 ${npc.name}`;
-    const content = document.getElementById('npc-dossier-content');
+    document.getElementById('ew-npc-dossier-title').textContent = `📇 ${npc.name}`;
+    const content = document.getElementById('ew-npc-dossier-content');
     content.innerHTML = `
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
             <span class="mini-tag">${status === 'alive' ? '🟢 alive' : (status === 'dead' ? '☠️ dead' : '🚪 gone')}</span>
@@ -3535,26 +3535,26 @@ function openNpcDossier(npcId) {
         <div class="form-section">
             <label class="form-label">Disposition Toward You (drag to adjust)</label>
             <div style="display:flex; align-items:center; gap:10px;">
-                <input type="range" id="dossier-dispo-slider" min="0" max="100" value="${dispo}" style="flex:1;">
-                <span id="dossier-dispo-val" style="font-size:0.8rem; font-family:monospace; min-width:52px; text-align:right; color:${dispoColor};">${dispo}/100</span>
+                <input type="range" id="ew-dossier-dispo-slider" min="0" max="100" value="${dispo}" style="flex:1;">
+                <span id="ew-dossier-dispo-val" style="font-size:0.8rem; font-family:monospace; min-width:52px; text-align:right; color:${dispoColor};">${dispo}/100</span>
             </div>
         </div>
         <div class="form-section">
             <label class="form-label">Current Goal (editable)</label>
-            <input type="text" id="dossier-goal" class="form-input" value="${experimentalEscapeHTML(entState.goal || '')}" placeholder="What do they want? Leave empty for none — the DM will invent one when relevant.">
-            <input type="text" id="dossier-goal-why" class="form-input" style="margin-top:6px;" value="${experimentalEscapeHTML(entState.goalMotivation || '')}" placeholder="Why they want it (optional)">
+            <input type="text" id="ew-dossier-goal" class="form-input" value="${experimentalEscapeHTML(entState.goal || '')}" placeholder="What do they want? Leave empty for none — the DM will invent one when relevant.">
+            <input type="text" id="ew-dossier-goal-why" class="form-input" style="margin-top:6px;" value="${experimentalEscapeHTML(entState.goalMotivation || '')}" placeholder="Why they want it (optional)">
             <div style="display:grid; grid-template-columns:1fr 130px; gap:8px; margin-top:8px; align-items:center;">
-                <label style="font-size:0.72rem; color:var(--text-3);">Progress <span id="dossier-goal-progress-val">${goalProgress}%</span>
-                    <input type="range" id="dossier-goal-progress" min="0" max="100" value="${goalProgress}" style="width:100%;">
+                <label style="font-size:0.72rem; color:var(--text-3);">Progress <span id="ew-dossier-goal-progress-val">${goalProgress}%</span>
+                    <input type="range" id="ew-dossier-goal-progress" min="0" max="100" value="${goalProgress}" style="width:100%;">
                 </label>
                 <label style="font-size:0.72rem; color:var(--text-3);">Autonomy
-                    <select id="dossier-goal-autonomy" class="form-select" style="padding:5px; font-size:0.72rem;">
+                    <select id="ew-dossier-goal-autonomy" class="form-select" style="padding:5px; font-size:0.72rem;">
                         ${['paused', 'low', 'medium', 'high'].map(level => `<option value="${level}" ${goalAutonomy === level ? 'selected' : ''}>${level}</option>`).join('')}
                     </select>
                 </label>
             </div>
             ${entState.goal ? `<div style="font-size:0.7rem; color:var(--text-3); margin-top:6px;">Status: ${experimentalEscapeHTML(entState.goalStatus || 'active')}${entState.goalSteps?.length ? ` · Step ${Math.min((entState.goalStepIndex || 0) + 1, entState.goalSteps.length)}/${entState.goalSteps.length}: ${experimentalEscapeHTML(entState.goalSteps[entState.goalStepIndex || 0])}` : ''}${entState.goalDeadlineTurn ? ` · Deadline: turn ${entState.goalDeadlineTurn}` : ''}</div>` : ''}
-            <button id="dossier-save-goal" class="btn btn-ghost" style="margin-top:8px; font-size:0.75rem;">💾 Save Goal</button>
+            <button id="ew-dossier-save-goal" class="btn btn-ghost" style="margin-top:8px; font-size:0.75rem;">💾 Save Goal</button>
         </div>
         ${relationships.length ? `<div class="form-section">
             <label class="form-label">Relationships</label>
@@ -3569,15 +3569,15 @@ function openNpcDossier(npcId) {
         <div class="form-section">
             <label class="form-label">${sidecarWorld ? 'Private cognition' : 'Memories & Observations'} (${obs.length})</label>
             ${sidecarWorld ? '<p class="form-hint">These are first-person, epistemically typed memories produced only from this character’s perception evidence. Objective turn text is not displayed as cognition.</p>' : ''}
-            <div id="dossier-obs-list" style="display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto;">
+            <div id="ew-dossier-obs-list" style="display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto;">
                 ${obs.length === 0 ? '<div style="color:var(--text-3); font-size:0.75rem; font-style:italic;">Nothing witnessed yet.</div>' : ''}
             </div>
         </div>
     `;
 
     // Disposition slider: live label, debounced persist
-    const slider = content.querySelector('#dossier-dispo-slider');
-    const dispoVal = content.querySelector('#dossier-dispo-val');
+    const slider = content.querySelector('#ew-dossier-dispo-slider');
+    const dispoVal = content.querySelector('#ew-dossier-dispo-val');
     let dispoSaveTimer = null;
     slider.oninput = () => {
         const v = parseInt(slider.value);
@@ -3600,21 +3600,21 @@ function openNpcDossier(npcId) {
     });
 
     // Goal editing
-    const goalProgressInput = content.querySelector('#dossier-goal-progress');
-    const goalProgressValue = content.querySelector('#dossier-goal-progress-val');
+    const goalProgressInput = content.querySelector('#ew-dossier-goal-progress');
+    const goalProgressValue = content.querySelector('#ew-dossier-goal-progress-val');
     goalProgressInput.oninput = () => { goalProgressValue.textContent = `${goalProgressInput.value}%`; };
-    content.querySelector('#dossier-save-goal').onclick = async () => {
+    content.querySelector('#ew-dossier-save-goal').onclick = async () => {
         if (!sess.entityStates[npc.id]) sess.entityStates[npc.id] = { location: sess.playerLocation };
         const es = sess.entityStates[npc.id];
-        const goal = content.querySelector('#dossier-goal').value.trim();
-        const why = content.querySelector('#dossier-goal-why').value.trim();
+        const goal = content.querySelector('#ew-dossier-goal').value.trim();
+        const why = content.querySelector('#ew-dossier-goal-why').value.trim();
         const goalChanged = goal !== es.goal;
         es.goal = goal.slice(0, 200);
         if (goal) {
             if (why) es.goalMotivation = why.slice(0, 200);
             else delete es.goalMotivation;
             es.goalProgress = livingClamp(parseInt(goalProgressInput.value) || 0, 0, 100);
-            es.goalAutonomy = content.querySelector('#dossier-goal-autonomy').value;
+            es.goalAutonomy = content.querySelector('#ew-dossier-goal-autonomy').value;
             es.goalDifficulty = livingClamp(es.goalDifficulty == null ? 50 : es.goalDifficulty, 0, 100);
             es.goalSteps = Array.isArray(es.goalSteps) ? es.goalSteps : [];
             if (goalChanged || !es.goalStatus) es.goalStatus = es.goalProgress >= 100 ? 'completed' : 'active';
@@ -3633,7 +3633,7 @@ function openNpcDossier(npcId) {
     };
 
     // Observation rows with delete (prune wrong/stale NPC memories)
-    const obsList = content.querySelector('#dossier-obs-list');
+    const obsList = content.querySelector('#ew-dossier-obs-list');
     obs.forEach((o, idx) => {
         const row = document.createElement('div');
         row.style.cssText = 'display:flex; gap:8px; align-items:flex-start; background:var(--surface2); padding:8px 10px; border-radius:8px; border:1px solid var(--border);';
@@ -3650,7 +3650,7 @@ function openNpcDossier(npcId) {
         obsList.appendChild(row);
     });
 
-    document.getElementById('close-npc-dossier-btn').onclick = () => overlay.classList.add('hidden');
+    document.getElementById('ew-close-npc-dossier-btn').onclick = () => overlay.classList.add('hidden');
     overlay.classList.remove('hidden');
 }
 
@@ -3683,7 +3683,7 @@ function enterWorld(worldId, sessionId = null) {
     const entryScheduleSync = sidecarMode ? { moves: 0 } : syncNPCSchedules(world, sess);
     if (entryScheduleSync.moves > 0) ExperimentalWorldsHost.persist().catch(() => {});
     
-    document.getElementById('world-active-name').textContent = 'Living world';
+    document.getElementById('ew-world-active-name').textContent = 'Living world';
     ExperimentalWorldsHost.navigate('worldPlay');
     renderWorldPlayState();
     
@@ -3714,17 +3714,17 @@ function renderWorldPlayState() {
     }
 
     // 1. Core Header
-    document.getElementById('world-dm-name').textContent = world.name || 'Untitled World';
-    document.getElementById('world-active-name').textContent = 'Living world';
-    const worldAvatar = document.getElementById('world-dm-avatar');
+    document.getElementById('ew-world-dm-name').textContent = world.name || 'Untitled World';
+    document.getElementById('ew-world-active-name').textContent = 'Living world';
+    const worldAvatar = document.getElementById('ew-world-dm-avatar');
     if (worldAvatar) {
         worldAvatar.style.backgroundImage = world.banner ? `url('${experimentalCssUrl(world.banner)}')` : '';
         worldAvatar.textContent = world.banner ? '' : '🌐';
         worldAvatar.title = world.banner ? `${world.name || 'World'} artwork` : 'World';
     }
     const modelName = (world.model || ExperimentalWorldsState.globalSettings.defaultModel || 'Default').split('/').pop();
-    document.getElementById('world-model-name').textContent = 'Model: ' + modelName;
-    const personaButton = document.getElementById('world-persona-btn');
+    document.getElementById('ew-world-model-name').textContent = 'Model: ' + modelName;
+    const personaButton = document.getElementById('ew-world-persona-btn');
     if (personaButton) {
         const identity = worldControlledPlayerIdentity(world, sess);
         const persona = getTimelinePersona(sess, world);
@@ -3737,7 +3737,7 @@ function renderWorldPlayState() {
 
     // Apply the optional presentation layer. Canonical location/session state
     // chooses the visual; the visual can never choose or mutate game state.
-    const playView = document.getElementById('world-play-view');
+    const playView = document.getElementById('ew-world-play-view');
     const presentation = normalizeWorldPresentation(world);
     const requestedPresentation = ['classic', 'cinematic'].includes(sess.presentationMode)
         ? sess.presentationMode : (presentation.enabled ? presentation.mode : 'classic');
@@ -3745,7 +3745,7 @@ function renderWorldPlayState() {
     const locationBackground = worldMediaSource(world, visualLocation?.visuals?.backgroundAssetId);
     const background = requestedPresentation === 'classic' ? world.banner : (locationBackground || world.banner);
     const activePresentation = requestedPresentation !== 'classic';
-    const presentationButton = document.getElementById('world-presentation-btn');
+    const presentationButton = document.getElementById('ew-world-presentation-btn');
     if (presentationButton) {
         presentationButton.style.display = presentation.playerCanOverride ? '' : 'none';
         presentationButton.textContent = requestedPresentation === 'classic' ? '🎨 Classic' : '🎨 Cinematic';
@@ -3767,7 +3767,7 @@ function renderWorldPlayState() {
     }
 
     // 2. Stats HUD
-    const statsContainer = document.getElementById('world-stats-container');
+    const statsContainer = document.getElementById('ew-world-stats-container');
     if (statsContainer) {
         statsContainer.innerHTML = '';
         statsContainer.style.display = (ruleModules.stats || ruleModules.conditions || window.ExperimentalWorldsMechanics?.isEnabled?.(world)) ? 'flex' : 'none';
@@ -3930,9 +3930,9 @@ function renderWorldPlayState() {
             statsContainer.appendChild(div);
         });
     }
-    const editStatsButton = document.getElementById('edit-player-stats-btn');
+    const editStatsButton = document.getElementById('ew-edit-player-stats-btn');
     if (editStatsButton) editStatsButton.style.display = ruleModules.stats ? '' : 'none';
-    const rollButton = document.getElementById('world-roll-btn');
+    const rollButton = document.getElementById('ew-world-roll-btn');
     if (rollButton) {
         rollButton.style.display = ruleModules.checks ? '' : 'none';
         const pending = (Array.isArray(sess.pendingChecks) ? sess.pendingChecks[0] : null) || sess.pendingCheck;
@@ -3942,7 +3942,7 @@ function renderWorldPlayState() {
             ? `Resolve ${pending.label} against difficulty ${pending.difficulty}`
             : 'Create a check or roll one requested by the DM';
     }
-    const mechanicsButton = document.getElementById('world-mechanics-toggle-btn');
+    const mechanicsButton = document.getElementById('ew-world-mechanics-toggle-btn');
     if (mechanicsButton) {
         const mechanicsEnabled = worldOptionalRpgEnabled(world);
         mechanicsButton.textContent = mechanicsEnabled ? '⚙ Mechanics: On' : '⚙ Mechanics: Off';
@@ -3954,10 +3954,10 @@ function renderWorldPlayState() {
 
     // 3. Location & Exits
     const loc = sessionLocations(world, sess).find(l => l.id === sess.playerLocation); // session-scoped geography
-    document.getElementById('world-loc-name').textContent = loc ? loc.name : 'Unknown Realm';
-    document.getElementById('world-loc-desc').textContent = loc ? loc.description : 'The surroundings are indistinct.';
+    document.getElementById('ew-world-loc-name').textContent = loc ? loc.name : 'Unknown Realm';
+    document.getElementById('ew-world-loc-desc').textContent = loc ? loc.description : 'The surroundings are indistinct.';
 
-    const exitList = document.getElementById('world-exits-list');
+    const exitList = document.getElementById('ew-world-exits-list');
     exitList.innerHTML = '';
     if (loc && loc.exits) {
         loc.exits.forEach(exit => {
@@ -3992,7 +3992,7 @@ function renderWorldPlayState() {
                     // establishes whether movement actually completes; the
                     // second call validates and commits that result.
                     const intent = `I head toward ${targetLoc.name}.`;
-                    const input = document.getElementById('world-user-input');
+                    const input = document.getElementById('ew-world-user-input');
                     if (input) input.value = intent;
                     executeWorldTurn();
                     return;
@@ -4024,14 +4024,14 @@ function renderWorldPlayState() {
     }
 
     // 4. Inventory & Outfit
-    const outfitContent = document.getElementById('world-outfit-content');
+    const outfitContent = document.getElementById('ew-world-outfit-content');
     if (outfitContent) outfitContent.textContent = sess.outfit || 'Standard attire.';
 
     // Apply studio HUD toggles that previously saved but never took effect
-    const ledgerSection = document.getElementById('hud-section-ledger');
+    const ledgerSection = document.getElementById('ew-hud-section-ledger');
     if (ledgerSection) ledgerSection.style.display = (world.hudConfig?.showLedger !== false) ? 'block' : 'none';
 
-    const invList = document.getElementById('world-inventory-list');
+    const invList = document.getElementById('ew-world-inventory-list');
     invList.style.display = (ruleModules.inventory && world.hudConfig?.showInventory !== false) ? 'flex' : 'none';
     invList.innerHTML = '';
     if (!sess.inventory.length) {
@@ -4049,7 +4049,7 @@ function renderWorldPlayState() {
                 <button class="inv-chip-btn" title="Use ${experimentalEscapeHTML(itemName)}">▶</button>
                 <button class="inv-chip-btn inv-chip-drop" title="Drop ${experimentalEscapeHTML(itemName)}">✕</button>
             `;
-            const inputEl = document.getElementById('world-user-input');
+            const inputEl = document.getElementById('ew-world-user-input');
             const sendIntent = (text) => {
                 if (ExperimentalWorldsRuntime.turnInProgress()) return ExperimentalWorldsHost.notify('The DM is still responding — please wait.', 'info');
                 inputEl.value = text;
@@ -4081,7 +4081,7 @@ function renderWorldPlayState() {
     }
 
     // 5. Cast (NPCs Present)
-    const presList = document.getElementById('world-present-list');
+    const presList = document.getElementById('ew-world-present-list');
     presList.innerHTML = '';
     // Audit: Use fresh session reference to avoid stale UI
     const activeSess = getCurrentWorldSession();
@@ -4171,9 +4171,9 @@ function renderWorldPlayState() {
 
     // Render World Time (Clock Engine)
     if (!sess.turnCount) sess.turnCount = 1;
-    const clockDisplay = document.getElementById('world-clock-display');
-    const periodDisplay = document.getElementById('world-time-period');
-    const clockSection = document.getElementById('hud-section-clock');
+    const clockDisplay = document.getElementById('ew-world-clock-display');
+    const periodDisplay = document.getElementById('ew-world-time-period');
+    const clockSection = document.getElementById('ew-hud-section-clock');
     if (clockSection) clockSection.style.display = world.hudConfig?.showClock ? 'block' : 'none';
 
     if (clockDisplay && world.hudConfig?.showClock) {
@@ -4198,7 +4198,7 @@ function renderWorldPlayState() {
     }
 
     // Weather display (click to override, Auto to resume the procedural sky)
-    const weatherDisplay = document.getElementById('world-weather-display');
+    const weatherDisplay = document.getElementById('ew-world-weather-display');
     if (weatherDisplay) {
         const cur = getWorldWeather(world, sess);
         weatherDisplay.innerHTML = `${cur.emoji} ${experimentalEscapeHTML(cur.label)}${sess.weatherOverride ? ' <span style="opacity:0.55; font-size:0.65rem;">(manual)</span>' : ''}`;
@@ -4222,9 +4222,9 @@ function renderWorldPlayState() {
     }
 
     // Render Quests
-    const questList = document.getElementById('world-quest-list');
-    const questCount = document.getElementById('quest-count');
-    const questSection = document.getElementById('hud-section-quests'); 
+    const questList = document.getElementById('ew-world-quest-list');
+    const questCount = document.getElementById('ew-quest-count');
+    const questSection = document.getElementById('ew-hud-section-quests');
     if (questSection) questSection.style.display = (ruleModules.quests && world.hudConfig?.showQuests) ? 'block' : 'none';
     
     if (questList && ruleModules.quests && world.hudConfig?.showQuests) {
@@ -4313,21 +4313,21 @@ function renderWorldPlayState() {
     }
 
     // Secrets Uncovered (auto-hides until the first discovery)
-    const secretsSection = document.getElementById('hud-section-secrets');
-    const secretsList = document.getElementById('world-secrets-list');
+    const secretsSection = document.getElementById('ew-hud-section-secrets');
+    const secretsList = document.getElementById('ew-world-secrets-list');
     if (secretsSection && secretsList) {
         const revealed = sess.revealedSecrets || [];
         secretsSection.style.display = revealed.length ? 'block' : 'none';
-        const secretCount = document.getElementById('secret-count');
+        const secretCount = document.getElementById('ew-secret-count');
         if (secretCount) secretCount.textContent = revealed.length;
         secretsList.innerHTML = revealed.map(label =>
             `<span class="mini-tag" style="border-color:var(--warning, #F4A261);">🔑 ${experimentalEscapeHTML(label)}</span>`).join('');
     }
 
     // Story Threads (open narrative loops the DM registered)
-    const threadList = document.getElementById('world-thread-list');
-    const threadCount = document.getElementById('thread-count');
-    const threadSection = document.getElementById('hud-section-threads');
+    const threadList = document.getElementById('ew-world-thread-list');
+    const threadCount = document.getElementById('ew-thread-count');
+    const threadSection = document.getElementById('ew-hud-section-threads');
     if (threadList && threadSection) {
         const openThreads = (sess.threads || []).filter(t => t.status === 'open');
         threadSection.style.display = openThreads.length > 0 ? 'block' : 'none';
@@ -4347,9 +4347,9 @@ function renderWorldPlayState() {
 
     // Living World: a compact, player-facing window into persistent simulation.
     // Remote information is summarized as developments, not omniscient detail.
-    const livingList = document.getElementById('world-living-world-list');
-    const livingCount = document.getElementById('living-world-count');
-    const livingSection = document.getElementById('hud-section-living-world');
+    const livingList = document.getElementById('ew-world-living-world-list');
+    const livingCount = document.getElementById('ew-living-world-count');
+    const livingSection = document.getElementById('ew-hud-section-living-world');
     if (livingSection) livingSection.style.display = ruleModules.livingWorld ? 'block' : 'none';
     if (livingList && ruleModules.livingWorld) {
         normalizeLivingWorldState(world, sess);
@@ -4440,8 +4440,8 @@ function renderWorldPlayState() {
         if (livingCount) livingCount.textContent = visibleCards.length;
     }
 
-    const worldInput = document.getElementById('world-user-input');
-    const worldSend = document.getElementById('world-send-btn');
+    const worldInput = document.getElementById('ew-world-user-input');
+    const worldSend = document.getElementById('ew-world-send-btn');
     const currentPlayerState = normalizePlayerRulesState(world, sess);
     if (worldInput && worldSend) {
         const ended = currentPlayerState.status === 'dead';
@@ -4455,7 +4455,7 @@ function renderWorldPlayState() {
     }
 
     // Update Session Selector
-    const sessSelect = document.getElementById('world-session-select');
+    const sessSelect = document.getElementById('ew-world-session-select');
     if (sessSelect) {
         sessSelect.innerHTML = '';
         inst.sessions.forEach(s => {
@@ -4466,7 +4466,7 @@ function renderWorldPlayState() {
             sessSelect.appendChild(opt);
         });
     }
-    const deleteActiveTimelineButton = document.getElementById('world-del-session-btn');
+    const deleteActiveTimelineButton = document.getElementById('ew-world-del-session-btn');
     if (deleteActiveTimelineButton) {
         deleteActiveTimelineButton.disabled = false;
         deleteActiveTimelineButton.title = 'Delete current timeline';
@@ -4475,11 +4475,11 @@ function renderWorldPlayState() {
     }
 
     // Render World Ledger
-    const ledgerContent = document.getElementById('world-ledger-content');
+    const ledgerContent = document.getElementById('ew-world-ledger-content');
     if (ledgerContent) {
         ledgerContent.textContent = sess.ledger || "No milestones recorded yet.";
     }
-    const ledgerStatus = document.getElementById('world-ledger-status');
+    const ledgerStatus = document.getElementById('ew-world-ledger-status');
     if (ledgerStatus) {
         const diagnostic = sess.ledgerDiagnostics || {};
             const sourceLabels = {
@@ -4500,7 +4500,7 @@ function renderWorldPlayState() {
     }
 
     // Render history (Audit: Use appendWorldMessageUI for parity)
-    const container = document.getElementById('world-messages-container');
+    const container = document.getElementById('ew-world-messages-container');
     container.innerHTML = '';
     sess.history.forEach((msg, idx) => {
         appendWorldMessageUI(msg, idx);
@@ -4509,11 +4509,11 @@ function renderWorldPlayState() {
     const sidecarProtocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     {
         const sidecarAvailable = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
-        const worldInput = document.getElementById('world-user-input');
+        const worldInput = document.getElementById('ew-world-user-input');
         if (worldInput) worldInput.placeholder = sidecarAvailable && sidecarProtocol?.inputMode === 'sidecar'
             ? 'Ask Sidecar about continuity, questions, or a refinement…'
             : 'What do you do?...';
-        ['world-plan-sequence-btn', 'world-close-sequence-btn', 'world-v3-gm-btn'].forEach(id => {
+        ['ew-world-plan-sequence-btn', 'ew-world-close-sequence-btn', 'ew-world-v3-gm-btn'].forEach(id => {
             const button = document.getElementById(id);
             if (!button) return;
             button.disabled = !sidecarAvailable;
@@ -4522,12 +4522,12 @@ function renderWorldPlayState() {
         const hierarchy = sidecarAvailable
             ? window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(sidecarProtocol, sess)
             : null;
-        const closeButton = document.getElementById('world-close-sequence-btn');
+        const closeButton = document.getElementById('ew-world-close-sequence-btn');
         if (closeButton && sidecarAvailable) {
             closeButton.disabled = !hierarchy;
             closeButton.title = hierarchy ? `Close ${hierarchy.sequence.title}` : 'No active sequence — plan the next sequence';
         }
-        const pipelineButton = document.getElementById('world-pipeline-status-btn');
+        const pipelineButton = document.getElementById('ew-world-pipeline-status-btn');
         if (pipelineButton) {
             pipelineButton.textContent = sidecarAvailable ? '◉ Sidecar' : '⚠ Legacy · migrate';
             pipelineButton.title = sidecarAvailable
@@ -4555,8 +4555,8 @@ function renderWorldPlayState() {
     
     const percent = Math.min(100, (estTokens / maxTokens) * 100);
     
-    const fill = document.getElementById('world-context-fill');
-    const label = document.getElementById('world-context-label');
+    const fill = document.getElementById('ew-world-context-fill');
+    const label = document.getElementById('ew-world-context-label');
     if (fill) {
         fill.style.width = `${percent}%`;
         if (percent > 85) fill.style.background = '#E63946';
@@ -5036,7 +5036,7 @@ function renderSidecarBackstageCard(backstage, turnNumber, turnRecord = null) {
 }
 
 function appendWorldMessageUI(msg, index = null) {
-    const container = document.getElementById('world-messages-container');
+    const container = document.getElementById('ew-world-messages-container');
     const div = document.createElement('div');
     div.className = `msg msg-${msg.role}`;
     
@@ -5278,7 +5278,7 @@ function appendWorldMessageUI(msg, index = null) {
             // renderWorldPlayState rebuilds the composer. Restore the draft
             // only after that replacement has happened; setting it before the
             // render made a successful rewind look like an empty draft.
-            const restoredInput = document.getElementById('world-user-input');
+            const restoredInput = document.getElementById('ew-world-user-input');
             if (restoredInput) {
                 restoredInput.value = editedText;
                 restoredInput.dispatchEvent(new Event('input', { bubbles: true }));
@@ -6054,7 +6054,7 @@ async function executeWorldTurn(commandOrReroll = null) {
     }
     if (!(await ExperimentalWorldsHost.ensureSharedLibraryFresh())) return;
     ExperimentalWorldsRuntime.setTurnInProgress(true);
-    const worldSendBtn = document.getElementById('world-send-btn');
+    const worldSendBtn = document.getElementById('ew-world-send-btn');
     if (worldSendBtn) {
         // Turn the send button into a Stop button for the duration of the turn
         worldSendBtn.classList.add('stop');
@@ -6233,7 +6233,7 @@ async function executeWorldTurn(commandOrReroll = null) {
         userInput = lastUser ? lastUser.text : "Continue the adventure.";
         submittedInput = userInput;
     } else {
-        userInput = command || document.getElementById('world-user-input').value.trim();
+        userInput = command || document.getElementById('ew-world-user-input').value.trim();
         if (command !== "init" && !userInput) return;
         submittedInput = userInput;
 
@@ -6840,8 +6840,8 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
     }
 
     // Show persistent typing indicator
-    const dmTyping = document.getElementById('world-dm-typing');
-    const dmTypingLabel = document.getElementById('world-dm-typing-label');
+    const dmTyping = document.getElementById('ew-world-dm-typing');
+    const dmTypingLabel = document.getElementById('ew-world-dm-typing-label');
     if (dmTyping) { dmTypingLabel.textContent = 'DM is writing...'; dmTyping.style.display = 'flex'; }
 
     ExperimentalWorldsHost.notify('DM is thinking...', 'info');
@@ -7785,7 +7785,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         const aiMsgDiv = document.createElement('div');
         aiMsgDiv.className = 'msg msg-dm';
         aiMsgDiv.innerHTML = `<div class="msg-bubble"><div class="msg-text"></div></div>`;
-        document.getElementById('world-messages-container').appendChild(aiMsgDiv);
+        document.getElementById('ew-world-messages-container').appendChild(aiMsgDiv);
         const textTarget = aiMsgDiv.querySelector('.msg-text');
 
         // Stream the visible prose through the same cinematic presenter as the
@@ -7839,7 +7839,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                             ? renderWorldNarrativeHtml(world, visibleStreamingText, sess)
                             : experimentalParseHordeMarkdown(stripFFVoiceTags(visibleStreamingText));
                     }
-                    const container = document.getElementById('world-messages-container');
+                    const container = document.getElementById('ew-world-messages-container');
                     container.scrollTop = container.scrollHeight;
                 }
                 const incomingCalls = delta.tool_calls || choice.message?.tool_calls || [];
@@ -8677,7 +8677,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         }
 
     } catch (err) {
-        const dmTypingEl = document.getElementById('world-dm-typing');
+        const dmTypingEl = document.getElementById('ew-world-dm-typing');
         if (dmTypingEl) dmTypingEl.style.display = 'none';
 
         // A changed World or timeline is an intentional cancellation. The
@@ -8731,7 +8731,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                     location: sess.playerLocation,
                     deferPersist: true
                 });
-                const input = document.getElementById('world-user-input');
+                const input = document.getElementById('ew-world-user-input');
                 if (input) input.value = '';
             }
         }
@@ -8749,12 +8749,12 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                     location: sess.playerLocation,
                     deferPersist: true
                 });
-                const input = document.getElementById('world-user-input');
+                const input = document.getElementById('ew-world-user-input');
                 if (input) input.value = '';
             }
         }
         if (!movementPreserved && !committedOutfit && !command && submittedInput) {
-            const input = document.getElementById('world-user-input');
+            const input = document.getElementById('ew-world-user-input');
             if (input) input.value = submittedInput;
         }
         try { if (sess) await ExperimentalWorldsHost.persist(); } catch (saveErr) { console.error('Rollback persistence failed:', saveErr); }
@@ -8807,7 +8807,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         if (timeoutId) clearTimeout(timeoutId);
         ExperimentalWorldsRuntime.setTurnInProgress(false);
         ExperimentalWorldsRuntime.setGenerationController(null);
-        const btn = document.getElementById('world-send-btn');
+        const btn = document.getElementById('ew-world-send-btn');
         if (btn) {
             const ended = world && sess && normalizePlayerRulesState(world, sess)?.status === 'dead';
             btn.disabled = !!ended;

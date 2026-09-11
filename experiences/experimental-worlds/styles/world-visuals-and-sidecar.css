@@ -26,11 +26,11 @@
 /* The v3 studio person/record drawer (world-record-overlay) shares the base
    modal stacking level and joins the DOM after this static modal, so it would
    otherwise paint over the editor. Keep the visual editor above the drawers. */
-#world-visual-editor-modal, #world-outfit-manager-modal { z-index: 1100; }
+#ew-world-visual-editor-modal, #ew-world-outfit-manager-modal { z-index: 1100; }
 .world-visual-editor { max-width:1180px; }
-.world-visual-editor textarea#world-visual-primary,
-.world-visual-editor textarea#world-visual-prompt,
-.world-visual-editor textarea#world-visual-correction { max-height:320px; overflow-y:auto; }
+.world-visual-editor textarea#ew-world-visual-primary,
+.world-visual-editor textarea#ew-world-visual-prompt,
+.world-visual-editor textarea#ew-world-visual-correction { max-height:320px; overflow-y:auto; }
 .world-visual-editor-body { display:grid; grid-template-columns:minmax(300px, .9fr) minmax(360px, 1.1fr); gap:22px; align-items:start; }
 .world-visual-editor-preview-column { min-width:0; }
 .world-visual-crop-stage { position:relative; width:100%; max-height:62vh; aspect-ratio:3/4; overflow:hidden; border:1px solid var(--border2); border-radius:14px; background:linear-gradient(135deg,var(--surface2),var(--surface3)); touch-action:none; cursor:grab; user-select:none; }
@@ -98,15 +98,15 @@
 .world-visual-editor-panel > .form-section { margin-bottom:12px; }
 .world-visual-editor-panel > .form-section:last-child { margin-bottom:0; }
 .world-visual-generation-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:0; }
-.world-visual-generation-grid > #world-visual-brief-save-field { grid-column:1 / -1; }
-.world-visual-generation-grid > #world-visual-resolution { display:none; }
-.world-visual-generation-grid > #world-visual-resolution + div { min-width:0; }
+.world-visual-generation-grid > #ew-world-visual-brief-save-field { grid-column:1 / -1; }
+.world-visual-generation-grid > #ew-world-visual-resolution { display:none; }
+.world-visual-generation-grid > #ew-world-visual-resolution + div { min-width:0; }
 .world-visual-reference-row { margin-top:9px; align-items:flex-start; }
 .world-visual-editor-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
 
 /* Structured visual document authoring. Legacy flat panels remain in the DOM
    only as migration/compatibility shims; this is the visible editor. */
-.world-visual-editor-fields > section:not(#world-visual-structured-panel) { display:none !important; }
+.world-visual-editor-fields > section:not(#ew-world-visual-structured-panel) { display:none !important; }
 .world-visual-structured-panel { display:block !important; }
 .world-visual-document-tabs { display:flex; gap:8px; align-items:center; }
 .world-visual-document-tabs .is-active { border-color:var(--accent,#ef4054); color:var(--text-1,#f4f4f8); }
@@ -152,7 +152,7 @@
     box-shadow: 0 0 10px #f3bd59;
 }
 
-#world-send-btn.world-v3-postprocessing {
+#ew-world-send-btn.world-v3-postprocessing {
     color: #1d180d;
     background: #f3bd59;
     border-color: #ffd77e;
@@ -593,10 +593,10 @@
 .world-media-actions { display:flex; flex-wrap:wrap; gap:7px; align-content:flex-start; }
 .world-media-actions .tool-btn { height:30px; font-size:.7rem; }
 
-#world-play-view.world-presentation-active .world-narrative-col { background:transparent; }
-#world-play-view.world-presentation-active .world-play-container { background:transparent; }
-#world-play-view.world-presentation-active #world-messages-container { background:transparent; }
-#world-play-view.world-presentation-active .msg-dm .msg-bubble {
+#ew-world-play-view.world-presentation-active .world-narrative-col { background:transparent; }
+#ew-world-play-view.world-presentation-active .world-play-container { background:transparent; }
+#ew-world-play-view.world-presentation-active #ew-world-messages-container { background:transparent; }
+#ew-world-play-view.world-presentation-active .msg-dm .msg-bubble {
     padding:22px 26px !important;
     border:1px solid rgba(255,255,255,.14) !important;
     border-radius:18px !important;
@@ -652,7 +652,7 @@
 .world-npc-dialogue-copy strong { color:var(--speaker-color,var(--accent)); font-size:.78rem; letter-spacing:.05em; text-transform:uppercase; }
 .world-npc-dialogue-copy > span { color:var(--text); font-size:1.02rem; line-height:1.55; }
 .world-player-dialogue { margin:0; }
-#world-play-view.world-presentation-active .msg-user .msg-bubble {
+#ew-world-play-view.world-presentation-active .msg-user .msg-bubble {
     padding:0 !important;
     border:0 !important;
     background:transparent !important;
@@ -667,20 +667,20 @@
 
 /* Keep the restored World Architect workbench after the later world-play
    presentation overrides above. */
-#world-play-view .world-status-col {
+#ew-world-play-view .world-status-col {
     width: var(--world-status-w, 320px);
     min-width: 240px;
     max-width: 720px;
     flex: 0 0 var(--world-status-w, 320px);
     gap: 20px;
 }
-#world-play-view .world-status-resize-handle { display:block; }
+#ew-world-play-view .world-status-resize-handle { display:block; }
 
 @media (max-width: 900px) {
-    #world-play-view .world-status-resize-handle { display:none; }
+    #ew-world-play-view .world-status-resize-handle { display:none; }
 }
 @media (max-width: 760px) {
-    #world-play-view .world-status-col { width:100%; min-width:0; max-width:none; flex:0 0 auto; }
+    #ew-world-play-view .world-status-col { width:100%; min-width:0; max-width:none; flex:0 0 auto; }
 }
 
 /* Release accessibility baseline. Individual controls may suppress the browser's
@@ -708,12 +708,12 @@
     box-shadow: -10px 0 30px rgba(0,0,0,0.3);
 }
 
-#world-messages-container {
+#ew-world-messages-container {
     padding: 40px;
     background: radial-gradient(circle at top center, rgba(230,57,70,0.03), transparent);
 }
 
-#world-messages-container .msg {
+#ew-world-messages-container .msg {
     margin-bottom: 32px;
 }
 
@@ -934,13 +934,13 @@
     border-left: 1px solid var(--border);
 }
 
-#world-play-view .chat-header {
+#ew-world-play-view .chat-header {
     min-width: 0;
     flex-wrap: wrap;
     gap: 10px;
 }
 
-#world-play-view .chat-toolbar {
+#ew-world-play-view .chat-toolbar {
     flex: 1 1 620px;
     min-width: 0;
     max-width: 100%;
@@ -1096,16 +1096,16 @@
     padding: 12px;
 }
 
-#world-ledger-card {
+#ew-world-ledger-card {
     background: linear-gradient(180deg, rgba(230, 57, 70, 0.05) 0%, rgba(0, 0, 0, 0) 100%);
     position: relative;
 }
 
-#world-ledger-card::-webkit-scrollbar {
+#ew-world-ledger-card::-webkit-scrollbar {
     width: 4px;
 }
 
-#world-ledger-card::-webkit-scrollbar-thumb {
+#ew-world-ledger-card::-webkit-scrollbar-thumb {
     background: var(--red-dim);
     border-radius: 2px;
 }
@@ -1287,11 +1287,11 @@
     }
 }
 
-#world-context-meter-wrap {
+#ew-world-context-meter-wrap {
     box-shadow: 0 0 15px var(--red-glow);
 }
 
-#world-context-label {
+#ew-world-context-label {
     font-weight: 700;
     text-shadow: 0 0 5px rgba(0,0,0,0.5);
 }
@@ -1323,8 +1323,8 @@
 
 /* The default image model picker holds a long catalog: give it a real
    scroll surface and stop wheel events chaining into the studio panel. */
-#w-visual-new-image-model-results,
-#w-visual-revision-image-model-results { max-height: min(480px, 62vh); overscroll-behavior: contain; }
+#ew-w-visual-new-image-model-results,
+#ew-w-visual-revision-image-model-results { max-height: min(480px, 62vh); overscroll-behavior: contain; }
 
 .searchable-dropdown-results::-webkit-scrollbar {
     width: 6px;
@@ -2174,7 +2174,7 @@
   .chat-toolbar .session-selector-wrap { flex: 1 1 280px; }
   .studio-panel { padding: 38px 32px 64px; }
   .vh-image-pair { grid-template-columns: minmax(0, 1fr); }
-  #world-play-view .chat-toolbar { flex-basis: 100%; }
+  #ew-world-play-view .chat-toolbar { flex-basis: 100%; }
   .world-toolbar-row { justify-content: flex-start; }
 }
 
@@ -2198,7 +2198,7 @@
   .nav-item { width: auto; white-space: nowrap; padding: 9px 10px; }
   .settings-btn { width: auto; margin: 0 0 0 auto; white-space: nowrap; }
 
-  #library-view, #worlds-view, #rooms-view, #settings-view { padding: 28px 24px; gap: 22px; }
+  #library-view, #ew-worlds-view, #rooms-view, #settings-view { padding: 28px 24px; gap: 22px; }
   .studio-panel { padding: 32px 28px; max-width: none; }
   .char-grid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 18px; }
 
@@ -2238,10 +2238,10 @@
   .world-more-actions { display:none; flex-basis:100%; padding:8px; border:1px solid var(--border); border-radius:10px; background:var(--surface2); }
   .world-more-actions.is-open { display:flex; }
   .world-status-col.is-collapsed { display:none; }
-  #world-play-view .chat-header { max-height:42vh; overflow-y:auto; }
+  #ew-world-play-view .chat-header { max-height:42vh; overflow-y:auto; }
   .chat-header { padding: 12px 18px; flex-wrap: wrap; gap: 10px; }
   .chat-toolbar { max-width: 100%; overflow: visible; padding-bottom: 3px; }
-  .messages-wrap, #world-messages-container { padding: 24px 20px; }
+  .messages-wrap, #ew-world-messages-container { padding: 24px 20px; }
   .form-row { flex-wrap: wrap; }
   .form-row > * { min-width: 220px; flex: 1; }
   .form-row-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -2264,7 +2264,7 @@
   .nav-item svg, .settings-btn svg { width: 20px; height: 20px; }
   .settings-btn { margin-left: 4px; }
 
-  #library-view, #worlds-view, #rooms-view, #settings-view { padding: 20px 14px; gap: 16px; }
+  #library-view, #ew-worlds-view, #rooms-view, #settings-view { padding: 20px 14px; gap: 16px; }
   .page-header { align-items: flex-start; gap: 14px; flex-wrap: wrap; }
   .page-title { font-size: 1.65rem; }
   .header-actions { width: 100%; flex-wrap: wrap; }
@@ -2279,8 +2279,8 @@
   .chat-who > div:last-child { min-width: 0; }
   .chat-name, .chat-model-badge { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chat-toolbar { width: 100%; }
-  .messages-wrap, #world-messages-container { padding: 18px 12px; }
-  .message, #world-messages-container .msg { max-width: 100%; }
+  .messages-wrap, #ew-world-messages-container { padding: 18px 12px; }
+  .message, #ew-world-messages-container .msg { max-width: 100%; }
   .composer { padding: 10px 12px 14px; }
   .input-row { padding-left: 12px; }
 
@@ -2306,7 +2306,7 @@
   .modal-bd { padding: 18px 14px 20px; }
   .modal-hd, .modal-ft { padding-left: 14px; padding-right: 14px; }
   .session-zero-modal .session-zero-grid, .session-persona-panel { grid-template-columns: minmax(0, 1fr); gap: 12px; }
-  .session-life-seed-option, #sz-life-seed-status { grid-column: auto; }
+  .session-life-seed-option, #ew-sz-life-seed-status { grid-column: auto; }
   .sandbox-feature-grid, .sandbox-origin-editor-grid, .session-origin-list { grid-template-columns: minmax(0, 1fr); }
   .session-zero-modal .modal-ft { flex-wrap: wrap; }
   .session-zero-save-status { width: 100%; }
@@ -4643,14 +4643,14 @@
 .party-vote-inline { padding:10px; border:1px solid rgba(255,190,80,.35); border-radius:10px; background:rgba(255,190,80,.06); font-size:.72rem; }
 .party-vote-inline p { margin:4px 0 8px; color:var(--text-3); }
 .party-vote-inline .btn { margin-right:6px; }
-.multiplayer-guest-view #world-studio-btn,
-.multiplayer-guest-view #world-new-session-btn,
-.multiplayer-guest-view #world-rename-session-btn,
-.multiplayer-guest-view #world-del-session-btn,
-.multiplayer-guest-view #edit-player-stats-btn,
-.multiplayer-guest-view #edit-outfit-btn,
-.multiplayer-guest-view #edit-ledger-btn,
-.multiplayer-guest-view #quest-manage-btn { display:none!important; }
+.multiplayer-guest-view #ew-world-studio-btn,
+.multiplayer-guest-view #ew-world-new-session-btn,
+.multiplayer-guest-view #ew-world-rename-session-btn,
+.multiplayer-guest-view #ew-world-del-session-btn,
+.multiplayer-guest-view #ew-edit-player-stats-btn,
+.multiplayer-guest-view #ew-edit-outfit-btn,
+.multiplayer-guest-view #ew-edit-ledger-btn,
+.multiplayer-guest-view #ew-quest-manage-btn { display:none!important; }
 @media(max-width:760px) {
     .party-play-dock { margin:6px; border-radius:11px; }
     .party-player-stack { display:none; }
@@ -4707,7 +4707,7 @@
 .world-party-action-box { display:flex; flex-direction:column; gap:7px; padding-top:12px; border-top:1px solid var(--border); }
 .world-party-action-box label { font-size:.65rem; font-weight:800; color:var(--text-muted); }
 .world-party-action-box > div { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-#world-party-action-status { color:var(--text-muted); font-size:.65rem; }
+#ew-world-party-action-status { color:var(--text-muted); font-size:.65rem; }
 .world-party-commit { width:100%; margin-top:10px; }
 .world-party-vote { margin-bottom:10px; padding:12px; border:1px solid rgba(255,192,74,.25); border-radius:12px; background:rgba(255,192,74,.055); }
 .world-party-vote strong { display:block; margin-bottom:7px; }
@@ -4921,7 +4921,7 @@
 /* Keep the denser World Studio rail inside a normal laptop-height viewport.
    Scrolling remains a safety net for unusually short windows or large text. */
 @media (min-width: 901px) {
-    #world-studio-view .studio-nav {
+    #ew-world-studio-view .studio-nav {
         min-height: 0;
         padding: clamp(8px, 1.25vh, 12px) 10px;
         gap: clamp(4px, .65vh, 7px);
@@ -4929,25 +4929,25 @@
         overscroll-behavior: contain;
         scrollbar-width: thin;
     }
-    #world-studio-view .studio-tabs {
+    #ew-world-studio-view .studio-tabs {
         flex: 1 1 auto;
         min-height: 0;
         gap: clamp(1px, .25vh, 3px);
         padding: 0;
     }
-    #world-studio-view .world-studio-tab {
+    #ew-world-studio-view .world-studio-tab {
         min-height: 30px;
         padding: clamp(5px, .65vh, 7px) 11px;
         border-radius: 9px;
         font-size: .78rem;
         line-height: 1.15;
     }
-    #world-studio-view .studio-nav-actions {
+    #ew-world-studio-view .studio-nav-actions {
         flex: 0 0 auto;
         gap: clamp(4px, .55vh, 6px);
         padding-top: clamp(7px, .9vh, 10px);
     }
-    #world-studio-view .studio-nav-actions .btn {
+    #ew-world-studio-view .studio-nav-actions .btn {
         min-height: 32px;
         padding: clamp(6px, .7vh, 8px) 10px;
         border-radius: 9px;
@@ -5027,8 +5027,8 @@ label[data-help] > span:first-child::after,
     line-height: 1;
     opacity: .72;
 }
-#w-sidecar-reader-max-tokens:placeholder-shown,
-#w-sidecar-max-tokens:placeholder-shown {
+#ew-w-sidecar-reader-max-tokens:placeholder-shown,
+#ew-w-sidecar-max-tokens:placeholder-shown {
     color: var(--text-3);
     font-style: italic;
 }
@@ -5145,7 +5145,7 @@ label[data-help] > span:first-child::after,
 .inv-chip.equipped { border-color:color-mix(in srgb,var(--accent) 60%,var(--border)); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 20%,transparent); }
 .mp-effective-value { display:block; margin-top:6px; color:#62e6bf; font-size:.72rem; font-weight:700; }
 #mp-session-dice.mechanics-off { opacity:.58; border-style:dashed; }
-#world-mechanics-toggle-btn.mechanics-off { opacity:.68; border-style:dashed; }
+#ew-world-mechanics-toggle-btn.mechanics-off { opacity:.68; border-style:dashed; }
 @media (max-width:700px) {
     .world-item-editor-grid, .mp-item-editor-grid, .world-item-inline, .mp-inline-fields { grid-template-columns:1fr; }
     .world-item-wide, .mp-item-wide { grid-column:auto; }

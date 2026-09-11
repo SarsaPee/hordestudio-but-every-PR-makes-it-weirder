@@ -416,7 +416,7 @@ Return ONLY this JSON, nothing else:
 
 function renderWorldScheduler() {
     const world = ExperimentalWorldsState.editingWorld;
-    const container = document.getElementById('scheduler-npc-list');
+    const container = document.getElementById('ew-scheduler-npc-list');
     if (!world || !container) return;
 
     container.innerHTML = '';
@@ -2685,19 +2685,19 @@ function renderWorldMigrationSection(world) {
             <p>${experimentalEscapeHTML(result.error.message || 'This world contains invalid legacy data.')}</p></div></div>`;
     }
     const changed = (result?.changes || []).reduce((sum, item) => sum + Math.max(1, Number(item.count) || 1), 0);
-    return `<section class="world-migration-card legacy" aria-labelledby="world-migration-title">
+    return `<section class="world-migration-card legacy" aria-labelledby="ew-world-migration-title">
         <div class="world-migration-icon">↥</div>
         <div class="world-migration-content">
             <span class="vh-eyebrow">LEGACY WORLD · SCHEMA ${version || 'UNVERSIONED'}</span>
-            <h3 id="world-migration-title">Upgrade to the new world directory</h3>
+            <h3 id="ew-world-migration-title">Upgrade to the new world directory</h3>
             <p>A transactional migration creates canonical regions, rooms, travel links, People, Items and Groups. Ambiguous geography is reported, never guessed.</p>
             <div class="world-migration-summary">
                 ${(result?.changes || []).length ? result.changes.map(item => `<span><b>${item.count || 1}</b> ${experimentalEscapeHTML(item.area)}<small>${experimentalEscapeHTML(item.detail)}</small></span>`).join('') : '<span><b>0</b> structural rewrites<small>The schema receipt and validation gate will still be added.</small></span>'}
             </div>
             ${(result?.warnings || []).length ? `<details class="world-migration-warnings"><summary>${result.warnings.length} decision${result.warnings.length === 1 ? '' : 's'} still need your review</summary>${result.warnings.map(item => `<p><b>${experimentalEscapeHTML(item.area)}:</b> ${experimentalEscapeHTML(item.detail)}</p>`).join('')}</details>` : ''}
             <div class="world-migration-actions">
-                <button id="world-migration-backup-btn" class="btn btn-ghost" type="button">Download original</button>
-                <button id="world-migration-apply-btn" class="btn btn-primary" type="button">Upgrade &amp; save${changed ? ` · ${changed} changes` : ''}</button>
+                <button id="ew-world-migration-backup-btn" class="btn btn-ghost" type="button">Download original</button>
+                <button id="ew-world-migration-apply-btn" class="btn btn-primary" type="button">Upgrade &amp; save${changed ? ` · ${changed} changes` : ''}</button>
             </div>
             <p class="form-hint">The new world is validated before it replaces anything. If validation or saving fails, Horde Studio restores the original automatically.</p>
         </div>
@@ -2705,9 +2705,9 @@ function renderWorldMigrationSection(world) {
 }
 
 function wireWorldMigrationControls(world) {
-    const backupButton = document.getElementById('world-migration-backup-btn');
+    const backupButton = document.getElementById('ew-world-migration-backup-btn');
     if (backupButton) backupButton.onclick = () => downloadLegacyWorldBackup(world);
-    const applyButton = document.getElementById('world-migration-apply-btn');
+    const applyButton = document.getElementById('ew-world-migration-apply-btn');
     if (!applyButton) return;
     applyButton.onclick = async () => {
         const result = worldMigrationPreview(world);
@@ -2762,8 +2762,8 @@ function wireCalibrationControls(world, calibration, container) {
 
     // The structured-model choice is a tooling preference, not world content,
     // so it saves immediately rather than waiting on Save World.
-    const picker = container.querySelector('#structured-model-picker');
-    const custom = container.querySelector('#structured-model-custom');
+    const picker = container.querySelector('#ew-structured-model-picker');
+    const custom = container.querySelector('#ew-structured-model-custom');
     if (picker && custom) {
         const commit = async (value) => {
             ExperimentalWorldsState.globalSettings.structuredModel = String(value || '').trim().slice(0, 200);
@@ -2782,8 +2782,8 @@ function wireCalibrationControls(world, calibration, container) {
         // Populated from the live catalog rather than a list written by hand,
         // which is how a retired model id ended up being offered as a
         // suggestion and failed with "No endpoints found".
-        const status = container.querySelector('#structured-model-status');
-        const refresh = container.querySelector('#structured-model-refresh');
+        const status = container.querySelector('#ew-structured-model-status');
+        const refresh = container.querySelector('#ew-structured-model-refresh');
         const fallbackLabel = world.model || ExperimentalWorldsState.globalSettings.defaultModel || 'unset';
         const populate = async (force) => {
             if (status) status.textContent = 'Checking which models can do this…';
@@ -2824,7 +2824,7 @@ function wireCalibrationControls(world, calibration, container) {
         renderWorldStudio();         // exits and settings may have changed
     };
 
-    const applyAll = container.querySelector('#calibrate-apply-all-btn');
+    const applyAll = container.querySelector('#ew-calibrate-apply-all-btn');
     if (applyAll) {
         applyAll.onclick = () => {
             const applied = calibration.reduce((count, finding) =>
@@ -2841,7 +2841,7 @@ function wireCalibrationControls(world, calibration, container) {
         };
     });
 
-    const passResults = container.querySelector('#calibrate-pass-results');
+    const passResults = container.querySelector('#ew-calibrate-pass-results');
     if (!passResults) return;
 
     // Restore the proposals from the last run, so re-rendering the panel (which
@@ -2898,9 +2898,9 @@ function renderCalibrationPassFindings(world, host) {
         <div class="calibration-proposal-head">
             <strong>${experimentalEscapeHTML(CALIBRATION_PASSES[state.pass]?.label || '')} — ${remaining} open · ${applied.size} applied · ${dismissed.size} dismissed${state.note ? ` · ${experimentalEscapeHTML(state.note)}` : ''}</strong>
             <div class="calibration-proposal-actions">
-                ${remaining ? `<button id="calibrate-pass-apply-all" class="btn btn-primary">Apply remaining</button>
-                    <button id="calibrate-pass-dismiss-all" class="btn btn-ghost">Dismiss remaining</button>` : ''}
-                <button id="calibrate-pass-clear" class="btn btn-ghost">Clear proposals</button>
+                ${remaining ? `<button id="ew-calibrate-pass-apply-all" class="btn btn-primary">Apply remaining</button>
+                    <button id="ew-calibrate-pass-dismiss-all" class="btn btn-ghost">Dismiss remaining</button>` : ''}
+                <button id="ew-calibrate-pass-clear" class="btn btn-ghost">Clear proposals</button>
             </div>
         </div>
         <div style="display:flex; flex-direction:column; gap:6px;">
@@ -2929,7 +2929,7 @@ function renderCalibrationPassFindings(world, host) {
         renderWorldStudio();
     };
 
-    const applyAll = host.querySelector('#calibrate-pass-apply-all');
+    const applyAll = host.querySelector('#ew-calibrate-pass-apply-all');
     if (applyAll) {
         applyAll.onclick = () => {
             let count = 0;
@@ -2955,13 +2955,13 @@ function renderCalibrationPassFindings(world, host) {
             renderCalibrationPassFindings(world, host);
         };
     });
-    const dismissAll = host.querySelector('#calibrate-pass-dismiss-all');
+    const dismissAll = host.querySelector('#ew-calibrate-pass-dismiss-all');
     if (dismissAll) dismissAll.onclick = () => {
         remainingIndexes.forEach(index => dismissed.add(index));
         renderCalibrationPassFindings(world, host);
         ExperimentalWorldsHost.notify(`Dismissed ${remainingIndexes.length} proposal${remainingIndexes.length === 1 ? '' : 's'}.`, 'info');
     };
-    const clear = host.querySelector('#calibrate-pass-clear');
+    const clear = host.querySelector('#ew-calibrate-pass-clear');
     if (clear) clear.onclick = () => {
         calibrationPassState = null;
         host.innerHTML = '<div class="form-hint">Proposals cleared. Run a pass whenever you want a fresh set.</div>';
@@ -3041,7 +3041,7 @@ function renderWorldAutonomyHealthResult(world, host) {
 
 function renderWorldAudit() {
     const world = ExperimentalWorldsState.editingWorld;
-    const container = document.getElementById('audit-results-container');
+    const container = document.getElementById('ew-audit-results-container');
     if (!world || !container) return;
 
     const report = validateWorldReferences(world);
@@ -3066,17 +3066,17 @@ function renderWorldAudit() {
         <div style="background:var(--surface2); padding:12px 14px; border-radius:10px; margin-bottom:18px; border:1px solid var(--border);">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
                 <label class="form-label" style="margin:0;">🧮 Model for audits &amp; calibration</label>
-                <button id="structured-model-refresh" class="btn btn-ghost" style="font-size:0.68rem; padding:3px 9px; white-space:nowrap;">↻ Refresh list</button>
+                <button id="ew-structured-model-refresh" class="btn btn-ghost" style="font-size:0.68rem; padding:3px 9px; white-space:nowrap;">↻ Refresh list</button>
             </div>
             <p class="form-hint" style="margin:4px 0 8px;">Used by the Deep Audit, every calibration pass, the chronicle classifier and the World Agent — but never for narration. The list is pulled live from your selected provider and shows only models that report being able to return JSON and are not reasoning models — those spend their whole budget thinking and return nothing usable. Cheapest first. Leave blank to use this world's own model.</p>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                <select id="structured-model-picker" class="form-select" style="flex:1; min-width:200px;">
+                <select id="ew-structured-model-picker" class="form-select" style="flex:1; min-width:200px;">
                     <option value="">Loading provider models…</option>
                 </select>
-                <input type="text" id="structured-model-custom" class="form-input" style="flex:1; min-width:200px;"
+                <input type="text" id="ew-structured-model-custom" class="form-input" style="flex:1; min-width:200px;"
                        placeholder="…or type any OpenRouter model id" value="${experimentalEscapeHTML(activeStructured)}">
             </div>
-            <div class="form-hint" id="structured-model-status" style="margin-top:6px;">Checking which models can do this…</div>
+            <div class="form-hint" id="ew-structured-model-status" style="margin-top:6px;">Checking which models can do this…</div>
         </div>`;
 
     // Calibration: everything the engine can repair on its own, with no API
@@ -3097,7 +3097,7 @@ function renderWorldAudit() {
                     <h3 style="margin:0;">🎛️ Calibrate World</h3>
                     <p class="form-hint" style="margin:4px 0 0;">No API call. Repairs deterministic engine facts and reports new-directory gaps across locations, people, groups and items. Nothing changes until you apply it.</p>
                 </div>
-                ${fixable.length ? `<button id="calibrate-apply-all-btn" class="btn btn-primary" style="white-space:nowrap;">Apply ${fixable.length} fix${fixable.length === 1 ? '' : 'es'}</button>` : ''}
+                ${fixable.length ? `<button id="ew-calibrate-apply-all-btn" class="btn btn-primary" style="white-space:nowrap;">Apply ${fixable.length} fix${fixable.length === 1 ? '' : 'es'}</button>` : ''}
             </div>
             ${calibration.length ? `
                 <details class="world-audit-findings" ${calibration.length <= 8 ? 'open' : ''}>
@@ -3125,7 +3125,7 @@ function renderWorldAudit() {
                         </div>
                         <button class="btn btn-ghost calibrate-pass-run" data-pass="${experimentalEscapeHTML(key)}" style="white-space:nowrap;">Run</button>
                     </div>`).join('')}
-                <div id="calibrate-pass-results" style="margin-top:12px;"></div>
+                <div id="ew-calibrate-pass-results" style="margin-top:12px;"></div>
             </div>
         </div>`;
 
@@ -3134,9 +3134,9 @@ function renderWorldAudit() {
             <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
                 <div><h3 style="margin:0;">🫀 Autonomy Health</h3>
                 <p class="form-hint" style="margin:4px 0 0;">Fast-forward seven days without changing canon. Checks schedule travel, repetition, identity gaps, event collisions and directory integrity.</p></div>
-                <button id="run-autonomy-health-btn" class="btn btn-ghost" style="white-space:nowrap;">Simulate 7 days</button>
+                <button id="ew-run-autonomy-health-btn" class="btn btn-ghost" style="white-space:nowrap;">Simulate 7 days</button>
             </div>
-            <div id="autonomy-health-results"></div>
+            <div id="ew-autonomy-health-results"></div>
         </div>`;
 
     const aiSection = `
@@ -3146,9 +3146,9 @@ function renderWorldAudit() {
                     <h3 style="margin:0;">🤖 AI Deep Audit</h3>
                     <p class="form-hint" style="margin:4px 0 0;">A QA agent reads the complete world directory for semantic problems the lint can't see: geography, containment, travel, people, starting lives, lore and contradictions. Large worlds are safely audited in indexed batches. Each finding is proposed for review—nothing changes without your click.</p>
                 </div>
-                <button id="run-ai-audit-btn" class="btn btn-primary" style="white-space:nowrap;">✨ Run</button>
+                <button id="ew-run-ai-audit-btn" class="btn btn-primary" style="white-space:nowrap;">✨ Run</button>
             </div>
-            <div id="ai-audit-results" style="margin-top:14px;"></div>
+            <div id="ew-ai-audit-results" style="margin-top:14px;"></div>
         </div>`;
 
     if (report.broken.length === 0 && lint.length === 0) {
@@ -3158,12 +3158,12 @@ function renderWorldAudit() {
                 <h3>Structure is Healthy</h3>
                 <p style="color:var(--text-3);">All references linked, every room reachable, every secret complete.</p>
             </div>${directoryHealthHtml}${structuredSection}${calibrationSection}${autonomySection}${aiSection}`;
-        const btn = document.getElementById('run-ai-audit-btn');
+        const btn = document.getElementById('ew-run-ai-audit-btn');
         if (btn) btn.onclick = runAIWorldAudit;
         wireWorldMigrationControls(world);
         wireCalibrationControls(world, calibration, container);
-        document.getElementById('run-autonomy-health-btn')?.addEventListener('click', () =>
-            renderWorldAutonomyHealthResult(world, document.getElementById('autonomy-health-results')));
+        document.getElementById('ew-run-autonomy-health-btn')?.addEventListener('click', () =>
+            renderWorldAutonomyHealthResult(world, document.getElementById('ew-autonomy-health-results')));
         return;
     }
 
@@ -3200,12 +3200,12 @@ function renderWorldAudit() {
         ${aiSection}
     `;
 
-    const aiBtn = document.getElementById('run-ai-audit-btn');
+    const aiBtn = document.getElementById('ew-run-ai-audit-btn');
     if (aiBtn) aiBtn.onclick = runAIWorldAudit;
     wireWorldMigrationControls(world);
     wireCalibrationControls(world, calibration, container);
-    document.getElementById('run-autonomy-health-btn')?.addEventListener('click', () =>
-        renderWorldAutonomyHealthResult(world, document.getElementById('autonomy-health-results')));
+    document.getElementById('ew-run-autonomy-health-btn')?.addEventListener('click', () =>
+        renderWorldAutonomyHealthResult(world, document.getElementById('ew-autonomy-health-results')));
 
     container.querySelectorAll('.fix-ref-btn').forEach(btn => {
         btn.onclick = () => {
@@ -3353,8 +3353,8 @@ function parseAuditFindings(raw) {
 
 async function runAIWorldAudit() {
     const world = ExperimentalWorldsState.editingWorld;
-    const btn = document.getElementById('run-ai-audit-btn');
-    const results = document.getElementById('ai-audit-results');
+    const btn = document.getElementById('ew-run-ai-audit-btn');
+    const results = document.getElementById('ew-ai-audit-results');
     if (!world || !results) return;
     if (!ExperimentalWorldsHost.hasApiCredentials()) return ExperimentalWorldsHost.notify('API Key missing (Settings).', 'error');
 
@@ -3903,22 +3903,22 @@ let currentEpisodicStore = null; // live array backing the episodic inspector ta
 
 function setupVectorMemoryViewerEvents() {
     const openBtn = document.getElementById('open-vector-memory-btn');
-    const worldOpenBtn = document.getElementById('world-open-vector-memory-btn');
-    const closeBtn = document.getElementById('close-vector-memory-btn');
-    const closeFtBtn = document.getElementById('close-vector-memory-ft-btn');
-    const overlay = document.getElementById('vector-memory-modal-overlay');
+    const worldOpenBtn = document.getElementById('ew-world-open-vector-memory-btn');
+    const closeBtn = document.getElementById('ew-close-vector-memory-btn');
+    const closeFtBtn = document.getElementById('ew-close-vector-memory-ft-btn');
+    const overlay = document.getElementById('ew-vector-memory-modal-overlay');
     
-    const tabEpisodic = document.getElementById('vector-tab-episodic');
-    const tabBiography = document.getElementById('vector-tab-biography');
-    const tabCognition = document.getElementById('vector-tab-cognition');
-    const tabLocations = document.getElementById('vector-tab-locations');
-    const tabUnresolved = document.getElementById('vector-tab-unresolved');
-    const characterFilter = document.getElementById('vector-character-filter');
-    const deleteAllBtn = document.getElementById('vector-delete-all-btn');
-    const vectorizeListedBtn = document.getElementById('vectorize-listed-btn');
+    const tabEpisodic = document.getElementById('ew-vector-tab-episodic');
+    const tabBiography = document.getElementById('ew-vector-tab-biography');
+    const tabCognition = document.getElementById('ew-vector-tab-cognition');
+    const tabLocations = document.getElementById('ew-vector-tab-locations');
+    const tabUnresolved = document.getElementById('ew-vector-tab-unresolved');
+    const characterFilter = document.getElementById('ew-vector-character-filter');
+    const deleteAllBtn = document.getElementById('ew-vector-delete-all-btn');
+    const vectorizeListedBtn = document.getElementById('ew-vectorize-listed-btn');
     
-    const searchBtn = document.getElementById('vector-test-search-btn');
-    const queryInput = document.getElementById('vector-test-query');
+    const searchBtn = document.getElementById('ew-vector-test-search-btn');
+    const queryInput = document.getElementById('ew-vector-test-query');
 
     if (openBtn) {
         openBtn.onclick = () => {
@@ -3993,7 +3993,7 @@ function setupVectorMemoryViewerEvents() {
 
     if (deleteAllBtn) {
         deleteAllBtn.onclick = async () => {
-            const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
+            const isWorld = !document.getElementById('ew-world-play-view').classList.contains('hidden');
             if (!isWorld || !['episodic', 'cognition', 'unresolved'].includes(currentVectorTab)) {
                 return ExperimentalWorldsHost.notify('This view has no independently stored records to delete.', 'error');
             }
@@ -4022,7 +4022,7 @@ function setupVectorMemoryViewerEvents() {
 
     if (vectorizeListedBtn) {
         vectorizeListedBtn.onclick = async () => {
-            const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
+            const isWorld = !document.getElementById('ew-world-play-view').classList.contains('hidden');
             const sess = getCurrentWorldSession();
             const graph = isWorld && window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess?.sidecar);
             if (!graph || !['episodic', 'cognition', 'locations', 'unresolved'].includes(currentVectorTab)) {
@@ -4046,7 +4046,7 @@ function setupVectorMemoryViewerEvents() {
             try {
                 const result = await vectorizeSidecarMemoryRecords(records, { onProgress: progress => {
                     vectorizeListedBtn.textContent = `Vectorizing ${progress.completed}/${progress.attempted}…`;
-                    const status = document.getElementById('vector-memory-status');
+                    const status = document.getElementById('ew-vector-memory-status');
                     if (status) status.textContent = `Vectorization progress: ${progress.completed}/${progress.attempted}`;
                 } });
                 await ExperimentalWorldsHost.persist();
@@ -4072,13 +4072,13 @@ function setupVectorMemoryViewerEvents() {
     }
 
     // Force Archive Now — bypass 8-turn wait and immediately consolidate all history
-    const forceArchiveBtn = document.getElementById('force-archive-now-btn');
+    const forceArchiveBtn = document.getElementById('ew-force-archive-now-btn');
     if (forceArchiveBtn) {
         forceArchiveBtn.onclick = async () => {
             forceArchiveBtn.disabled = true;
             forceArchiveBtn.textContent = '⏳ Archiving...';
 
-            const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
+            const isWorld = !document.getElementById('ew-world-play-view').classList.contains('hidden');
             try {
                 if (isWorld) {
                     const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
@@ -4126,11 +4126,11 @@ function setupVectorMemoryViewerEvents() {
 
 function updateVectorTabUI() {
     const tabs = {
-        episodic: document.getElementById('vector-tab-episodic'),
-        biography: document.getElementById('vector-tab-biography'),
-        cognition: document.getElementById('vector-tab-cognition'),
-        locations: document.getElementById('vector-tab-locations'),
-        unresolved: document.getElementById('vector-tab-unresolved')
+        episodic: document.getElementById('ew-vector-tab-episodic'),
+        biography: document.getElementById('ew-vector-tab-biography'),
+        cognition: document.getElementById('ew-vector-tab-cognition'),
+        locations: document.getElementById('ew-vector-tab-locations'),
+        unresolved: document.getElementById('ew-vector-tab-unresolved')
     };
     Object.entries(tabs).forEach(([key, tab]) => {
         if (!tab) return;
@@ -4140,9 +4140,9 @@ function updateVectorTabUI() {
         tab.style.borderBottom = active ? '2px solid var(--accent)' : 'none';
     });
 
-    const characterFilter = document.getElementById('vector-character-filter');
+    const characterFilter = document.getElementById('ew-vector-character-filter');
     if (!characterFilter) return;
-    const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
+    const isWorld = !document.getElementById('ew-world-play-view').classList.contains('hidden');
     characterFilter.classList.toggle('hidden', currentVectorTab !== 'cognition' || !isWorld);
     if (currentVectorTab !== 'cognition' || !isWorld) return;
 
@@ -4159,12 +4159,12 @@ function updateVectorTabUI() {
 }
 
 async function renderVectorMemoryList(filterQuery = "") {
-    const listContainer = document.getElementById('vector-memory-list');
+    const listContainer = document.getElementById('ew-vector-memory-list');
     if (!listContainer) return;
     
     listContainer.innerHTML = `<div style="text-align:center; padding:20px; color:var(--text-3);">Loading memories...</div>`;
     
-    const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
+    const isWorld = !document.getElementById('ew-world-play-view').classList.contains('hidden');
     let candidates = [];
     
     // Track the live array backing the episodic tab so cards can edit/delete entries
@@ -4197,7 +4197,7 @@ async function renderVectorMemoryList(filterQuery = "") {
     } else if (currentVectorTab === 'cognition' && isWorld) {
         const sess = getCurrentWorldSession();
         const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess?.sidecar);
-        const characterId = document.getElementById('vector-character-filter')?.value || '';
+        const characterId = document.getElementById('ew-vector-character-filter')?.value || '';
         candidates = (graph?.cognition || [])
             .filter(memory => memory.status !== 'superseded' && (!characterId || memory.characterId === characterId))
             .map(memory => ({
@@ -4294,12 +4294,12 @@ async function renderVectorMemoryList(filterQuery = "") {
         }
     }
     
-    const statusEl = document.getElementById('vector-memory-status');
+    const statusEl = document.getElementById('ew-vector-memory-status');
     if (statusEl && isWorld) {
         const sess = getCurrentWorldSession();
         const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess?.sidecar);
-        const scoped = currentVectorTab === 'cognition' && document.getElementById('vector-character-filter')?.value
-            ? candidates.filter(candidate => candidate.ref?.characterId === document.getElementById('vector-character-filter').value) : candidates;
+        const scoped = currentVectorTab === 'cognition' && document.getElementById('ew-vector-character-filter')?.value
+            ? candidates.filter(candidate => candidate.ref?.characterId === document.getElementById('ew-vector-character-filter').value) : candidates;
         const missing = scoped.filter(candidate => !Array.isArray(candidate.ref?.embedding)).length;
         const stale = scoped.filter(candidate => candidate.ref?.embeddingNamespace && candidate.ref.embeddingNamespace !== ExperimentalWorldsVectorMemory.namespace()).length;
         const prerequisites = graph ? `Prerequisites: ${graph.worldHistory.filter(record => Array.isArray(record.embedding)).length}/${graph.worldHistory.length} World History and ${graph.episodes.filter(record => Array.isArray(record.embedding)).length}/${graph.episodes.length} Episodes embedded.` : '';

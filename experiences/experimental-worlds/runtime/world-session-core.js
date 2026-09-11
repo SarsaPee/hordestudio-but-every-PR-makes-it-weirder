@@ -563,7 +563,7 @@ function processStructuredActions(args, explicitWorld = null, explicitSession = 
             }
             world.locations.push(newLoc);
             ExperimentalWorldsHost.notify(`🗺️ New location discovered: ${newLoc.name}`, 'success');
-            if (document.getElementById('w-locations-list') && typeof renderWorldLocations === 'function' && ExperimentalWorldsState.editingWorld?.id === world.id) {
+            if (document.getElementById('ew-w-locations-list') && typeof renderWorldLocations === 'function' && ExperimentalWorldsState.editingWorld?.id === world.id) {
                 renderWorldLocations();
             }
         });
@@ -1094,7 +1094,7 @@ function processStructuredActions(args, explicitWorld = null, explicitSession = 
                 
                 ExperimentalWorldsHost.notify(`New character introduced: ${newNpc.name}`, 'success');
                 // Re-render studio entities if visible
-                if (typeof renderWorldEntities === 'function' && document.getElementById('w-entities-list')) {
+                if (typeof renderWorldEntities === 'function' && document.getElementById('ew-w-entities-list')) {
                     renderWorldEntities();
                 }
             }
@@ -1245,8 +1245,8 @@ async function renderWorldMap() {
     const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
     if (!world) return;
 
-    const modal = document.getElementById('map-modal');
-    const container = document.getElementById('map-container');
+    const modal = document.getElementById('ew-map-modal');
+    const container = document.getElementById('ew-map-container');
     modal.classList.remove('hidden');
 
     try {
