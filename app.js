@@ -38674,6 +38674,14 @@ async function companionProviderHttpError(response, providerId, model) {
         || `Request failed (${response.status})`).replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]').slice(0, 800);
     const requestId = response.headers.get('x-request-id')
         || response.headers.get('x-openrouter-request-id') || '';
+    const retryAfterRaw = response.headers.get('retry-after') || '';
+    const retryAfterSeconds = /^\d+(?:\.\d+)?$/.test(retryAfterRaw.trim())
+        ? Number(retryAfterRaw) : 0;
+    const retryAfterDate = retryAfterSeconds ? 0 : Date.parse(retryAfterRaw);
+    const retryAfterAt = retryAfterSeconds > 0
+        ? Date.now() + Math.min(60 * 60 * 1000, Math.round(retryAfterSeconds * 1000))
+        : (Number.isFinite(retryAfterDate) && retryAfterDate > Date.now()
+            ? Math.min(Date.now() + 60 * 60 * 1000, retryAfterDate) : 0);
     const provider = normalizedProviderId(providerId);
     const readable = humanizeApiError(new Error(message), provider);
     const error = new Error(`${providerDisplayName(provider)} rejected ${model || 'the selected model'} (HTTP ${response.status})${requestId ? ` · request ${requestId}` : ''}: ${readable}`);
@@ -38682,7 +38690,8 @@ async function companionProviderHttpError(response, providerId, model) {
         model: String(model || ''),
         status: response.status,
         requestId: requestId || null,
-        providerCode: String(payload?.error?.code || payload?.code || '') || null
+        providerCode: String(payload?.error?.code || payload?.code || '') || null,
+        retryAfterAt: retryAfterAt || null
     };
     return error;
 }
@@ -49603,9 +49612,11 @@ async function processCompanionAgency(nowMs = Date.now()) {
                 // still receive every now-read message on the retry.
                 const failure = humanizeApiError(error, companionTextProviderId(companion))
                     .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]').slice(0, 500);
+                const retryAfterAt = Number(error?.hordeProviderDiagnostic?.retryAfterAt) || 0;
+                const retryAt = retryAfterAt > nowMs ? retryAfterAt : nowMs + 2 * 60 * 1000;
                 readableBatch.forEach(message => {
                     message.awaitingReply = true;
-                    message.replyDueAt = nowMs + 2 * 60 * 1000;
+                    message.replyDueAt = retryAt;
                     message.deliveryError = failure;
                 });
                 console.error('Deferred companion reply failed:', error);
