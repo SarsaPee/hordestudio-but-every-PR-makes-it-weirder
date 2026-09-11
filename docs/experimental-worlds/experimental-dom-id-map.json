@@ -2106,6 +2106,7 @@
       "source": "w-model-detail-context",
       "namespaced": "ew-w-model-detail-context",
       "kinds": [
+        "runtime-getElementById",
         "shell"
       ]
     },
@@ -2113,6 +2114,7 @@
       "source": "w-model-detail-json",
       "namespaced": "ew-w-model-detail-json",
       "kinds": [
+        "runtime-getElementById",
         "shell"
       ]
     },
@@ -2120,6 +2122,7 @@
       "source": "w-model-detail-price",
       "namespaced": "ew-w-model-detail-price",
       "kinds": [
+        "runtime-getElementById",
         "shell"
       ]
     },
@@ -2127,6 +2130,7 @@
       "source": "w-model-detail-tools",
       "namespaced": "ew-w-model-detail-tools",
       "kinds": [
+        "runtime-getElementById",
         "shell"
       ]
     },
@@ -2134,6 +2138,7 @@
       "source": "w-model-info-badges",
       "namespaced": "ew-w-model-info-badges",
       "kinds": [
+        "runtime-getElementById",
         "shell"
       ]
     },
@@ -2141,6 +2146,7 @@
       "source": "w-model-info-card",
       "namespaced": "ew-w-model-info-card",
       "kinds": [
+        "runtime-getElementById",
         "shell"
       ]
     },
@@ -2148,6 +2154,7 @@
       "source": "w-model-info-id",
       "namespaced": "ew-w-model-info-id",
       "kinds": [
+        "runtime-getElementById",
         "shell"
       ]
     },
@@ -2155,6 +2162,7 @@
       "source": "w-model-info-name",
       "namespaced": "ew-w-model-info-name",
       "kinds": [
+        "runtime-getElementById",
         "shell"
       ]
     },
@@ -2162,6 +2170,7 @@
       "source": "w-model-info-params-list",
       "namespaced": "ew-w-model-info-params-list",
       "kinds": [
+        "runtime-getElementById",
         "shell"
       ]
     },
@@ -2169,6 +2178,7 @@
       "source": "w-model-verification-badge",
       "namespaced": "ew-w-model-verification-badge",
       "kinds": [
+        "runtime-getElementById",
         "shell"
       ]
     },

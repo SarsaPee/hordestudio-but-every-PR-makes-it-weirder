@@ -14,4 +14,5 @@ scratch/simulate.py
 scratch/verify_*.py
 
 # Optional platform-specific local Node runtime for VH background simulation
-runtime/
+# (root-anchored: must not ignore experiences/*/runtime/ implementation units)
+/runtime/

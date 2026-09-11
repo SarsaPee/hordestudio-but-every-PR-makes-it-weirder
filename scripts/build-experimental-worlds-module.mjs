@@ -31,6 +31,7 @@ export const coreSources = Object.freeze([
     'experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js',
     'experiences/experimental-worlds/runtime/world-message-input.js',
     'experiences/experimental-worlds/runtime/dossier-claims.js',
+    'experiences/experimental-worlds/runtime/world-host-port-core.js',
     'experiences/experimental-worlds/mechanics/world-mechanics.js',
     'experiences/experimental-worlds/visuals/world-portrait-prompt.js',
     'experiences/experimental-worlds/visuals/world-visual-media-core.js',

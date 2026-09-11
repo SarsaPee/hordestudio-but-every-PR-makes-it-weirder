@@ -167,7 +167,7 @@ function setupWorldStudioTabs() {
             
             panels.forEach(p => {
                 p.classList.add('hidden');
-                if (p.id === 'tab-' + target) p.classList.remove('hidden');
+                if (p.id === 'ew-tab-' + target) p.classList.remove('hidden');
             });
 
             // Large authored worlds can contain hundreds of locations and NPCs.
