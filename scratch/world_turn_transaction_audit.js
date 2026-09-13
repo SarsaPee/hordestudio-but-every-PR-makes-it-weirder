@@ -67,7 +67,33 @@ assert(/rerollTakeIndex = Array\.isArray\(lastMsg\.versions\) \? lastMsg\.versio
     && /takeIndex: isReroll \? rerollTakeIndex : 0,/.test(worldPlaySource)
     && /sourceTurnId: isReroll \? rerollSourceTurnId : undefined,/.test(worldPlaySource),
     'a reroll must carry its new take identity through the Reader and Sidecar pipeline');
-assert(/experimental-worlds-core\.generated\.mjs\?v=20260913-reroll-pipeline-2/.test(hostAdapterSource),
-    'the host adapter must load the complete reroll pipeline bundle rather than a cached older core');
+assert(!/worldVoiceColorSpeaker|recordWorldVoiceColorSpeaker|worldVoiceColorSpeakers/.test(worldPlaySource),
+    'voice colours must not become cross-line or cross-turn speaker identities');
+assert(/function worldTaggedDialogueHasUnknownSpeakerCue\(paragraph, quoteEnd\)/.test(worldPlaySource),
+    'an explicitly described unknown speaker must not inherit a preceding canonical portrait');
+assert(/AVAILABLE LOCAL CANONICAL CAST — NOT PRESENT YET/.test(worldPlaySource)
+    && /localCastOptions/.test(worldPlaySource),
+    'the narrator must receive a small exact-id local cast deck without treating it as committed presence');
+assert(/function narratorWorldQuestionTools\(\)/.test(worldPlaySource)
+    && /name: 'ask_world_context'/.test(worldPlaySource)
+    && /answerNarratorWorldQuestion\(world, sess/.test(worldPlaySource),
+    'the Sidecar narrator must have a bounded read-only World-question loop');
+assert(/role: 'tool', tool_call_id: call\.id/.test(worldPlaySource)
+    && /\[WORLD CONTEXT ANSWER RECEIVED\]/.test(worldPlaySource),
+    'a narrator question and its host answer must be returned in the same model conversation before prose');
+const worldProtocolSource = require('node:fs').readFileSync(
+    'experiences/experimental-worlds/runtime/world-protocol-core.js', 'utf8'
+);
+assert(/scenePulseSourceIdentityProjection\(rawScenePulse = \{\}, readerEnvelope = \{\}\)/.test(worldProtocolSource),
+    'ScenePulse source projection must preserve exact Reader identities for its name-addressable view');
+assert(/scenePulseSourceIdentityProjection\(envelope\.scenePulse, envelope\)/.test(worldProtocolSource),
+    'accepted ScenePulse handoffs must project Reader candidate ids to source-visible cards');
+assert(/available_local_cast/.test(worldProtocolSource),
+    'the Sidecar narrator context must expose optional local canonical cast with stable ids');
+assert(/resolvedQuestionAnswers/.test(worldProtocolSource)
+    && /WORLD QUESTIONS AND ANSWERS/.test(worldProtocolSource),
+    'resolved ScenePulse and Sidecar Q/A must be carried into the next narrator packet');
+assert(/experimental-worlds-core\.generated\.mjs\?v=20260913-world-question-loop-5/.test(hostAdapterSource),
+    'the host adapter must load the World-question loop bundle rather than a cached older core');
 
 console.log('✓ World turn receipt and cross-timeline transaction guards are present');

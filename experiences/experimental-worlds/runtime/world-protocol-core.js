@@ -1447,12 +1447,12 @@ function buildSidecarCanonicalReferenceManifest(world, sess, evidenceText = '') 
                 status: String(runtime.status || entity.status || 'active'),
                 locationId: String(runtime.location || entity.startLocation || ''),
                 homeLocationId: String(entity.homeLocation || entity.homeLocationId || ''),
-                sessionOwned: entity.sessionOrigin === sess.id
+                sessionOwned: entity.sessionOrigin === sess.id,
+                role: String(entity.role || entity.archetype || '').slice(0, 260),
+                description: String(entity.description || entity.appearance || '').slice(0, 700),
+                persona: String(entity.persona || '').slice(0, 1100)
             };
-        })
-        .sort((a, b) => Number(b.present) - Number(a.present)
-            || Number(b.referenced) - Number(a.referenced)
-            || a.name.localeCompare(b.name));
+        });
     const locationRows = (Array.isArray(view?.locations) ? view.locations : [])
         .filter(location => location?.id && location?.name)
         .map(location => {
@@ -1469,6 +1469,18 @@ function buildSidecarCanonicalReferenceManifest(world, sess, evidenceText = '') 
         .sort((a, b) => Number(b.current) - Number(a.current)
             || Number(b.referenced) - Number(a.referenced)
             || a.name.localeCompare(b.name));
+    const narratedLocationIds = new Set(locationRows.filter(location => location.current || location.referenced).map(location => location.id));
+    entityRows.forEach(entity => {
+        entity.sceneCandidate = entity.present || entity.referenced || narratedLocationIds.has(entity.locationId) || narratedLocationIds.has(entity.homeLocationId);
+        // Local/present dossiers are evidence for an identity question. An
+        // unrelated registry person's ID/name remains searchable, but their
+        // biography is not silently offered as a narrator answer.
+        if (!entity.sceneCandidate) { entity.role = ''; entity.description = ''; entity.persona = ''; }
+    });
+    entityRows.sort((a, b) => Number(b.present) - Number(a.present)
+        || Number(b.referenced) - Number(a.referenced)
+        || Number(b.sceneCandidate) - Number(a.sceneCandidate)
+        || a.name.localeCompare(b.name));
     const entityLimit = 400;
     const locationLimit = 600;
     return {
@@ -1485,7 +1497,7 @@ function buildSidecarCanonicalReferenceManifest(world, sess, evidenceText = '') 
             entities: Math.max(0, entityRows.length - entityLimit),
             locations: Math.max(0, locationRows.length - locationLimit)
         },
-        instruction: 'Resolve authored names to these canonical IDs. A known off-scene entity is not a new entity. Never invent an ID or re-introduce a canonical record.'
+        instruction: 'Resolve an unnamed narrated person only after a read-only evidence lookup returns a relevant dossier. A known off-scene entity is not a new entity. Never invent an ID, fuzzy-name-match, or re-introduce a canonical record.'
     };
 }
 
@@ -2578,6 +2590,11 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
     const scenePulseRelationships = scenePulseRelationshipPromptProjection(sess, castIds, controlledEntityId);
     add('agent_character_tracker', 'ACTIVE CAST', jsonText({
         present_cast: (opt.presentNPCs || []).map(npc => npc && npc.name).filter(Boolean),
+        available_local_cast: (Array.isArray(opt.localCastOptions) ? opt.localCastOptions : []).map(npc => ({
+            id: String(npc?.id || ''), name: String(npc?.name || ''), role: String(npc?.role || ''),
+            description: String(npc?.description || ''), persona: String(npc?.persona || ''),
+            locationId: String(npc?.locationId || '')
+        })).filter(npc => npc.id && npc.name),
         controlled_entity: controlledEntityId,
         activities: packet.activities || null,
         relationships: relationships,
@@ -2586,7 +2603,7 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
         // source reading, never a replacement for the current meter value.
         scenePulse_relationships: scenePulseRelationships,
         scenePulse_relationship_note: 'ScenePulse meters are current relationship presentation state. lastMeterDeltas are signed changes from the prior accepted source reading; use them as movement, never as the current value.',
-        presence_note: 'Committed presence only. A mentioned destination is not arrival; a nearby voice is not physical presence.'
+        presence_note: 'Committed presence only. A local-cast option is not present until the narration clearly stages them and the hidden handoff records their exact id. If no option fits, a genuinely new temporary person is valid and must not borrow an existing id.'
     }), 1, 2200);
 
     // FF quest tracker — canonical quest state, not legacy prompt formatting.
@@ -2704,9 +2721,13 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
     add('engine_events', 'ENGINE EVENTS — WEAVE INTO THIS BEAT', opt.engineEventsPrompt, 1, 1200);
     add('memories', 'SEMANTIC RECALL — derived memory, never objective canon', jsonText(opt.recall), 2, 3000);
     add('memory_summaries', 'VALIDATED MEMORY SUMMARIES', jsonText(opt.replacementMemory), 3, 2200);
-    add('questions', 'OPEN QUESTIONS', (packet.pendingQuestions || []).length
-        ? 'Unresolved authorial questions; stay consistent with them and answer them in play:\n' + jsonText(packet.pendingQuestions)
-        : '', 2, 1400);
+    const narratorQuestionContext = {
+        answered: Array.isArray(packet.resolvedQuestionAnswers) ? packet.resolvedQuestionAnswers : [],
+        open: Array.isArray(packet.pendingQuestions) ? packet.pendingQuestions : []
+    };
+    add('questions', 'WORLD QUESTIONS AND ANSWERS', narratorQuestionContext.answered.length || narratorQuestionContext.open.length
+        ? 'These are ScenePulse/Sidecar handoff questions for the next authored beat. An answered entry is grounded context: use its answer, including an explicit no-answer/improvise instruction. An open entry is a focused uncertainty, not permission to invent canon.\n' + jsonText(narratorQuestionContext)
+        : '', 2, 1800);
     const obligations = {
         reconciliation_backlog: packet.reconciliationBacklog || [],
         pending_requests: packet.pendingRequests || [],
@@ -3068,6 +3089,23 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         && !SIDECAR_CORE_QUESTION_IDS.includes(question.id)
         && ['narrator', 'user'].includes(question.target || 'narrator')).slice(-8)
         .map(question => ({ id: question.id, prompt: question.prompt, target: question.target, priority: question.priority || question.pressure || 'low', blocking: question.blocking === true, origin: question.origin, evidence: String(question.evidence || '').slice(0, 800) }));
+    // A resolved ScenePulse/Sidecar question is useful narrator continuity,
+    // not a generic memory rewrite. Keep the exact question beside the answer
+    // so the next turn knows what the answer refers to and can distinguish an
+    // explicit "no canonical answer — improvise" from silence.
+    const resolvedQuestionAnswers = (protocol?.questions || []).filter(question =>
+        ['resolved', 'deferred'].includes(question.status)
+        && ['narrator', 'user'].includes(question.target || 'narrator')
+        && String(question.answer || '').trim()
+    ).slice(-8).map(question => ({
+        id: question.id,
+        question: String(question.prompt || '').slice(0, 1200),
+        answer: String(question.answer || '').slice(0, 3000),
+        status: question.status,
+        resolutionType: String(question.resolutionType || '').slice(0, 120),
+        origin: question.origin || 'sidecar',
+        evidence: String(question.evidence || '').slice(0, 800)
+    }));
     const reconciliationBacklog = (protocol?.turns || [])
         .filter(turn => ['reconciliation_pending', 'reconciliation_failed'].includes(turn.status)
             && turn.status !== 'superseded')
@@ -3231,6 +3269,7 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         acceptedPlayerDetails: sidecarHandoffSection(handoff, 'ACCEPTED PLAYER DETAILS').slice(0, 2400),
         coreReview: protocol?.coreAnswers || {},
         pendingQuestions: questions,
+        resolvedQuestionAnswers,
         reconciliationBacklog,
         pendingRequests: (protocol?.requests || []).filter(request => request.status === 'open').slice(-8)
             .map(request => ({ id: request.id, text: request.text, origin: request.origin })),
@@ -5323,6 +5362,79 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
         coverage,
         metadata: experimentalIsPlainObject(value('metadata')) ? experimentalSafeJsonClone(value('metadata')) : {}
     };
+}
+
+// The vendored ScenePulse panel is name-addressable at its final view filter:
+// `charactersPresent` contains display labels, while an optional compact id on
+// a character card preserves identity through an alias or name reveal. The
+// Worlds Reader correctly uses opaque candidate ids in its scene roster, so a
+// direct handoff such as `cand_greeter` alongside a card named "Registration
+// Greeter" is otherwise filtered out before the panel can render it.
+//
+// Project this at the source-render boundary only. It is deliberately an
+// exact, one-to-one join against the same Reader packet's character-intelligence
+// roster: no World lookup, no fuzzy naming, no candidate promotion, and no
+// mutation of the persisted Reader evidence. Ambiguity remains visible as an
+// unresolved source card rather than being assigned to a similarly named NPC.
+function scenePulseSourceIdentityProjection(rawScenePulse = {}, readerEnvelope = {}) {
+    const scenePulse = normalizeSidecarScenePulseShape(rawScenePulse);
+    const identities = Array.isArray(readerEnvelope?.characterIntelligence)
+        ? readerEnvelope.characterIntelligence : [];
+    const normalizedName = value => String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+    const stableIdentity = entry => String(entry?.subjectRef || entry?.candidateId || entry?.characterId
+        || entry?.character_id || entry?.id || '').trim().slice(0, 180);
+    const byId = new Map();
+    const byName = new Map();
+    identities.forEach(entry => {
+        const id = stableIdentity(entry);
+        const name = String(entry?.name || entry?.label || '').trim().slice(0, 240);
+        if (!id || !name) return;
+        // One source id must resolve to one source name. Ignore malformed
+        // duplicate ids instead of silently selecting whichever arrived last.
+        if (!byId.has(id)) byId.set(id, { id, name });
+        const key = normalizedName(name);
+        if (!key) return;
+        const prior = byName.get(key);
+        if (!prior) byName.set(key, { id, name, ambiguous: false });
+        else if (prior.id !== id) byName.set(key, { id: '', name: '', ambiguous: true });
+    });
+    if (!byId.size) return scenePulse;
+    const exactIdentityForCard = card => {
+        const explicit = String(card?.characterId || card?.character_id || card?.candidateId
+            || card?.candidate_id || card?.id || card?.subjectRef || card?.subject_ref || '').trim();
+        if (explicit && byId.has(explicit)) return byId.get(explicit);
+        const named = byName.get(normalizedName(card?.name || card?.label));
+        return named && !named.ambiguous && named.id ? named : null;
+    };
+    if (Array.isArray(scenePulse.characters)) {
+        scenePulse.characters = scenePulse.characters.map(card => {
+            if (!experimentalIsPlainObject(card)) return card;
+            const identity = exactIdentityForCard(card);
+            if (!identity) return card;
+            const explicit = String(card.characterId || card.character_id || card.candidateId
+                || card.candidate_id || card.id || card.subjectRef || card.subject_ref || '').trim();
+            if (explicit) return card;
+            const projected = { ...card, characterId: identity.id };
+            if (/^cand_/i.test(identity.id)) projected.candidateId = identity.id;
+            return projected;
+        });
+    }
+    if (Array.isArray(scenePulse.charactersPresent)) {
+        scenePulse.charactersPresent = scenePulse.charactersPresent.map(member => {
+            const rawId = experimentalIsPlainObject(member)
+                ? String(member.characterId || member.character_id || member.candidateId || member.candidate_id || member.id || '').trim()
+                : String(member || '').trim();
+            const identity = byId.get(rawId);
+            // Source ScenePulse's present-set is display-name based. Preserve
+            // the opaque id beside structured entries where one was supplied;
+            // scalar source rosters must become the exact Reader label.
+            if (!identity) return member;
+            return experimentalIsPlainObject(member)
+                ? { ...member, name: String(member.name || member.label || identity.name).trim() || identity.name, characterId: rawId }
+                : identity.name;
+        });
+    }
+    return scenePulse;
 }
 
 function parseSidecarReaderOutput(content, fallback = {}, defaults = {}) {
@@ -8202,7 +8314,8 @@ function scenePulseProvisionalHandoff(world, sess) {
     // A pending delta merges onto the last accepted live scene only. The
     // sealed tour fixture is never a base for live provisional data.
     const prior = base?.status === 'accepted_live' && experimentalIsPlainObject(base.scenePulse) ? base.scenePulse : {};
-    const scenePulse = normalizeSidecarScenePulseShape(sidecarMergeScenePulse(prior, rawDelta));
+    const readerEnvelope = normalizeSidecarReaderEnvelope(packet);
+    const scenePulse = scenePulseSourceIdentityProjection(sidecarMergeScenePulse(prior, rawDelta), readerEnvelope);
     return Object.freeze({
         ...base,
         id: `scenepulse-pending-${pending.turnId}`,
@@ -8269,7 +8382,7 @@ function scenePulseAcceptedHandoff(world, sess) {
     // scalar witness in an older settled packet remains visible to the
     // upstream renderer without mutating its raw evidence record.
     const settledScenePulse = experimentalIsPlainObject(envelope?.scenePulse)
-        ? normalizeSidecarScenePulseShape(envelope.scenePulse) : null;
+        ? scenePulseSourceIdentityProjection(envelope.scenePulse, envelope) : null;
     // attachSidecarReaderSnapshot already materializes compact deltas. Do not
     // apply meterDeltas again at render time: that would double an accepted
     // relationship change on every redraw.
@@ -8284,7 +8397,7 @@ function scenePulseAcceptedHandoff(world, sess) {
         const rawReaderEnvelope = sidecarReaderSnapshotRawEnvelope(snapshot, sourceTurn);
         const rawDelta = experimentalIsPlainObject(rawReaderEnvelope?.scenePulse) ? rawReaderEnvelope.scenePulse : {};
         const storedProjection = experimentalIsPlainObject(snapshot.envelope?.scenePulse)
-            ? normalizeSidecarScenePulseShape(snapshot.envelope.scenePulse) : {};
+            ? scenePulseSourceIdentityProjection(snapshot.envelope.scenePulse, snapshot.envelope) : {};
         const projection = storedProjection;
         const priorSnapshot = index > 0 ? snapshots[index - 1] : null;
         const priorTurn = priorSnapshot && (protocol.turns || []).find(turn => String(turn?.id || '') === String(priorSnapshot.turnId || ''));
