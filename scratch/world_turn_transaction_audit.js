@@ -63,7 +63,11 @@ assert(/const staleText = aiMsgDiv\.querySelector\('\.msg-text'\);[\s\S]*?staleT
     'a reroll must clear superseded prose before its replacement narration streams');
 assert(/if \(!sidecarMode && !streamUsesCommittedTurn\) aiMsgDiv\.remove\(\);/.test(worldPlaySource),
     'the legacy streaming cleanup must never remove a committed reroll card');
-assert(/experimental-worlds-core\.generated\.mjs\?v=20260913-reroll-takes-1/.test(hostAdapterSource),
-    'the host adapter must load the reroll replacement bundle rather than a cached older core');
+assert(/rerollTakeIndex = Array\.isArray\(lastMsg\.versions\) \? lastMsg\.versions\.length : 1;/.test(worldPlaySource)
+    && /takeIndex: isReroll \? rerollTakeIndex : 0,/.test(worldPlaySource)
+    && /sourceTurnId: isReroll \? rerollSourceTurnId : undefined,/.test(worldPlaySource),
+    'a reroll must carry its new take identity through the Reader and Sidecar pipeline');
+assert(/experimental-worlds-core\.generated\.mjs\?v=20260913-reroll-pipeline-2/.test(hostAdapterSource),
+    'the host adapter must load the complete reroll pipeline bundle rather than a cached older core');
 
 console.log('✓ World turn receipt and cross-timeline transaction guards are present');

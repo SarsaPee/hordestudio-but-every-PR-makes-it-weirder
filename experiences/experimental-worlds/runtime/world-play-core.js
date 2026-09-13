@@ -6056,6 +6056,14 @@ async function executeWorldTurn(commandOrReroll = null) {
     let labsWorldFrame = null;
     let ffPrefill = '';
     let sidecarMode = false;
+    // A reroll replaces one durable DM message with a new Take. Keep that
+    // lineage through the Reader, Sidecar, ScenePulse and final message
+    // publication instead of letting the fresh Sidecar turn become orphaned
+    // from the swipe it is meant to represent.
+    let rerollSourceMessageId = '';
+    let rerollSourceTurnId = '';
+    let rerollTakeIndex = 0;
+    let rerollRevisionId = '';
     // Failure recovery runs outside the main success path. Keep the authored
     // artifact reference at turn scope so that it can decide safely whether
     // to restore the player's draft or preserve a completed narration.
@@ -6196,6 +6204,10 @@ async function executeWorldTurn(commandOrReroll = null) {
         const lastMsg = sess.history[sess.history.length - 1];
         if (lastMsg.role !== 'dm') return ExperimentalWorldsHost.notify('Can only reroll DM responses', 'info');
         if (!lastMsg.turnSnapshot) return ExperimentalWorldsHost.notify('This older response predates safe rerolls. Continue once, then reroll the new response.', 'info');
+        rerollSourceMessageId = String(lastMsg.id || '');
+        rerollSourceTurnId = String(lastMsg.sidecarTurnId || lastMsg.sidecarBackstage?.sidecarTurnId || '');
+        rerollTakeIndex = Array.isArray(lastMsg.versions) ? lastMsg.versions.length : 1;
+        rerollRevisionId = `${rerollSourceMessageId || rerollSourceTurnId || sess.id || 'reroll'}:take_${rerollTakeIndex}`;
         restoredRerollSnapshot = !!lastMsg.turnSnapshot;
         turnSnapshot = lastMsg.turnSnapshot || captureWorldTurnState(world, sess);
         restoreWorldTurnState(world, sess, turnSnapshot);
@@ -7990,6 +8002,14 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                     playerInput: submittedInput || userInput, receiptContext,
                     commitTool: sidecarCommitTool, signal: controller.signal,
                     handoffComplete: narratorOutput.complete,
+                    // A reroll is a complete Reader → Sidecar → ScenePulse
+                    // replacement pipeline. These stable take coordinates
+                    // let the settled ScenePulse projection follow the active
+                    // swipe rather than a detached bookkeeping turn.
+                    takeIndex: isReroll ? rerollTakeIndex : 0,
+                    takeId: isReroll ? `take_${rerollTakeIndex}` : undefined,
+                    revisionId: isReroll ? rerollRevisionId : undefined,
+                    sourceTurnId: isReroll ? rerollSourceTurnId : undefined,
                     onStage: stage => {
                         // Reader and reconciliation are two separate cloud
                         // requests. A completed Reader must not leave the
@@ -8024,11 +8044,15 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                         handoff: narratorOutput.handoff, narration: fullText,
                         playerInput: submittedInput || userInput,
                         preFrame: buildWorldSceneFrame(world, sess),
-                        preClock: buildSidecarClockEvidence(world, sess),
-                        model: modelId,
-                        provider: ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider || 'openrouter'),
-                        handoffComplete: narratorOutput.complete
-                    });
+                    preClock: buildSidecarClockEvidence(world, sess),
+                    model: modelId,
+                    provider: ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider || 'openrouter'),
+                    handoffComplete: narratorOutput.complete,
+                    takeIndex: isReroll ? rerollTakeIndex : 0,
+                    takeId: isReroll ? `take_${rerollTakeIndex}` : undefined,
+                    revisionId: isReroll ? rerollRevisionId : undefined,
+                    sourceTurnId: isReroll ? rerollSourceTurnId : undefined
+                });
                     failedAttempt = failSidecarTurnAttempt(world, sess, attempt, sidecarError, {
                         code: narratorOutput.complete ? 'sidecar_reconciliation_failed' : 'narrator_handoff_missing',
                         model: modelId,
