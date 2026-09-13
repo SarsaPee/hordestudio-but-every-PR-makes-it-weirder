@@ -7805,6 +7805,11 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                     status.textContent = 'Rerolling take…';
                     bubble.prepend(status);
                 }
+                // Do not leave the superseded prose visible until the first
+                // narrator token arrives. The old take remains available via
+                // the version control after this replacement settles.
+                const staleText = aiMsgDiv.querySelector('.msg-text');
+                if (staleText) staleText.innerHTML = '';
             }
         }
         if (!aiMsgDiv) {

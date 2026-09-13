@@ -12,6 +12,9 @@ const render = functionSource('renderWorldPlayState');
 const worldPlaySource = require('node:fs').readFileSync(
     'experiences/experimental-worlds/runtime/world-play-core.js', 'utf8'
 );
+const hostAdapterSource = require('node:fs').readFileSync(
+    'host-adapters/experimental-worlds/experimental-worlds-mode.js', 'utf8'
+);
 
 assert(execute && addMessage && commit && render, 'transaction functions must remain extractable');
 
@@ -56,7 +59,11 @@ assert(/div\.dataset\.worldMessageId = String\(msg\.id\)/.test(worldPlaySource),
     'durable rendered messages must expose their world-message ID for reroll replacement');
 assert(/if \(isReroll\) \{[\s\S]*?aiMsgDiv\.dataset\.rerollStreaming = 'true';/.test(worldPlaySource),
     'rerolls must reuse the committed DM card while the replacement take streams');
+assert(/const staleText = aiMsgDiv\.querySelector\('\.msg-text'\);[\s\S]*?staleText\.innerHTML = ''/.test(worldPlaySource),
+    'a reroll must clear superseded prose before its replacement narration streams');
 assert(/if \(!sidecarMode && !streamUsesCommittedTurn\) aiMsgDiv\.remove\(\);/.test(worldPlaySource),
     'the legacy streaming cleanup must never remove a committed reroll card');
+assert(/experimental-worlds-core\.generated\.mjs\?v=20260913-reroll-takes-1/.test(hostAdapterSource),
+    'the host adapter must load the reroll replacement bundle rather than a cached older core');
 
 console.log('✓ World turn receipt and cross-timeline transaction guards are present');

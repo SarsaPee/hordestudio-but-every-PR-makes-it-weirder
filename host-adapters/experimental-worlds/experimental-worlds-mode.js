@@ -1,7 +1,7 @@
 import {
     createExperimentalWorldsCoreRuntime,
     EXPERIMENTAL_WORLDS_CORE_SOURCES
-} from '../../experiences/experimental-worlds/experimental-worlds-core.generated.mjs?v=20260913-scenepulse-staged-loader-5';
+} from '../../experiences/experimental-worlds/experimental-worlds-core.generated.mjs?v=20260913-reroll-takes-1';
 import { bindExperimentalWorldsVendorContext } from './experimental-worlds-vendor-context.js';
 
 const SHELL_URL = new URL('../../experiences/experimental-worlds/experimental-worlds-shell.html', import.meta.url);

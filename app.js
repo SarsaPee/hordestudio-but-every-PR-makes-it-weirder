@@ -5138,7 +5138,7 @@ const EXPERIMENTAL_WORLDS_STYLES = Object.freeze([
     ['experimental-scenepulse-vendor-style', 'experiences/experimental-worlds/scenepulse/vendor/ScenePulse/style.css?v=6.27.20-2888d0d'],
     ['experimental-scenepulse-host-style', 'experiences/experimental-worlds/styles/scene-pulse-worlds.css?v=18.0.0-ew-namespace-1'],
     ['experimental-worlds-visual-style', 'experiences/experimental-worlds/styles/world-visuals-and-sidecar.css?v=18.0.0-ew-namespace-1'],
-    ['experimental-worlds-private-style', 'experiences/experimental-worlds/styles/experimental-worlds-isolated.css?v=18.0.0-ew-scroll-latest-1']
+    ['experimental-worlds-private-style', 'experiences/experimental-worlds/styles/experimental-worlds-isolated.css?v=18.0.0-ew-reroll-takes-1']
 ]);
 const experimentalWorldsStyleLoads = new Map();
 const EXPERIMENTAL_WORLDS_SHARED_KEYS = new Set([
