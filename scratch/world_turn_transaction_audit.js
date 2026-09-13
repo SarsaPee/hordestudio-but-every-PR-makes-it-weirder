@@ -9,6 +9,9 @@ const execute = functionSource('executeWorldTurn');
 const addMessage = functionSource('addWorldMessage');
 const commit = functionSource('commitWorldTurnReceipt');
 const render = functionSource('renderWorldPlayState');
+const worldPlaySource = require('node:fs').readFileSync(
+    'experiences/experimental-worlds/runtime/world-play-core.js', 'utf8'
+);
 
 assert(execute && addMessage && commit && render, 'transaction functions must remain extractable');
 
@@ -48,5 +51,12 @@ assert(sessionHandler.indexOf('if (worldTurnInProgress)') < sessionHandler.index
 const exitHandler = render.slice(render.indexOf('// 3. Location & Exits'), render.indexOf('// 4. Inventory & Outfit'));
 assert(exitHandler.indexOf('if (worldTurnInProgress)') < exitHandler.indexOf('movePlayerAlongWorldPath'),
     'exit clicks must be rejected before any player movement during an active turn');
+
+assert(/div\.dataset\.worldMessageId = String\(msg\.id\)/.test(worldPlaySource),
+    'durable rendered messages must expose their world-message ID for reroll replacement');
+assert(/if \(isReroll\) \{[\s\S]*?aiMsgDiv\.dataset\.rerollStreaming = 'true';/.test(worldPlaySource),
+    'rerolls must reuse the committed DM card while the replacement take streams');
+assert(/if \(!sidecarMode && !streamUsesCommittedTurn\) aiMsgDiv\.remove\(\);/.test(worldPlaySource),
+    'the legacy streaming cleanup must never remove a committed reroll card');
 
 console.log('✓ World turn receipt and cross-timeline transaction guards are present');

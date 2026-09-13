@@ -22231,6 +22231,10 @@ function appendWorldMessageUI(msg, index = null) {
     const container = document.getElementById('ew-world-messages-container');
     const div = document.createElement('div');
     div.className = `msg msg-${msg.role}`;
+    // A reroll streams into this durable card until Sidecar has reconciled the
+    // replacement take. Keep the ID on the rendered node rather than creating
+    // an extra, temporary DM message below it.
+    if (msg?.id) div.dataset.worldMessageId = String(msg.id);
     
     const versions = msg.versions || [msg.text];
     const currentVersionIdx = msg.currentVersion !== undefined ? msg.currentVersion : (versions.length - 1);
@@ -24951,11 +24955,55 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         let reasoningSeen = false;    // model emitted hidden reasoning deltas
         let lastFinishReason = null;  // e.g. 'length' = token budget exhausted
 
-        // Create a temporary UI message for streaming
-        const aiMsgDiv = document.createElement('div');
-        aiMsgDiv.className = 'msg msg-dm';
-        aiMsgDiv.innerHTML = `<div class="msg-bubble"><div class="msg-text"></div></div>`;
-        document.getElementById('ew-world-messages-container').appendChild(aiMsgDiv);
+        // A reroll is a new take of the committed final DM turn, not another
+        // transcript entry. Stream directly into that rendered card while the
+        // new narrator/Sidecar pipeline is running. The canonical state is
+        // still untouched until addWorldMessage selects the replacement take.
+        let aiMsgDiv = null;
+        let streamUsesCommittedTurn = false;
+        if (isReroll) {
+            const rerollTarget = sess.history[sess.history.length - 1];
+            const renderedMessages = document.querySelectorAll(
+                '#ew-world-messages-container .msg[data-world-message-id]'
+            );
+            aiMsgDiv = [...renderedMessages].find(node =>
+                node.dataset.worldMessageId === String(rerollTarget?.id || '')
+            ) || null;
+
+            // The current view normally already contains the target. If an
+            // unrelated repaint happened between clicking Reroll and receiving
+            // the stream, restore it from the durable timeline before falling
+            // back to a normal stream node.
+            if (!aiMsgDiv && rerollTarget?.id) {
+                renderWorldPlayState();
+                const refreshedMessages = document.querySelectorAll(
+                    '#ew-world-messages-container .msg[data-world-message-id]'
+                );
+                aiMsgDiv = [...refreshedMessages].find(node =>
+                    node.dataset.worldMessageId === String(rerollTarget.id)
+                ) || null;
+            }
+
+            if (aiMsgDiv) {
+                streamUsesCommittedTurn = true;
+                aiMsgDiv.dataset.rerollStreaming = 'true';
+                aiMsgDiv.querySelector('.world-reroll-stream-status')?.remove();
+                const bubble = aiMsgDiv.querySelector('.msg-bubble');
+                if (bubble) {
+                    const status = document.createElement('div');
+                    status.className = 'world-reroll-stream-status';
+                    status.setAttribute('role', 'status');
+                    status.textContent = 'Rerolling take…';
+                    bubble.prepend(status);
+                }
+            }
+        }
+        if (!aiMsgDiv) {
+            aiMsgDiv = document.createElement('div');
+            aiMsgDiv.className = 'msg msg-dm';
+            aiMsgDiv.innerHTML = `<div class="msg-bubble"><div class="msg-text"></div></div>`;
+            document.getElementById('ew-world-messages-container').appendChild(aiMsgDiv);
+        }
         const textTarget = aiMsgDiv.querySelector('.msg-text');
 
         // Stream the visible prose through the same cinematic presenter as the
@@ -25060,7 +25108,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         // read/reconciled; otherwise the response appears to vanish at the
         // exact moment the handoff starts. The saved DM node replaces it
         // below once the reconciliation receipt has completed.
-        if (!sidecarMode) aiMsgDiv.remove();
+        if (!sidecarMode && !streamUsesCommittedTurn) aiMsgDiv.remove();
 
         if (streamError) throw streamError;
 

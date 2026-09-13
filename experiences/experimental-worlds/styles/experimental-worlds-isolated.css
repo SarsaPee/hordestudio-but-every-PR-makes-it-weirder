@@ -726,6 +726,33 @@
     margin-bottom: 32px;
 }
 
+/* A reroll replaces the final DM take in place while its narrator and
+   Sidecar work completes. Keep the prior take's auxiliary UI out of the way:
+   the final render restores the selected version and its ordinary controls. */
+#ew-world-messages-container .msg[data-reroll-streaming="true"] {
+    outline: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+#ew-world-messages-container .msg[data-reroll-streaming="true"] .world-msg-meta,
+#ew-world-messages-container .msg[data-reroll-streaming="true"] .sidecar-backstage-card,
+#ew-world-messages-container .msg[data-reroll-streaming="true"] .reroll-nav,
+#ew-world-messages-container .msg[data-reroll-streaming="true"] .msg-actions {
+    display: none !important;
+}
+
+#ew-world-messages-container .world-reroll-stream-status {
+    display: flex;
+    align-items: center;
+    width: fit-content;
+    margin: 0 0 10px;
+    color: var(--accent);
+    font-size: .7rem;
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
 .msg-dm .msg-bubble {
     background: transparent !important;
     border: none !important;
