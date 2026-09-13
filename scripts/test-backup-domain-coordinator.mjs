@@ -32,11 +32,15 @@ function domain(id, initial, { failCommit = false } = {}) {
     let durablePreimage = null;
     let paused = false;
     const journal = [];
+    const exportContexts = [];
     return {
         definition: {
             id,
             schemaVersion: 1,
-            serialize: async () => structuredClone(authoritative),
+            serialize: async context => {
+                exportContexts.push(structuredClone(context));
+                return structuredClone(authoritative);
+            },
             validate: async value => {
                 assert.equal(typeof value?.value, 'string');
                 return structuredClone(value);
@@ -69,7 +73,8 @@ function domain(id, initial, { failCommit = false } = {}) {
             }
         },
         get: () => structuredClone(authoritative),
-        journal
+        journal,
+        exportContexts
     };
 }
 
@@ -82,6 +87,12 @@ const manifest = await coordinator.export();
 assert.equal(manifest._version, 3);
 assert.equal(typeof manifest.backupId, 'string');
 assert.deepEqual(Array.from(coordinator.registered()), ['host', 'experimental']);
+assert.equal(host.exportContexts.at(-1).purpose, 'portable-export');
+assert.equal(host.exportContexts.at(-1).includeCredentials, false);
+
+await coordinator.export({ purpose: 'rolling-recovery', includeCredentials: true });
+assert.equal(host.exportContexts.at(-1).purpose, 'rolling-recovery');
+assert.equal(host.exportContexts.at(-1).includeCredentials, true);
 
 manifest.domains.host.payload.value = 'host-after';
 manifest.domains.host.checksum = await coordinator.checksum(manifest.domains.host.payload);

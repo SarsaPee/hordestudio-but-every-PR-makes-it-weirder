@@ -189,14 +189,24 @@
 #ew-world-sidecar-workspace .sp-sparkline-fixture[data-fixture-samples="1"] { background: transparent; }
 #ew-world-sidecar-workspace .sp-sparkline:hover { outline: 1px solid var(--sp-accent); }
 
-/* The source thought module is floating; here it floats over the V2 right
-   column and keeps its source drag and resize affordances. */
-#ew-world-sidecar-workspace #sp-thought-panel { position: absolute; right: auto; bottom: auto; z-index: 40; min-width: 220px; max-width: calc(100% - 12px); max-height: calc(100% - 18px); box-shadow: 0 12px 32px rgba(0,0,0,.45); }
-#ew-world-sidecar-workspace #sp-thought-panel .sp-tp-header { touch-action: none; cursor: grab; }
-#ew-world-sidecar-workspace #sp-thought-panel .sp-tp-resize { cursor: nwse-resize; touch-action: none; }
-#ew-world-sidecar-workspace #sp-thought-panel .sp-tp-card { min-height: 0; }
-#ew-world-sidecar-workspace #sp-thought-panel .sp-tp-card small { display: block; color: var(--sp-text-dim); font-size: var(--sp-fs-xs); }
-#ew-world-sidecar-workspace #sp-thought-panel .sp-tp-card blockquote { margin: 4px 0 0; }
+/* Horde has no SillyTavern-style left chat gutter.  Dock the genuine source
+   thought component below the ScenePulse body instead of treating it as a
+   second floating app.  Visibility is intentionally class-gated: removing
+   .sp-tp-visible must hide both the header and its thought cards. */
+#ew-world-sidecar-workspace #sp-panel #sp-thought-panel { position: relative !important; inset: auto !important; z-index: 1; display: none; flex: 0 1 auto; flex-direction: column; width: 100% !important; min-width: 0; min-height: 0; height: auto !important; max-height: min(38%, 320px) !important; margin: 0; border-width: 1px 0 0; border-radius: 0; box-shadow: none; }
+#ew-world-sidecar-workspace #sp-panel #sp-thought-panel.sp-tp-visible { display: flex !important; }
+#ew-world-sidecar-workspace #sp-panel #sp-tp-body { flex: 0 1 auto; min-height: 0; max-height: min(30vh, 250px); overflow-y: auto; }
+#ew-world-sidecar-workspace #sp-panel #sp-thought-panel .sp-tp-header { touch-action: auto; cursor: default; }
+#ew-world-sidecar-workspace #sp-panel #sp-thought-panel .sp-tp-drag-grip,
+#ew-world-sidecar-workspace #sp-panel #sp-thought-panel .sp-tp-snapleft,
+#ew-world-sidecar-workspace #sp-panel #sp-thought-panel .sp-tp-ghost,
+#ew-world-sidecar-workspace #sp-panel #sp-thought-panel .sp-tp-fit,
+#ew-world-sidecar-workspace #sp-panel #sp-thought-panel .sp-tp-resize { display: none; }
+#ew-world-sidecar-workspace #sp-panel #sp-thought-panel.sp-tp-ghost-mode { border-color: var(--sp-border); background: var(--sp-bg-solid); box-shadow: none; }
+#ew-world-sidecar-workspace #sp-panel #sp-thought-panel.sp-tp-ghost-mode .sp-tp-header { opacity: 1; background: linear-gradient(135deg,rgba(77,184,164,.13),rgba(77,184,164,.025)) !important; border-bottom-color: rgba(255,255,255,.07); }
+#ew-world-sidecar-workspace #sp-panel #sp-thought-panel .sp-tp-card { min-height: 0; }
+#ew-world-sidecar-workspace #sp-panel #sp-thought-panel .sp-tp-card small { display: block; color: var(--sp-text-dim); font-size: var(--sp-fs-xs); }
+#ew-world-sidecar-workspace #sp-panel #sp-thought-panel .sp-tp-card blockquote { margin: 4px 0 0; }
 
 /* Compatibility rules for in-pane elements from the first adapter pass.
    Focused views now render from #sp-worlds-overlay-root above the whole app. */
@@ -1124,7 +1134,8 @@ body:has(#ew-world-sidecar-workspace > #sp-panel[data-horde-source-runtime="true
 
 /* Source thought panel, kept floating over the one Horde page rather than
    mounted as an independent application. */
-#sp-thought-panel { position:fixed; z-index:1300; display:flex; flex-direction:column; width:min(360px,calc(100vw - 24px)); max-height:calc(100vh - 70px); overflow:hidden; resize:none; border:1px solid rgba(77,184,164,.28); border-radius:12px; background:#171a22; box-shadow:0 18px 46px rgba(0,0,0,.46); color:#c8ccd4; font-family:'Segoe UI',system-ui,sans-serif; }
+#sp-thought-panel { position:fixed; z-index:1300; display:none; flex-direction:column; width:min(360px,calc(100vw - 24px)); max-height:calc(100vh - 70px); overflow:hidden; resize:none; border:1px solid rgba(77,184,164,.28); border-radius:12px; background:#171a22; box-shadow:0 18px 46px rgba(0,0,0,.46); color:#c8ccd4; font-family:'Segoe UI',system-ui,sans-serif; }
+#sp-thought-panel.sp-tp-visible { display:flex; }
 #sp-thought-panel .sp-tp-header { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,.07); background:linear-gradient(135deg,rgba(77,184,164,.13),rgba(77,184,164,.025)); cursor:grab; user-select:none; }
 #sp-thought-panel .sp-tp-drag-grip { color:#8490a0; font-size:10px; letter-spacing:-2px; opacity:.7; }
 #sp-thought-panel .sp-tp-title { color:#e8ecf4; font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }

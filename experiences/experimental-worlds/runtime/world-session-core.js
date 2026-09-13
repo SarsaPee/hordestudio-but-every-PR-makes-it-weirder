@@ -1289,10 +1289,8 @@ function getWorldTimeData(world, sess) {
         + Math.max(0, Math.min(59, parseInt(world.hudConfig?.startTimeMinutes) || 0));
     // Sidecar worlds resolve time from authored evidence via the reconciled
     // receipt. A model call is not a unit of fictional time, so legacy turn
-    // ticks remain available only to Inline Legacy timelines.
-    const sidecarTimeline = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
-    const totalElapsedMinutes = (sidecarTimeline ? 0 : (sess.turnCount - 1) * timeStep)
-        + (Number(sess.bonusTimeMinutes) || 0) + (Number(sess.bonusTimeSeconds) || 0) / 60;
+    // ticks no longer exist.
+    const totalElapsedMinutes = (Number(sess.bonusTimeMinutes) || 0) + (Number(sess.bonusTimeSeconds) || 0) / 60;
     const currentTotalMinutes = Math.max(0, startMinutes + totalElapsedMinutes);
     
     const days = Math.floor(currentTotalMinutes / (24 * 60)) + 1;
@@ -2722,7 +2720,8 @@ Disposition and relationship scores are -100..100. Generate 4-10 people, never a
             { role: 'user', content: `${source}\n\nWORLD: ${world.name}\n${world.description || ''}\n\nLOCATIONS:\n${locations}\n\nEXISTING PEOPLE AVAILABLE FOR REAL CONNECTIONS:\n${people || 'none'}` }
         ]
     };
-    const modelInfo = ExperimentalWorldsHost.modelCatalog().find(model => model.id === body.model);
+    const modelInfo = ExperimentalWorldsHost.modelCatalog().find(model => model.id === body.model)
+        || savedExperimentalModelCatalog(ExperimentalWorldsState.globalSettings?.apiProvider).find(model => model.id === body.model);
     if (!ExperimentalWorldsHost.isLocalProvider() && modelInfo?.supported_parameters?.some(parameter => STRUCTURED_PARAM_FLAGS.includes(parameter))) {
         body.response_format = { type: 'json_object' };
     }

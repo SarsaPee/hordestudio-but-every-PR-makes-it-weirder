@@ -34,8 +34,8 @@
     function repository() {
         const value = global.ExperimentalWorldsRepository;
         if (!value) throw new Error('Experimental Worlds repository must load before its persistence bootstrap.');
-        if (value.DB_NAME !== 'HordeStudioExperimentalWorldsDB') {
-            throw new Error('Experimental Worlds persistence refused an unexpected database authority.');
+        if (value.AUTHORITY !== 'root-files') {
+            throw new Error('Experimental Worlds persistence refused an unexpected storage authority.');
         }
         return value;
     }
@@ -95,6 +95,42 @@
         };
     }
 
+    function sameJsonValue(left, right) {
+        if (left === right) return true;
+        if (Array.isArray(left) || Array.isArray(right)) {
+            return Array.isArray(left) && Array.isArray(right)
+                && left.length === right.length
+                && left.every((value, index) => sameJsonValue(value, right[index]));
+        }
+        if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+        const leftKeys = Object.keys(left).sort();
+        const rightKeys = Object.keys(right).sort();
+        return leftKeys.length === rightKeys.length
+            && leftKeys.every((key, index) => key === rightKeys[index]
+                && sameJsonValue(left[key], right[key]));
+    }
+
+    function stableModelCatalogs(liveCatalogs, previousCatalogs) {
+        const next = clone(liveCatalogs || previousCatalogs || {});
+        const previous = previousCatalogs && typeof previousCatalogs === 'object'
+            ? previousCatalogs : {};
+        if (!next || typeof next !== 'object') return {};
+        for (const [provider, catalog] of Object.entries(next)) {
+            const prior = previous[provider];
+            if (!catalog || !prior || typeof catalog !== 'object' || typeof prior !== 'object') continue;
+            const candidateContent = { ...catalog };
+            const priorContent = { ...prior };
+            delete candidateContent.fetchedAt;
+            delete priorContent.fetchedAt;
+            // Startup may refresh the shared host catalogue and stamp it with
+            // Date.now() even when none of its portable model data changed.
+            // Keep the authoritative record byte-stable in that case so a
+            // page reload cannot manufacture another full World snapshot.
+            if (sameJsonValue(candidateContent, priorContent)) next[provider] = clone(prior);
+        }
+        return next;
+    }
+
     function storedStateFromRuntime(runtime, prior, workspaceOverride = null) {
         const live = runtime && typeof runtime === 'object' ? runtime : {};
         const previous = repository().snapshotData(prior);
@@ -122,6 +158,8 @@
             worldRecoverySnapshots: clone(live.worldRecoverySnapshots || {}),
             worldMediaAssets: media,
             workspace,
+            savedModelCatalogs: stableModelCatalogs(live.savedModelCatalogs, previous.savedModelCatalogs),
+            roleplayOSSources: clone(live.roleplayOSSources || previous.roleplayOSSources || []),
             theme: typeof live.theme === 'string' ? live.theme : previous.theme
         }, 'runtime snapshot');
     }
@@ -159,6 +197,10 @@
         }
         if (typeof lifecycle.flush === 'function') await lifecycle.flush({ reason: 'backup-export' });
         await persistTail;
+        // Global backup is allowed to run from another browser or while the
+        // mode is disabled. Refresh from the root-file authority so it never
+        // serializes a stale tab-local cache.
+        if (typeof repository().reload === 'function') await repository().reload();
         const stored = await repository().snapshot();
         const payload = repository().snapshotData(stored);
         lastSerializedMetadata = Object.freeze({
@@ -325,7 +367,9 @@
             }
             const stored = storedStateFromRuntime(runtime, prior, options.workspace);
             const result = await repository().writeSnapshot(stored, reason);
-            global.HordeRollingRecovery?.notePersisted?.();
+            if (Number(result?.generation) !== Number(prior?.generation)) {
+                global.HordeRollingRecovery?.notePersisted?.();
+            }
             return result;
         });
         persistTail = operation.catch(() => {});
@@ -346,7 +390,9 @@
                 workspace: clone(workspace)
             }, 'workspace update');
             const result = await repository().writeSnapshot(stored, reason);
-            global.HordeRollingRecovery?.notePersisted?.();
+            if (Number(result?.generation) !== Number(prior?.generation)) {
+                global.HordeRollingRecovery?.notePersisted?.();
+            }
             return result;
         });
         persistTail = operation.catch(() => {});
@@ -358,8 +404,18 @@
         return repository().snapshot();
     }
 
-    async function runtimeSnapshot() {
-        return runtimeStateFromStored(await snapshot());
+    async function runtimeSnapshot({ fresh = false } = {}) {
+        await ensureStarted();
+        // A mode mount is a new browser/runtime authority boundary. Never
+        // hydrate it from the lightweight bootstrap's tab-local cache: another
+        // client, an explicit restore, or a prior page lifecycle may have
+        // published a newer root document since bootstrap first read it.
+        // Waiting for our own write tail and then re-reading the bridge keeps a
+        // newly mounted shell from briefly presenting (or later persisting) an
+        // obsolete empty library.
+        await persistTail;
+        if (fresh && typeof repository().reload === 'function') await repository().reload();
+        return runtimeStateFromStored(await repository().snapshot());
     }
 
     async function discover() {
@@ -376,7 +432,8 @@
             workspace: clone(stored.workspace),
             generation: Number(stored.generation) || 0,
             restoreGeneration: Number(stored.restoreGeneration) || 0,
-            recoveryPending: Boolean(restore.journal)
+            recoveryPending: Boolean(restore.journal),
+            storage: repository().storageStatus?.() || null
         });
     }
 
@@ -392,9 +449,10 @@
     // repository. Every runtime write then participates in quiescence,
     // generation fencing, media separation, and rolling-recovery dirtiness.
     const runtimeRepository = Object.freeze({
-        snapshot: runtimeSnapshot,
+        snapshot: () => runtimeSnapshot({ fresh: true }),
         writeSnapshot: (value, reason = 'experimental-runtime') => persist(reason, { snapshot: value }),
-        save: (value, reason = 'experimental-runtime') => persist(reason, { snapshot: value })
+        save: (value, reason = 'experimental-runtime') => persist(reason, { snapshot: value }),
+        worldExportUrl: worldId => repository().worldExportUrl(worldId)
     });
 
     const api = Object.freeze({

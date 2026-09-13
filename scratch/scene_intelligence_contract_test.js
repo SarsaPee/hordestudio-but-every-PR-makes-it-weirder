@@ -164,7 +164,6 @@ const promotionLocation = lastFunction('applyScenePulsePromotionLocation');
 const graphNormalizer = lastFunction('normalizeSidecarNpcRelationshipGraph');
 const worldStatusResize = lastFunction('initWorldStatusResizeHandle');
 const restoreScenePulseStatusWidth = lastFunction('restoreScenePulseStatusColumnWidth');
-const sharedLibraryInit = lastFunction('initializeSharedLibrarySync', 'async function');
 const workspacePersist = lastFunction('persistWorkspaceState', 'async function');
 const statePersist = lastFunction('persistStateSnapshot', 'async function');
 const sourceMacroOrigin = lastRuntimeFunction('sourceMacroOrigin');
@@ -188,7 +187,6 @@ const sourceUnmount = lastRuntimeFunction('unmount');
 const sourceControlledPlayerComparison = lastRuntimeFunction('controlledPlayerBoundaryEquivalent');
 const sourceGraphComparison = lastRuntimeFunction('relationshipGraphReviewMarkup');
 const sourceCompleteRelationship = lastRuntimeFunction('hasCompleteSourceRelationshipProjection');
-const sourceRelationshipFixtureSupport = lastRuntimeFunction('preserveFixtureRelationshipDisplaySupport');
 const sourceSnapshotRenderable = lastRuntimeFunction('sourceSnapshotHasRenderableScene');
 const sourcePanelRenderRecovery = lastRuntimeFunction('scheduleSourcePanelRenderRecovery');
 const freshSourceModules = lastRuntimeFunction('loadFreshSourceModules');
@@ -262,7 +260,7 @@ assert.doesNotMatch(stageStoryIdea, /const text = String\(direction \|\| ''\)/, 
 const stagedStoryIdeaComposer = { value: '', dispatchEvent() {}, focus() {} };
 vm.runInNewContext(`${stageStoryIdea}; stageScenePulseStoryIdea({ direction: { type: 'exploratory', name: 'Line check', hook: 'Test the repaired cider line.' } });`, {
     experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
-    document: { getElementById: id => id === 'world-user-input' ? stagedStoryIdeaComposer : null },
+    document: { getElementById: id => id === 'ew-world-user-input' ? stagedStoryIdeaComposer : null },
     Event: class Event { constructor(type, options) { this.type = type; this.options = options; } },
     resizeExperimentalWorldMessageInput() {},
     ExperimentalWorldsHost: { notify() {} }
@@ -272,8 +270,6 @@ assert.match(readerPass, /Do not derive an ID from a display name/, 'Reader iden
 assert.match(readerPass, /complete aliases array in the same changed-only ScenePulse patch/, 'an explicit visible alias change must survive the compact ScenePulse delta');
 assert.match(readerPass, /Each relationship record MUST include relationshipId and its characterId/, 'relationship dimensions need stable identity from their first source projection');
 assert.match(readerPass, /const priorReaderSnapshotId = String\(options\.priorReaderSnapshotId/, 'a delta Reader must receive the actual accepted snapshot identity rather than guess it');
-assert.match(readerPass, /COMPLETION BUDGET — HARD/, 'the Reader must favor a complete compact delta over a truncated verbose packet');
-assert.match(readerPass, /Reader compact recovery/, 'a completion-capped Reader response must receive one bounded compact reread of the same beat');
 assert.match(readerPass, /const finalResponseRound = maxRounds \+ 1/, 'a Reader that reaches its lookup limit must get one final response round');
 assert.match(readerPass, /const forceFinalReaderResponse = round === finalResponseRound/, 'the final Reader response must be an explicit bounded phase');
 assert.match(readerPass, /if \(!forceFinalReaderResponse\) \{[\s\S]*?body\.tools = tools;/, 'the final Reader response must omit lookup tools');
@@ -284,10 +280,6 @@ assert.match(reconciliationPass, /COMPACT SIDECAR COMMIT RECOVERY/, 'a completio
 assert.match(reconciliationPass, /tools: \[compactSidecarCommitTool\(commitTool\)\], tool_choice: 'required'/, 'compact recovery must retain the one native commit boundary');
 assert.match(reconciliationPass, /retryPolicy: 'none', forceWithoutReasoning: true/, 'compact recovery must not consume budget on a second reasoning pass');
 assert.match(reconciliationPass, /Reconciliation compact commit recovery/, 'compact recovery attempts must remain auditable');
-assert.match(sharedLibraryInit, /const localSavedAt = Number\(pendingWorkspaceState\?\.savedAt\) \|\| 0/, 'startup sync must compare the durable local snapshot timestamp before replacing it');
-assert.match(sharedLibraryInit, /const localSnapshotIsNewer = hasPublishableLocalLibrary\(\)[\s\S]*?localSavedAt > \(Number\(status\?\.updatedAt\) \|\| 0\)/, 'a bridge revision must not outrank a newer local snapshot by itself');
-assert.match(sharedLibraryInit, /remoteWasNewer && !localSnapshotIsNewer/, 'auto-pull must be limited to remote snapshots that are not older than local data');
-assert.match(sharedLibraryInit, /Shared-library auto-pull deferred: a newer local snapshot is protected/, 'a protected local fork must produce auditable conflict evidence rather than silent replacement');
 assert.match(readerPass, /relationship\.meterDeltas as signed numeric changes/, 'Reader relationship updates must use compact signed meter deltas after their baseline');
 assert.match(readerPass, /missing any of those five meters or five named labels is also unbaselined/, 'an incomplete legacy relationship must receive a full visible meter-and-label baseline before delta-only updates begin');
 assert.match(readerPass, /affectionLabel, trustLabel, desireLabel, stressLabel, compatibilityLabel/, 'a relationship baseline must provide all five named ScenePulse meter labels');
@@ -308,7 +300,11 @@ assert.match(normalizer, /npcRelationshipGraph/, 'Reader normalization must reta
 assert.match(merger, /providedField\('npcRelationshipGraph'\)/, 'NPC graph cache updates must honor nested delta-field provenance');
 assert.match(acceptedHandoff, /npcRelationshipGraph/, 'accepted handoffs must retain Reader graph data beside the source tracker');
 
-assert.match(html, /scenepulse-source-runtime\.js/, 'native source runtime must be loaded before app.js');
+// The native source runtime is bundled into the generated Experimental core,
+// which the host reaches through the mode adapter rather than a script tag.
+assert.match(read('app.js'), /host-adapters\/experimental-worlds\/experimental-worlds-mode\.js/, 'the host must load the Experimental Worlds mode adapter');
+assert.match(read('host-adapters', 'experimental-worlds', 'experimental-worlds-mode.js'), /experimental-worlds-core\.generated\.mjs/, 'the mode adapter must load the generated Experimental core');
+assert.match(read('experiences', 'experimental-worlds', 'experimental-worlds-core.generated.mjs'), /native-source-modules-via-horde-compatibility-scaffold/, 'the generated core must contain the native ScenePulse source runtime');
 assert.match(panelMount, /ExperimentalWorldsScenePulseSourceRuntime\.mount\(host, handoff\)/, 'World HUD must mount native source runtime');
 assert.match(panelMount, /if \(sidecar\) restoreScenePulseStatusColumnWidth\(column\);/, 'ScenePulse must restore its own compact sidebar width rather than inherit an oversized HUD column');
 assert.doesNotMatch(panelMount.slice(0, panelMount.indexOf('// Gate B adapter below')), /ExperimentalWorldsScenePulse\.mount\(host, handoff\)/, 'native source failure must not silently fall back to the hand-drawn adapter');
@@ -376,8 +372,6 @@ assert.match(sourceGraphComparison, /Awaiting second NPC/, 'a one-NPC scene must
 assert.match(sourceGraphComparison, /Player excluded from NPC graph/, 'a graph packet that includes the controlled player must remain visibly withheld rather than silently altered');
 assert.match(sourceCompleteRelationship, /\['name', 'relType', 'relPhase', 'timeTogether', 'milestone'\]/, 'a live relationship must provide every source-visible metadata field before it replaces the populated fixture collection');
 assert.match(sourceCompleteRelationship, /\['affection', 'trust', 'desire', 'stress', 'compatibility'\]/, 'a live relationship must provide the complete five-dimensional source meter set before adoption');
-assert.match(sourceRelationshipFixtureSupport, /fixture\.relationships/, 'missing live relationship data must retain the sealed fixture relationship cards');
-assert.match(sourceRelationshipFixtureSupport, /tracker\._spViewFiltered = true/, 'fixture relationship support must stop the source filter from synthesizing an unknown relationship stub');
 assert.match(runtime, /fixtureDisplaySupport = fixtureDisplaySupportFields/, 'fixture-supported source cards must remain visibly provenance-labelled during partial live adoption');
 assert.match(runtime, /const customPanels = Array\.isArray\(prefs\.customPanels\) \? clone\(prefs\.customPanels\) : \[\];/, 'native runtime must render the handoff source schema rather than recreate a Horde-local tour panel');
 assert.doesNotMatch(runtime, /RPG Stats \(Tour Example\)/, 'the upstream tour panel schema must enter through the source handoff, not a duplicate runtime fallback');
@@ -1424,5 +1418,77 @@ const pendingSourceEditBaseline = vm.runInNewContext(`${sourceClockCanonicalizer
 });
 assert.equal(pendingSourceEditBaseline.context.chatMetadata.scenepulse.snapshots['1000'].time, '18:34', 'the AM/PM dashboard display must be repaired before a source save is calculated');
 assert.equal(pendingSourceEditBaseline.baseMetadata.scenepulse.snapshots['1000'].sideQuests.length, 1, 'a pending source Quest Journal edit must retain its original baseline for the Save action');
+
+// ScenePulse-first authority contract: ScenePulse leads interpretation and
+// World lookup, Sidecar explicitly adjudicates each proposal, and the native
+// reducer remains the sole canonical writer.
+const proposalBuilder = lastFunction('buildScenePulseAuthorityProposals');
+const adjudicationBuilder = lastFunction('buildScenePulseAuthorityAdjudication');
+const provisionalHandoff = lastFunction('scenePulseProvisionalHandoff');
+assert.match(readerPass, /SCENEPULSE AUTHORITY PASS/, 'the Reader pass must be contracted as the ScenePulse decision layer');
+assert.match(readerPass, /authority_proposals is the decision handoff to Sidecar/, 'ScenePulse must hand explicit authority proposals to Sidecar');
+assert.match(readerPass, /Search the supplied read-only World tools whenever/, 'ScenePulse must search Worlds for uncertain canonical facts');
+assert.match(normalizer, /authorityProposals: cleanList\(value\('authorityProposals', 'authority_proposals'\), 120\)/, 'Reader normalization must retain ScenePulse authority proposals');
+assert.match(merger, /'eventClaims', 'authorityProposals', 'candidateStructures'/, 'delta merging must retain ScenePulse authority proposals');
+assert.match(reconciliationPass, /buildScenePulseAuthorityProposals\(readerPacket, attempt\.turnRecord\)/, 'older Reader envelopes must be normalized into the ScenePulse proposal handoff');
+assert.match(reconciliationPass, /publishProvisionalScenePulseReading\(world, sess, attempt\.turnRecord, readerPacket\)/, 'ScenePulse must render its reading before Sidecar adjudication begins');
+assert.match(reconciliationPass, /For every exact authority_proposals\[\]\.id, include one proposal_review item/, 'Sidecar must explicitly agree, disagree, or defer every ScenePulse proposal');
+assert.match(reconciliationPass, /copy its exact ID into event\.source_proposal_id/, 'an agreed proposal must stay traceable into its receipt event');
+assert.match(reconciliationPass, /SCENEPULSE AUTHORITY REPORT/, 'the Sidecar prompt must review the ScenePulse report rather than reinterpret the scene');
+assert.match(reconciliationPass, /SCENEPULSE AUTHORITY EVIDENCE/, 'compact commit recovery must adjudicate the same ScenePulse proposals');
+assert.match(app, /proposal_review: \(Array\.isArray\(source\.proposal_review \|\| source\.proposalReview\)/, 'the receipt normalizer must retain Sidecar proposal verdicts');
+assert.match(app, /source_proposal_id: String\(event\.source_proposal_id \|\| event\.sourceProposalId \|\| ''\)/, 'canonical events must retain their ScenePulse proposal provenance');
+assert.match(app, /accepted_proposal_ids: \[\.\.\.new Set\(committedEvents\.map\(event => event\.source_proposal_id\)/, 'the native audit must record which ScenePulse proposals it accepted');
+assert.match(app, /proposal_review: experimentalSafeJsonClone\(validation\.receipt\.proposal_review \|\| \[\]\)/, 'the native audit must retain the Sidecar adjudication record');
+assert.match(lastFunction('publishSidecarSettlement'), /draftTurn\.authorityAdjudication = buildScenePulseAuthorityAdjudication\(stagedPacket, options\.receipt, options\.committed\?\.audit\)/, 'settlement must persist the combined ScenePulse/Sidecar/native adjudication record');
+assert.match(lastFunction('buildSidecarSceneProjection'), /authorityAdjudication: experimentalSafeJsonClone\(turn\?\.authorityAdjudication \|\| \[\]\)/, 'the settled scene projection must expose the adjudication record');
+
+const authorityRun = vm.runInNewContext(`${proposalBuilder}\n${adjudicationBuilder}\n(() => {
+    const packet = {
+        eventClaims: [{ claim: 'Mira leaves the bar', evidence: 'the door swings shut' }],
+        durableProposals: [{ summary: 'Mira now distrusts the guard' }],
+        lookupProvenance: [{ tool: 'search_world_state' }]
+    };
+    const proposals = buildScenePulseAuthorityProposals(packet, { id: 'sidecar_turn_test' });
+    const adjudication = buildScenePulseAuthorityAdjudication(
+        { authorityProposals: proposals },
+        { proposal_review: [{ proposal_id: proposals[0].id, verdict: 'agree', reason: 'supported by narration' }] },
+        { accepted_proposal_ids: [proposals[0].id] });
+    return { proposals, adjudication };
+})()`, {
+    experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    experimentalSafeJsonClone: value => value === undefined ? value : JSON.parse(JSON.stringify(value))
+});
+assert.equal(authorityRun.proposals.length, 2, 'ScenePulse decisions must become explicit proposals');
+assert.equal(authorityRun.proposals[0].id, 'scenepulse.sidecar_turn_test.event.1', 'proposal IDs must be stable and attempt-scoped');
+assert.equal(authorityRun.proposals[0].source, 'scenepulse', 'proposals must carry ScenePulse provenance');
+assert.deepEqual(authorityRun.proposals[0].lookupRefs, ['lookup:1'], 'proposals must reference their World lookup evidence');
+assert.equal(authorityRun.adjudication[0].sidecarVerdict, 'agree', 'Sidecar agreement must be explicit');
+assert.equal(authorityRun.adjudication[0].nativeOutcome, 'accepted', 'the native reducer outcome must be recorded beside the Sidecar verdict');
+assert.equal(authorityRun.adjudication[1].sidecarVerdict, 'unreviewed', 'a missing Sidecar verdict must be visible rather than silently treated as agreement');
+assert.equal(authorityRun.adjudication[1].nativeOutcome, 'not_submitted', 'an unreviewed proposal must not reach the canonical reducer');
+
+// ScenePulse renders first, Sidecar adjudicates second, settlement last.
+assert.match(provisionalHandoff, /sidecarPendingScenePulseReadings/, 'the provisional ScenePulse handoff must read the in-flight reading store');
+assert.match(provisionalHandoff, /status: 'provisional_reader'/, 'a pending reading must be labelled provisional, never settled');
+assert.match(provisionalHandoff, /base\?\.status === 'accepted_live'/, 'a pending delta may merge only onto an accepted live scene, never the tour fixture');
+assert.match(provisionalHandoff, /sidecarMergeScenePulse\(prior, rawDelta\)/, 'a pending compact delta must merge onto the accepted projection');
+assert.match(provisionalHandoff, /pendingSidecarReview: true/, 'the source handoff must mark the pending Sidecar adjudication');
+assert.match(panelMount, /scenePulseProvisionalHandoff\(world, sess\) \|\| scenePulseAcceptedHandoff\(world, sess\)/, 'the ScenePulse mount must prefer the in-flight reading over the last settled scene');
+assert.match(lastFunction('publishSidecarSettlement'), /clearProvisionalScenePulseReading\(world, sess, draftTurn\.id\)/, 'settlement must replace the provisional reading with the accepted handoff');
+assert.match(lastFunction('failSidecarTurnAttempt'), /clearProvisionalScenePulseReading\(world, sess, turnRecord\.id\)/, 'a failed attempt must not leave its provisional reading mounted');
+
+// The player's own message renders the moment it is sent, in both pipelines.
+assert.match(app, /Deferred persistence must not defer feedback\. Paint the player's[\s\S]*?appendWorldMessageUI\(playerMessage, sess\.history\.length - 1\)/, 'a deferred-persist player message must still paint immediately');
+assert.match(app, /sidecarProtocol\.conversations = \[\.\.\.\(sidecarProtocol\.conversations \|\| \[\]\), authorEntry\]\.slice\(-200\);\s*renderSidecarConversation\(world, sess\)/, 'a direct Sidecar author message must render before the network request');
+assert.match(app, /await runSidecarConversation\(world, sess, text, \{ authorEntry \}\)/, 'the Sidecar conversation must finalize the already-painted author entry');
+assert.match(lastFunction('runSidecarConversation', 'async function'), /experimentalIsPlainObject\(options\.authorEntry\) && options\.authorEntry\.id/, 'the Sidecar conversation must reuse the pre-painted author entry');
+assert.match(lastFunction('runSidecarConversation', 'async function'), /!protocol\.conversations\.some\(item => item\.id === authorEntry\.id\)/, 'a pre-painted author entry must not be duplicated into the conversation log');
+
+// Portable JSON regressions.
+assert.match(lastFunction('addWorldMessage'), /Object\.entries\(metadata\)\.filter\(\(\[, value\]\) => value !== undefined\)/, 'message metadata must omit undefined fields before persistence');
+const scenePulseShape = lastFunction('normalizeSidecarScenePulseShape');
+assert.match(scenePulseShape, /sceneTension/, 'ScenePulse tension must be normalized to the source severity enum');
+assert.match(scenePulseShape, /\['calm', 'low', 'moderate', 'high', 'critical'\]/, 'ScenePulse tension must map free-form prose onto the source severity enum');
 
 console.log('ScenePulse native-source integration contract passed.');

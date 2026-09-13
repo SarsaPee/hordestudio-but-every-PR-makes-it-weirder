@@ -91,7 +91,7 @@ assert.deepEqual(Object.keys(core).sort(), [
     'abortOwnedOperations', 'activate', 'captureWorkspace', 'deactivate',
     'initialize', 'persist', 'restoreWorkspace', 'snapshot'
 ].sort());
-assert.equal(EXPERIMENTAL_WORLDS_CORE_SOURCES.length, 19);
+assert.equal(EXPERIMENTAL_WORLDS_CORE_SOURCES.length, 20);
 assert.deepEqual(afterGlobals, [], `core factory leaked browser globals: ${afterGlobals.join(', ')}`);
 assert.match(generatedCore, /scenepulse\/generated\/ScenePulse\/src/);
 assert.doesNotMatch(generatedCore, /\n\s*setupMultiplayerHub\(\);/);

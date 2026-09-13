@@ -345,9 +345,24 @@ Keep backups of important projects before upgrading or making large structural c
 
 ### Application data
 
-Primary application state is stored in browser **IndexedDB** under the Horde Studio origin.
+Native 17.4 features keep their primary application state in browser
+**IndexedDB** under the Horde Studio origin.
 
 Deleting browser site data, using a different browser profile, or changing the local origin can make that state unavailable. Export regular backups.
+
+Experimental Worlds uses a separate root-file authority instead:
+
+```text
+data/experimental-worlds/state.json
+data/experimental-worlds/snapshots/
+data/experimental-worlds/worlds/
+```
+
+`state.json` is the checksummed canonical save. `snapshots/` contains rolling
+full-state recovery points, and `worlds/` contains automatically maintained
+portable `.horde_world` mirrors. These local data files are intentionally
+excluded from Git and portable release archives. A managed install can set
+`HORDE_EXPERIMENTAL_WORLDS_DATA_DIR` to relocate this one directory.
 
 ### MCP credentials
 
@@ -393,7 +408,7 @@ Horde Studio 10+/
 Horde Studio intentionally keeps its stack simple and portable.
 
 - **Frontend:** vanilla HTML, CSS, and JavaScript
-- **Persistence:** IndexedDB
+- **Persistence:** IndexedDB for the native host; atomic root files for Experimental Worlds
 - **Local bridge:** Python standard library
 - **Text APIs:** OpenAI-compatible chat-completion patterns plus supported cloud providers
 - **Media:** ComfyUI, compatible local image endpoints, MCP integrations, and TTS

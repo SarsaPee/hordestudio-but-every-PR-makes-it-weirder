@@ -817,22 +817,122 @@
         'ui/loading.js'
     ]);
 
-    // A cold reload of this large source tree must not start thirteen import
-    // graphs at once. Chromium has intermittently rejected one request in
-    // that burst even though every local file is present. Load the actual
-    // source modules in dependency-warming order instead; the second pass has
-    // a distinct URL because rejected module records are page-lifetime cached.
-    async function loadSourceModules(retryToken = '') {
-        const suffix = retryToken ? `?horde_source_retry=${encodeURIComponent(retryToken)}` : '';
+    // Chromium can reject a request from the cold 48-module source graph even
+    // though the bridge can serve that exact URL a moment later.  Importing the
+    // thirteen roots one after another did not help: each root immediately
+    // started its own transitive fetch burst.  Stage the static graph through
+    // the same local bridge one file at a time, with a short per-file retry,
+    // then import the staged graph from blob URLs.  The pinned source files are
+    // still the execution source; this is transport glue only.  Dynamic source
+    // imports keep their canonical local URLs, and import.meta.url is retained
+    // as the canonical file URL so source asset lookups remain source-faithful.
+    const stagedSourceModuleUrls = new Map();
+    const stagedSourceModuleLoads = new Map();
+    const nativeCycleSourceModules = new Set();
+    const STATIC_SOURCE_SPECIFIER = /\b(?:import|export)\s+(?:[\w*$\s{},]*\s+from\s+)?(['"])([^'"]+)\1/g;
+    const DYNAMIC_RELATIVE_SOURCE_IMPORT = /\bimport\s*\(\s*(['"])(\.[^'"]*)\1\s*\)/g;
+
+    const SOURCE_ROOT_URL = new URLConstructor(`${ROOT}/`, global.location?.href || 'http://localhost/').href;
+
+    function canonicalSourceUrl(relative, parentUrl = SOURCE_ROOT_URL) {
+        const url = new URLConstructor(relative, parentUrl);
+        if (url.origin !== (global.location?.origin || url.origin)) {
+            throw new Error(`ScenePulse source module escaped the local bridge: ${relative}`);
+        }
+        return url.href;
+    }
+
+    function pauseSourceTransport(milliseconds) {
+        return new Promise(resolve => global.setTimeout(resolve, milliseconds));
+    }
+
+    async function fetchStagedSourceText(url) {
+        let lastError = null;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+                const response = await global.fetch(url, { cache: 'no-store' });
+                if (!response.ok) throw new Error(`HTTP ${response.status} while loading ${url}`);
+                return await response.text();
+            } catch (error) {
+                lastError = error;
+                if (attempt < 2) await pauseSourceTransport(120 * (attempt + 1));
+            }
+        }
+        const failure = new Error(`ScenePulse source module could not be loaded: ${url}`);
+        failure.cause = lastError;
+        throw failure;
+    }
+
+    async function stageSourceModule(url, ancestors = []) {
+        const cycleStart = ancestors.indexOf(url);
+        if (cycleStart !== -1) {
+            // Blob URLs cannot be allocated before their source exists, so a
+            // static ESM cycle cannot be rewritten atomically. Keep the small
+            // strongly connected component on canonical local URLs; Chromium
+            // resolves that normal ESM cycle correctly, while the remaining
+            // source graph is still staged serially below.
+            ancestors.slice(cycleStart).forEach(member => nativeCycleSourceModules.add(member));
+            return url;
+        }
+        if (stagedSourceModuleUrls.has(url)) return stagedSourceModuleUrls.get(url);
+        if (stagedSourceModuleLoads.has(url)) return stagedSourceModuleLoads.get(url);
+
+        const pending = (async () => {
+            let source = await fetchStagedSourceText(url);
+            const dependencies = [];
+            for (const match of source.matchAll(STATIC_SOURCE_SPECIFIER)) {
+                const specifier = match[2];
+                if (!specifier.startsWith('.')) continue;
+                dependencies.push({ raw: match[0], specifier });
+            }
+            for (const dependency of dependencies) {
+                const dependencyUrl = canonicalSourceUrl(dependency.specifier, url);
+                // Each generated ScenePulse file imports the stable vendor
+                // context adapter outside the source tree. That adapter is
+                // already bound to this Experimental World by the core; it
+                // must retain its one real ESM identity rather than become a
+                // second, unbound blob module.
+                const stagedUrl = dependencyUrl.startsWith(SOURCE_ROOT_URL)
+                    ? await stageSourceModule(dependencyUrl, [...ancestors, url])
+                    : dependencyUrl;
+                source = source.replace(dependency.raw, dependency.raw.replace(dependency.specifier, stagedUrl));
+            }
+            if (nativeCycleSourceModules.has(url)) return url;
+            source = source.replace(DYNAMIC_RELATIVE_SOURCE_IMPORT, (_match, _quote, specifier) =>
+                `import(${JSON.stringify(canonicalSourceUrl(specifier, url))})`
+            );
+            source = source.replace(/\bimport\.meta\.url\b/g, JSON.stringify(url));
+            const stagedUrl = URL.createObjectURL(new global.Blob([source], { type: 'text/javascript' }));
+            stagedSourceModuleUrls.set(url, stagedUrl);
+            return stagedUrl;
+        })();
+        stagedSourceModuleLoads.set(url, pending);
+        try {
+            return await pending;
+        } catch (error) {
+            stagedSourceModuleLoads.delete(url);
+            throw error;
+        }
+    }
+
+    function discardStagedSourceModules() {
+        stagedSourceModuleUrls.forEach(url => URL.revokeObjectURL(url));
+        stagedSourceModuleUrls.clear();
+        stagedSourceModuleLoads.clear();
+        nativeCycleSourceModules.clear();
+    }
+
+    async function loadSourceModules() {
         const modules = [];
         for (const relative of SOURCE_MODULE_PATHS) {
-            modules.push(await import(`${ROOT}/${relative}${suffix}`));
+            modules.push(await import(await stageSourceModule(canonicalSourceUrl(relative))));
         }
         return modules;
     }
 
-    function loadFreshSourceModules(retryToken) {
-        return loadSourceModules(retryToken);
+    function loadFreshSourceModules() {
+        discardStagedSourceModules();
+        return loadSourceModules();
     }
 
     function sourceModuleSet(modules) {
@@ -846,10 +946,10 @@
         if (runtime.loading) return runtime.loading;
         installFacade();
         runtime.loading = loadSourceModules().then(sourceModuleSet).catch(async firstError => {
-            const retryToken = `${runtime.epoch}-${now()}`;
             console.warn('[ScenePulse] Source module import failed; retrying the pinned local source once.', firstError);
             try {
-                return sourceModuleSet(await loadFreshSourceModules(retryToken));
+                const modules = await loadFreshSourceModules();
+                return sourceModuleSet(modules);
             } catch (retryError) {
                 retryError.cause = firstError;
                 throw retryError;

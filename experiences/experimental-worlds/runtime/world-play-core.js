@@ -848,11 +848,7 @@ function setupWorldPlayLogic() {
         const targetTotalMinutes = (targetDay - 1) * 24 * 60 + h24 * 60 + targetMins;
         const startMinutes = (world.hudConfig?.startTimeHours !== undefined ? world.hudConfig.startTimeHours : 8) * 60
             + Math.max(0, Math.min(59, parseInt(world.hudConfig?.startTimeMinutes) || 0));
-        const sidecarTimeline = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
-        const legacyTickMinutes = sidecarTimeline
-            ? 0
-            : (sess.turnCount - 1) * (world.hudConfig?.timeStep !== undefined ? world.hudConfig.timeStep : 5);
-        const newBonusTimeMinutes = targetTotalMinutes - startMinutes - legacyTickMinutes;
+        const newBonusTimeMinutes = targetTotalMinutes - startMinutes;
         sess.bonusTimeMinutes = newBonusTimeMinutes;
         
         ExperimentalWorldsHost.persist().catch(() => {});
@@ -879,7 +875,6 @@ function setupWorldPlayLogic() {
         const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
         const sess = getCurrentWorldSession();
         const sidecarSelected = world && sess
-            && window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true
             && window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess)?.inputMode === 'sidecar';
         if (!sidecarSelected) return executeWorldTurn();
         const text = input.value.trim();
@@ -892,11 +887,25 @@ function setupWorldPlayLogic() {
         const typingLabel = document.getElementById('ew-world-dm-typing-label');
         if (typing) typing.style.display = 'flex';
         if (typingLabel) typingLabel.textContent = 'Sidecar is reviewing continuity…';
+        // Paint the author's message before the network request starts; a
+        // deferred Sidecar reply must not defer the sender's own bubble.
+        const sidecarProtocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        const authorEntry = {
+            id: `sidecar_author_${Date.now().toString(36)}`,
+            role: 'user', text, createdAt: new Date().toISOString(), pending: true
+        };
+        if (sidecarProtocol) {
+            sidecarProtocol.conversations = [...(sidecarProtocol.conversations || []), authorEntry].slice(-200);
+            renderSidecarConversation(world, sess);
+        }
         try {
-            await runSidecarConversation(world, sess, text);
+            await runSidecarConversation(world, sess, text, { authorEntry });
             await ExperimentalWorldsHost.persist();
             renderWorldPlayState();
         } catch (error) {
+            authorEntry.pending = false;
+            authorEntry.deliveryFailed = true;
+            renderSidecarConversation(world, sess);
             ExperimentalWorldsHost.notify(`Sidecar conversation failed: ${ExperimentalWorldsHost.humanizeApiError(error) || error.message || error}`, 'error');
         } finally {
             if (typing) typing.style.display = 'none';
@@ -1152,7 +1161,7 @@ function setupWorldPlayLogic() {
     document.getElementById('ew-world-close-sequence-btn').onclick = async () => {
         const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
         const sess = getCurrentWorldSession();
-        if (!world || !sess || !window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
+        if (!world || !sess) {
             ExperimentalWorldsHost.notify('Sequence controls are available in Sidecar worlds.', 'info');
             return;
         }
@@ -1185,7 +1194,6 @@ function setupWorldPlayLogic() {
     document.getElementById('ew-world-v3-end-scene-btn')?.addEventListener('click', async () => {
         const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId); const sess = getCurrentWorldSession();
         if (!world || !sess) return;
-        if (!window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) return openWorldSidecarInspector('migration');
         openWorldSidecarLine({
             kind: 'scene_boundary', title: 'Scene boundary review',
             guidance: 'Discuss whether a material scene boundary has actually occurred, what the next scene should inherit, and any unresolved continuity. Do not close the scene until the author explicitly approves it.',
@@ -3074,8 +3082,7 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
     if (protocol) {
         protocol.migration = {
             ...(protocol.migration || {}),
-            forkedFrom: experimentalSafeJsonClone(forkLineage),
-            ...(world.sidecarConfig?.mode === 'sidecar' ? { forkCreatedAfterSidecarDefault: true } : {})
+            forkedFrom: experimentalSafeJsonClone(forkLineage)
         };
         protocol.packet = buildSidecarScenePacket(world, fork);
     }
@@ -3495,13 +3502,11 @@ function openNpcDossier(npcId) {
     const dispo = Math.max(0, Math.min(100, Number.isFinite(parsedDisposition) ? parsedDisposition : 50));
     const dispoColor = dispo < 35 ? 'var(--red)' : (dispo < 65 ? 'var(--warning, #FF8C42)' : 'var(--success)');
     const locName = world.locations.find(l => l.id === entState.location)?.name || 'Unknown';
-    const sidecarWorld = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
-    const sidecarGraph = sidecarWorld ? window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar) : null;
+    const sidecarWorld = true;
+    const sidecarGraph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar) || null;
     // A Sidecar dossier deliberately exposes only character-specific cognition.
     // Objective transcript snippets remain World History, never pseudo-memories.
-    const obs = sidecarWorld
-        ? (sidecarGraph?.cognition || []).filter(memory => memory.characterId === npc.id && memory.status === 'active')
-        : (entState.observations || []).map(o => typeof o === 'string' ? { text: o } : o);
+    const obs = (sidecarGraph?.cognition || []).filter(memory => memory.characterId === npc.id && memory.status === 'active');
     const goalProgress = livingClamp(entState.goalProgress || 0, 0, 100);
     const goalAutonomy = ['paused', 'low', 'medium', 'high'].includes(entState.goalAutonomy) ? entState.goalAutonomy : 'medium';
     const relationships = Object.entries(sess.npcRelationships || {}).filter(([key]) => key.split('|').includes(npc.id));
@@ -3679,8 +3684,7 @@ function enterWorld(worldId, sessionId = null) {
     normalizeLivingWorldState(world, sess);
     // Schedules remain useful constraints for Sidecar, but they must not
     // silently author arrivals merely because a world was opened.
-    const sidecarMode = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
-    const entryScheduleSync = sidecarMode ? { moves: 0 } : syncNPCSchedules(world, sess);
+    const entryScheduleSync = { moves: 0 };
     if (entryScheduleSync.moves > 0) ExperimentalWorldsHost.persist().catch(() => {});
     
     document.getElementById('ew-world-active-name').textContent = 'Living world';
@@ -3699,10 +3703,9 @@ function renderWorldPlayState() {
     const sess = getCurrentWorldSession(); // Triggers Healing Pass
     if (!world || !inst || !sess) return;
     const ruleModules = normalizeWorldGameRules(world).modules;
-    const sidecarMode = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     // Legacy quest evaluation can mutate progress based on ambient state. In
     // Sidecar worlds it remains a reconciliation input, not a passive author.
-    const questEvaluation = sidecarMode ? { changed: false } : evaluateQuestProgress(world, sess);
+    const questEvaluation = { changed: false };
     if (questEvaluation.changed) ExperimentalWorldsHost.persist().catch(() => {});
 
     // Auto-sync start location if history is empty (fixes workshop start location updates not applying)
@@ -4508,33 +4511,28 @@ function renderWorldPlayState() {
     container.scrollTop = container.scrollHeight;
     const sidecarProtocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     {
-        const sidecarAvailable = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
         const worldInput = document.getElementById('ew-world-user-input');
-        if (worldInput) worldInput.placeholder = sidecarAvailable && sidecarProtocol?.inputMode === 'sidecar'
+        if (worldInput) worldInput.placeholder = sidecarProtocol?.inputMode === 'sidecar'
             ? 'Ask Sidecar about continuity, questions, or a refinement…'
             : 'What do you do?...';
         ['ew-world-plan-sequence-btn', 'ew-world-close-sequence-btn', 'ew-world-v3-gm-btn'].forEach(id => {
             const button = document.getElementById(id);
             if (!button) return;
-            button.disabled = !sidecarAvailable;
-            button.style.display = sidecarAvailable ? '' : 'none';
+            button.disabled = false;
+            button.style.display = '';
         });
-        const hierarchy = sidecarAvailable
-            ? window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(sidecarProtocol, sess)
-            : null;
+        const hierarchy = window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(sidecarProtocol, sess);
         const closeButton = document.getElementById('ew-world-close-sequence-btn');
-        if (closeButton && sidecarAvailable) {
+        if (closeButton) {
             closeButton.disabled = !hierarchy;
             closeButton.title = hierarchy ? `Close ${hierarchy.sequence.title}` : 'No active sequence — plan the next sequence';
         }
         const pipelineButton = document.getElementById('ew-world-pipeline-status-btn');
         if (pipelineButton) {
-            pipelineButton.textContent = sidecarAvailable ? '◉ Sidecar' : '⚠ Legacy · migrate';
-            pipelineButton.title = sidecarAvailable
-                ? 'This timeline is using the two-call Sidecar reconciliation pipeline. Each narrator response contains its own handoff and receipt.'
-                : 'This world may be configured for Sidecar, but this existing timeline is still Inline Legacy. Migrate it before generating a Sidecar turn.';
-            pipelineButton.style.color = sidecarAvailable ? 'var(--success)' : 'var(--warning)';
-            pipelineButton.style.borderColor = sidecarAvailable ? 'var(--success)' : 'var(--warning)';
+            pipelineButton.textContent = '◉ Sidecar';
+            pipelineButton.title = 'This timeline is using the two-call Sidecar reconciliation pipeline. Each narrator response contains its own handoff and receipt.';
+            pipelineButton.style.color = 'var(--success)';
+            pipelineButton.style.borderColor = 'var(--success)';
         }
     }
     renderSidecarWorkspace(world, sess);
@@ -5010,9 +5008,12 @@ function renderSidecarBackstageCard(backstage, turnNumber, turnRecord = null) {
     const formatHandoff = handoff
         ? experimentalEscapeHTML(handoff).replace(/^(SCENE READING|ANSWER [^\n:]+|REQUEST|ACCEPTED PLAYER DETAILS)\s*:?[ \t]*(.*)$/gim, '<strong class="sidecar-backstage-label">$1</strong><span>$2</span>')
         : '';
-    const failed = backstage.status === 'reconciliation_failed' || backstage.unresolved === true;
-    const failureStage = String(backstage.failure?.stage || '').toLowerCase();
-    const failureLabel = 'Scene update incomplete';
+    const turnNeedsRecovery = turnRecord ? sidecarTurnNeedsDownstreamRecovery(turnRecord) : false;
+    const settlementIncomplete = turnRecord?.status === 'settlement_incomplete' || !!turnRecord?.incompleteSettlementAttemptId;
+    const failed = backstage.status === 'reconciliation_failed' || backstage.unresolved === true || turnNeedsRecovery === true;
+    const failure = backstage.failure || (turnNeedsRecovery ? turnRecord?.settlementWarning || null : null);
+    const failureStage = String(failure?.stage || '').toLowerCase();
+    const failureLabel = settlementIncomplete ? 'Derived scene publication incomplete' : 'Scene update incomplete';
     const incompleteHandoff = backstage.handoffComplete === false;
     const roleplayOSChain = renderSidecarRoleplayOSChain(turnRecord);
     const activeLocationLabel = experimentalIsPlainObject(packet.activeLocation)
@@ -5024,7 +5025,7 @@ function renderSidecarBackstageCard(backstage, turnNumber, turnRecord = null) {
             ${handoff ? `<section class="sidecar-backstage-section sidecar-handoff"><header><span>✦</span><div><b>Story notes</b><small>What this beat sets up next.</small></div></header><div class="sidecar-handoff-copy">${formatHandoff}</div></section>` : ''}
             ${reader ? (() => { const envelope = reader.readerEnvelope || {}; const presence = envelope.presence || {}; const changed = Array.isArray(reader.changedFields) ? reader.changedFields : []; const proposals = [...(envelope.durableProposals || []), ...(envelope.relationshipProposals || [])]; return `<section class="sidecar-backstage-section"><header><span>⌕</span><div><b>Scene reading</b><small>${experimentalEscapeHTML(reader.summary || (reader.valid === false ? 'No additional scene reading was available.' : 'A read of the current moment.'))}</small></div></header><div class="sidecar-backstage-chips"><span>${experimentalEscapeHTML(String(reader.mode || envelope.snapshotMode || 'delta'))} scene update</span>${reader.readerSnapshotId ? `<span>${experimentalEscapeHTML(reader.readerSnapshotId)}</span>` : ''}${reader.model ? `<span>${experimentalEscapeHTML(reader.model)}</span>` : ''}${reader.provider ? `<span>${experimentalEscapeHTML(reader.provider)}</span>` : ''}${changed.length ? `<span>${experimentalEscapeHTML(changed.length)} changed field${changed.length === 1 ? '' : 's'}</span>` : ''}</div>${presence.active?.length || presence.nearby?.length || presence.audible?.length ? `<div class="sidecar-packet-grid">${presence.active?.length ? `<span><small>Active</small>${experimentalEscapeHTML(JSON.stringify(presence.active))}</span>` : ''}${presence.nearby?.length ? `<span><small>Nearby</small>${experimentalEscapeHTML(JSON.stringify(presence.nearby))}</span>` : ''}${presence.audible?.length ? `<span><small>Audible</small>${experimentalEscapeHTML(JSON.stringify(presence.audible))}</span>` : ''}</div>` : ''}${Array.isArray(reader.reconciliationFocus) && reader.reconciliationFocus.length ? `<div class="sidecar-backstage-chips">${reader.reconciliationFocus.map(item => `<span>${experimentalEscapeHTML(typeof item === 'string' ? item : JSON.stringify(item))}</span>`).join('')}</div>` : ''}${proposals.length ? `<div class="form-hint">${experimentalEscapeHTML(String(proposals.length))} proposed change${proposals.length === 1 ? '' : 's'} await review.</div>` : ''}${envelope.validationWarnings?.length ? `<div class="form-hint" style="color:var(--warning);">${experimentalEscapeHTML(String(envelope.validationWarnings.length))} validation warning${envelope.validationWarnings.length === 1 ? '' : 's'}</div>` : ''}${reader.failure ? `<div class="form-hint">Scene reading detail: ${experimentalEscapeHTML(reader.failure.message || String(reader.failure))}</div>` : ''}<details class="sidecar-backstage-raw"><summary>Reader evidence</summary><pre>${experimentalEscapeHTML(JSON.stringify(reader, null, 2))}</pre></details></section>`; })() : ''}
             ${incompleteHandoff ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>Scene update was incomplete</b><small>Only what the visible scene supports was retained.</small></div></header></section>` : ''}
-            ${failed ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>${experimentalEscapeHTML(failureLabel)}</b><small>${experimentalEscapeHTML(backstage.failure?.message || 'The scene update did not finish.')}</small></div></header><div class="sidecar-backstage-list"><div><b>Details</b><span>${experimentalEscapeHTML(backstage.failure?.code || 'scene_update_incomplete')}${backstage.failure?.stage ? ` · ${experimentalEscapeHTML(backstage.failure.stage)}` : ''}${backstage.failure?.finishReason ? ` · finish: ${experimentalEscapeHTML(backstage.failure.finishReason)}` : ''}</span></div><div><b>What stayed safe</b><span>${experimentalEscapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'The incomplete update is held for World GM recovery.' : 'The narrated beat remains, and the scene stays at its last known state.')}</span></div><div><b>Recovery</b><span>${experimentalEscapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'Open World GM to resolve this update; the story response is not replayed.' : `Retry checks this same beat again${reader ? ' with its available scene reading' : ''}; the story response is not rewritten.`)}</span></div></div>${turnRecord?.id ? `<div class="sidecar-recovery-actions">${backstage.failure?.code === 'sidecar_commit_partial_failure' ? '<button type="button" class="btn btn-ghost sidecar-open-world-gm">Open World GM</button>' : `<button type="button" class="btn btn-primary sidecar-retry-scene-update" data-sidecar-turn-id="${experimentalEscapeHTML(turnRecord.id)}">Retry Scene Update</button>`}<button type="button" class="btn btn-ghost sidecar-open-backstage">Open Backstage</button></div>` : ''}</section>` : ''}
+            ${failed ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>${experimentalEscapeHTML(failureLabel)}</b><small>${experimentalEscapeHTML(failure?.message || 'The scene update did not finish.')}</small></div></header><div class="sidecar-backstage-list"><div><b>Details</b><span>${experimentalEscapeHTML(failure?.code || (settlementIncomplete ? 'sidecar_derived_settlement_incomplete' : 'scene_update_incomplete'))}${failure?.stage ? ` · ${experimentalEscapeHTML(failure.stage)}` : ''}${failure?.finishReason ? ` · finish: ${experimentalEscapeHTML(failure.finishReason)}` : ''}</span></div><div><b>What stayed safe</b><span>${experimentalEscapeHTML(failure?.code === 'sidecar_commit_partial_failure' ? 'The incomplete update is held for World GM recovery.' : settlementIncomplete ? 'Canonical state committed; only the derived scene publication is missing.' : 'The narrated beat remains, and the scene stays at its last known state.')}</span></div><div><b>Recovery</b><span>${experimentalEscapeHTML(failure?.code === 'sidecar_commit_partial_failure' ? 'Open World GM to resolve this update; the story response is not replayed.' : settlementIncomplete ? 'Retry re-publishes the committed scene receipt without rewriting the story response.' : `Retry checks this same beat again${reader ? ' with its available scene reading' : ''}; the story response is not rewritten.`)}</span></div></div>${turnRecord?.id ? `<div class="sidecar-recovery-actions">${failure?.code === 'sidecar_commit_partial_failure' ? '<button type="button" class="btn btn-ghost sidecar-open-world-gm">Open World GM</button>' : `<button type="button" class="btn btn-primary sidecar-retry-scene-update" data-sidecar-turn-id="${experimentalEscapeHTML(turnRecord.id)}">Retry Scene Update</button>`}<button type="button" class="btn btn-ghost sidecar-open-backstage">Open Backstage</button></div>` : ''}</section>` : ''}
             ${receipt && Object.keys(receipt).length ? `<section class="sidecar-backstage-section"><header><span>◈</span><div><b>Scene update</b><small>${experimentalEscapeHTML(receipt.summary || 'Updated from the authored beat.')}</small></div></header>${events.length ? `<div class="sidecar-backstage-list">${events.map(event => `<div><b>${experimentalEscapeHTML(event.label || event.type || 'Event')}</b><span>${experimentalEscapeHTML(event.status || 'established')}${event.evidence ? ` · ${experimentalEscapeHTML(String(event.evidence).slice(0, 220))}` : ''}</span></div>`).join('')}</div>` : ''}${changes.length ? `<div class="sidecar-backstage-chips">${changes.map(change => `<span>${experimentalEscapeHTML(String(change))}</span>`).join('')}</div>` : ''}</section>` : ''}
             ${packet && Object.keys(packet).length ? `<section class="sidecar-backstage-section sidecar-next-beat"><header><span>→</span><div><b>Next beat</b><small>${experimentalEscapeHTML(packet.sceneState || packet.scene_state || packet.temporalContinuity || 'The next story response receives this scene view.')}</small></div></header><div class="sidecar-packet-grid">${packet.worldTime ? `<span><small>World time</small>${experimentalEscapeHTML(String(packet.worldTime))}</span>` : ''}${packet.activeLocation ? `<span><small>Location</small>${experimentalEscapeHTML(activeLocationLabel)}</span>` : ''}${Array.isArray(packet.activeCast) ? `<span><small>Active cast</small>${experimentalEscapeHTML(packet.activeCast.join(', '))}</span>` : ''}${Array.isArray(packet.reconciliationBacklog) && packet.reconciliationBacklog.length ? `<span><small>Pending update</small>${experimentalEscapeHTML(String(packet.reconciliationBacklog.length))} authored beat${packet.reconciliationBacklog.length === 1 ? '' : 's'}</span>` : ''}</div></section>` : ''}
             ${jobSummary ? `<section class="sidecar-backstage-section"><header><span>◌</span><div><b>Memory work</b><small>Source-pinned background consolidation for this accepted turn.</small></div></header><div class="sidecar-backstage-chips"><span>${experimentalEscapeHTML(String(jobSummary.queued || 0))} queued</span><span>${experimentalEscapeHTML(String(jobSummary.running || 0))} running</span><span>${experimentalEscapeHTML(String(jobSummary.completed || 0))} completed</span>${jobSummary.failed ? `<span>${experimentalEscapeHTML(String(jobSummary.failed))} retry/blocked</span>` : ''}</div></section>` : ''}
@@ -5541,6 +5542,13 @@ function addWorldMessage(role, text, metadata = {}) {
     if (!sess) return;
     
     const msgId = Date.now().toString(36) + Math.random().toString(36).substring(2);
+    // Message metadata is persisted as strict portable JSON. Optional UI
+    // fields commonly arrive as `undefined`; spreading them into the record
+    // creates real object properties that the repository must reject.
+    // Omission has the same meaning and matches JSON serialization.
+    const portableMetadata = Object.fromEntries(
+        Object.entries(metadata).filter(([, value]) => value !== undefined)
+    );
 
     let targetMsgRef = null;
 
@@ -5557,25 +5565,8 @@ function addWorldMessage(role, text, metadata = {}) {
             
             // Scrub NPC observations for the previous version
             if (lastMsg.id) {
-                const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
-                if (world && !window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
-                    world.entities.forEach(ent => {
-                        if (ent.type === 'npc' && sess.entityStates[ent.id]) {
-                            const entState = sess.entityStates[ent.id];
-                            if (entState.observations) {
-                                const obsIdx = entState.observations.findIndex(o => o.msgId === lastMsg.id);
-                                if (obsIdx !== -1) {
-                                    entState.observations[obsIdx].text = text;
-                                } else if (metadata.location === entState.location) {
-                                    entState.observations.push({ role, text, msgId: lastMsg.id });
-                                }
-                            } else if (metadata.location === entState.location) {
-                                entState.observations = [{ role, text, msgId: lastMsg.id }];
-                            }
-                            if (entState.observations?.length > 50) entState.observations.splice(0, entState.observations.length - 50);
-                        }
-                    });
-                }
+                // Legacy observation caches are gone; Sidecar cognition is
+                // derived from episode-scoped perception evidence instead.
             }
             
             // Chronicle metadata follows the selected reroll take just like its
@@ -5616,28 +5607,13 @@ function addWorldMessage(role, text, metadata = {}) {
             }
         }
     } else {
-        const newMsg = { id: msgId, role, text, versions: [text], currentVersion: 0, ...metadata };
+        const newMsg = { id: msgId, role, text, versions: [text], currentVersion: 0, ...portableMetadata };
         sess.history.push(newMsg);
         targetMsgRef = newMsg;
-        
-        // Legacy observations are a compatibility cache only.  Sidecar worlds
-        // derive private cognition later from episode-scoped perception evidence;
-        // copying raw narration into every NPC dossier would grant false memory.
-        const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
-        if (world && !window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
-            world.entities.forEach(ent => {
-                if (ent.type === 'npc') {
-                    const entState = sess.entityStates[ent.id];
-                    if (entState) {
-                        if (metadata.location === entState.location) {
-                            entState.observations = entState.observations || [];
-                            entState.observations.push({ role, text, msgId });
-                            if (entState.observations.length > 50) entState.observations.shift(); // Memory cap
-                        }
-                    }
-                }
-            });
-        }
+
+        // Legacy observation caches are gone. Sidecar worlds derive private
+        // cognition later from episode-scoped perception evidence; copying raw
+        // narration into every NPC dossier would grant false memory.
 
         if (!metadata.deferPersist) {
             ExperimentalWorldsHost.persist().catch(() => {});
@@ -5791,15 +5767,10 @@ async function getMemoryMatrixContext(world, sess, userInput) {
 function getObservationWindow(npcId) {
     const sess = getCurrentWorldSession();
     const entState = sess ? sess.entityStates[npcId] : null;
-    if (!entState) return [];
-    const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
-    if (world && window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
-        const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar);
-        return (graph?.cognition || []).filter(memory => memory.characterId === npcId && memory.status === 'active')
-            .slice(-30).map(memory => ({ text: memory.text, id: memory.id, epistemicStatus: memory.epistemicStatus, sourceTurnIds: memory.sourceTurnIds }));
-    }
-    // Normalize: old sessions may hold raw strings (pre-fix tool handler)
-    return (entState.observations || []).map(o => typeof o === 'string' ? { text: o } : o);
+    if (!sess) return [];
+    const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar);
+    return (graph?.cognition || []).filter(memory => memory.characterId === npcId && memory.status === 'active')
+        .slice(-30).map(memory => ({ text: memory.text, id: memory.id, epistemicStatus: memory.epistemicStatus, sourceTurnIds: memory.sourceTurnIds }));
 }
 
 function extractUserMovementTarget(userInput) {
@@ -6096,7 +6067,8 @@ async function executeWorldTurn(commandOrReroll = null) {
             throw new Error("World state not initialized. Please ensure a world is selected.");
         }
         normalizeLivingWorldState(world, sess);
-        sidecarMode = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+        // Sidecar is the only execution path; every world and timeline uses it.
+        sidecarMode = true;
         if (sidecarMode && command !== 'init') {
             const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline(world, sess);
             let hierarchy = window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(protocol, sess);
@@ -6267,12 +6239,19 @@ async function executeWorldTurn(commandOrReroll = null) {
                     && Number(labsWorldFrame.candidate.confidence) >= 0.72
                     ? applyPlayerOutfitIntent(sess, labsWorldFrame.candidate.evidence) : null));
             if (outfitResult) committedOutfit = outfitResult;
-            addWorldMessage('user', userInput, {
+            const playerMessage = addWorldMessage('user', userInput, {
                 location: movementOrigin,
                 witnesses: originWitnesses,
                 arrivalLocation: sess.playerLocation !== movementOrigin ? sess.playerLocation : undefined,
                 deferPersist: true
             });
+            // Deferred persistence must not defer feedback. Paint the player's
+            // accepted input before any narrator/Reader request starts.
+            if (playerMessage) {
+                appendWorldMessageUI(playerMessage, sess.history.length - 1);
+                const messages = document.getElementById('ew-world-messages-container');
+                if (messages) messages.scrollTop = messages.scrollHeight;
+            }
             // sess.turnCount increment moved to success block to prevent time-skip on failure
         }
     }
@@ -6548,8 +6527,8 @@ async function executeWorldTurn(commandOrReroll = null) {
 
     const locationManifest = buildKernelLocationManifest(world, sess, userInput);
     
-    // --- MEMORY MATRIX INJECTION (Inline Legacy only; Sidecar routes memory through the FF Context Compiler) ---
-    const memoryContext = sidecarMode ? '' : await getMemoryMatrixContext(world, sess, userInput);
+    // --- MEMORY MATRIX INJECTION (Sidecar routes memory through the FF Context Compiler) ---
+    const memoryContext = '';
 
     // --- KNOWLEDGE BARRIER ---
     const knowledgeBarrier = `

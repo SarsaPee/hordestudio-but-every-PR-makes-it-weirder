@@ -102,7 +102,6 @@ buildContext(vm, [
     'companionEffectiveLifeBuilderModel',
     'companionBalancedJSONObjectBlocks', 'parseCompanionLifeJSONCandidate',
     'unwrapCompanionLifeObject', 'parseCompanionLifeResponsePayload',
-    'mergeCompanionLifeBuildWithStarter',
     'modelOutputModalities', 'normalizeTTSVoiceOptions', 'fallbackTTSVoicesForModel',
     'normalizeCompanionTTSProviderOptions', 'companionTTSCapabilities',
     'ttsResponseFormatForModel', 'buildCompanionTTSRequest',
@@ -1302,16 +1301,14 @@ test('Active Life repairs truncated JSON and unwraps nested provider envelopes',
     assert.equal(parsed.weeklySchedule[0].activity, 'work');
 });
 
-test('partial Active Life output keeps model details and fills missing editable sections locally', () => {
-    const companion = freshCompanion({ occupation: 'designer', locationLabel: 'Karachi' });
-    const merged = context.mergeCompanionLifeBuildWithStarter(companion, {
-        fashionSense: 'bright tailoring',
-        places: [{ id: 'studio', label: 'Design studio' }]
-    }, 1000);
-    assert.equal(merged.fashionSense, 'bright tailoring');
-    assert.equal(merged.places[0].id, 'studio');
-    assert(merged.weeklySchedule.length > 0);
-    assert(merged.wardrobe.length > 0);
+test('partial Active Life output remains an explicit draft instead of silently inventing starter details', () => {
+    const builder = functionSource('buildCompanionLifeWithAI');
+    assert(!app.includes('function mergeCompanionLifeBuildWithStarter'),
+        'the retired starter merge must not silently turn incomplete model output into an authored life');
+    assert(builder.includes('No starter was substituted'),
+        'an incomplete provider response must explain that no unreviewed life was created');
+    assert(builder.includes('completeCompanionLifeDraftSections'),
+        'missing sections should be requested explicitly before review');
 });
 
 test('manual Active Life authoring is a local starter that opens the editor without calling generation', () => {

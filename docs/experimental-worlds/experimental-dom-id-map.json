@@ -264,14 +264,6 @@
       ]
     },
     {
-      "source": "cancel-sidecar-migration-btn",
-      "namespaced": "ew-cancel-sidecar-migration-btn",
-      "kinds": [
-        "runtime-getElementById",
-        "shell"
-      ]
-    },
-    {
       "source": "cancel-system-inject-btn",
       "namespaced": "ew-cancel-system-inject-btn",
       "kinds": [
@@ -362,14 +354,6 @@
     {
       "source": "close-session-zero-btn",
       "namespaced": "ew-close-session-zero-btn",
-      "kinds": [
-        "runtime-getElementById",
-        "shell"
-      ]
-    },
-    {
-      "source": "close-sidecar-migration-wizard-btn",
-      "namespaced": "ew-close-sidecar-migration-wizard-btn",
       "kinds": [
         "runtime-getElementById",
         "shell"
@@ -927,14 +911,6 @@
       ]
     },
     {
-      "source": "run-sidecar-migration-btn",
-      "namespaced": "ew-run-sidecar-migration-btn",
-      "kinds": [
-        "runtime-getElementById",
-        "shell"
-      ]
-    },
-    {
       "source": "run-world-audit-btn",
       "namespaced": "ew-run-world-audit-btn",
       "kinds": [
@@ -1037,38 +1013,6 @@
       ]
     },
     {
-      "source": "sidecar-migration-select-all-btn",
-      "namespaced": "ew-sidecar-migration-select-all-btn",
-      "kinds": [
-        "runtime-getElementById",
-        "shell"
-      ]
-    },
-    {
-      "source": "sidecar-migration-wizard-list",
-      "namespaced": "ew-sidecar-migration-wizard-list",
-      "kinds": [
-        "runtime-getElementById",
-        "shell"
-      ]
-    },
-    {
-      "source": "sidecar-migration-wizard-overlay",
-      "namespaced": "ew-sidecar-migration-wizard-overlay",
-      "kinds": [
-        "runtime-getElementById",
-        "shell"
-      ]
-    },
-    {
-      "source": "sidecar-migration-wizard-status",
-      "namespaced": "ew-sidecar-migration-wizard-status",
-      "kinds": [
-        "runtime-getElementById",
-        "shell"
-      ]
-    },
-    {
       "source": "structured-model-custom",
       "namespaced": "ew-structured-model-custom",
       "kinds": [
@@ -1093,8 +1037,24 @@
       ]
     },
     {
+      "source": "structured-model-results",
+      "namespaced": "ew-structured-model-results",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
       "source": "structured-model-status",
       "namespaced": "ew-structured-model-status",
+      "kinds": [
+        "runtime-markup",
+        "runtime-selector"
+      ]
+    },
+    {
+      "source": "structured-thinking-picker",
+      "namespaced": "ew-structured-thinking-picker",
       "kinds": [
         "runtime-markup",
         "runtime-selector"
@@ -1319,6 +1279,13 @@
     {
       "source": "tab-w-ai",
       "namespaced": "ew-tab-w-ai",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "tab-w-architect-agent",
+      "namespaced": "ew-tab-w-architect-agent",
       "kinds": [
         "shell"
       ]
@@ -1567,6 +1534,157 @@
     {
       "source": "w-agent-proposal-only",
       "namespaced": "ew-w-agent-proposal-only",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-batch-size",
+      "namespaced": "ew-w-architect-batch-size",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-detail",
+      "namespaced": "ew-w-architect-detail",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-job",
+      "namespaced": "ew-w-architect-job",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-max-reply",
+      "namespaced": "ew-w-architect-max-reply",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-model",
+      "namespaced": "ew-w-architect-model",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-model-filters",
+      "namespaced": "ew-w-architect-model-filters",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-model-results",
+      "namespaced": "ew-w-architect-model-results",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-model-status",
+      "namespaced": "ew-w-architect-model-status",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-plan-btn",
+      "namespaced": "ew-w-architect-plan-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-plan-revise-btn",
+      "namespaced": "ew-w-architect-plan-revise-btn",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "w-architect-plan-revision",
+      "namespaced": "ew-w-architect-plan-revision",
+      "kinds": [
+        "runtime-getElementById",
+        "runtime-markup"
+      ]
+    },
+    {
+      "source": "w-architect-policy",
+      "namespaced": "ew-w-architect-policy",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-refresh-models",
+      "namespaced": "ew-w-architect-refresh-models",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-request",
+      "namespaced": "ew-w-architect-request",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-scope",
+      "namespaced": "ew-w-architect-scope",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-stream",
+      "namespaced": "ew-w-architect-stream",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-stream-card",
+      "namespaced": "ew-w-architect-stream-card",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-stream-clear",
+      "namespaced": "ew-w-architect-stream-clear",
+      "kinds": [
+        "shell"
+      ]
+    },
+    {
+      "source": "w-architect-thinking",
+      "namespaced": "ew-w-architect-thinking",
       "kinds": [
         "runtime-getElementById",
         "shell"
@@ -2001,14 +2119,6 @@
       ]
     },
     {
-      "source": "w-inline-legacy-migrate-btn",
-      "namespaced": "ew-w-inline-legacy-migrate-btn",
-      "kinds": [
-        "runtime-getElementById",
-        "shell"
-      ]
-    },
-    {
       "source": "w-inline-legacy-settings",
       "namespaced": "ew-w-inline-legacy-settings",
       "kinds": [
@@ -2183,19 +2293,10 @@
       ]
     },
     {
-      "source": "w-overview-sidecar-migrate-btn",
-      "namespaced": "ew-w-overview-sidecar-migrate-btn",
-      "kinds": [
-        "runtime-getElementById",
-        "runtime-markup"
-      ]
-    },
-    {
       "source": "w-overview-sidecar-migration",
       "namespaced": "ew-w-overview-sidecar-migration",
       "kinds": [
-        "runtime-getElementById",
-        "shell"
+        "runtime-getElementById"
       ]
     },
     {
@@ -2592,37 +2693,6 @@
       ]
     },
     {
-      "source": "w-sidecar-migrate-btn",
-      "namespaced": "ew-w-sidecar-migrate-btn",
-      "kinds": [
-        "runtime-getElementById",
-        "shell"
-      ]
-    },
-    {
-      "source": "w-sidecar-migration-controls",
-      "namespaced": "ew-w-sidecar-migration-controls",
-      "kinds": [
-        "shell"
-      ]
-    },
-    {
-      "source": "w-sidecar-migration-report",
-      "namespaced": "ew-w-sidecar-migration-report",
-      "kinds": [
-        "runtime-getElementById",
-        "shell"
-      ]
-    },
-    {
-      "source": "w-sidecar-mode",
-      "namespaced": "ew-w-sidecar-mode",
-      "kinds": [
-        "runtime-getElementById",
-        "shell"
-      ]
-    },
-    {
       "source": "w-sidecar-mode-hint",
       "namespaced": "ew-w-sidecar-mode-hint",
       "kinds": [
@@ -2834,14 +2904,6 @@
       ]
     },
     {
-      "source": "w-sidecar-restore-backup",
-      "namespaced": "ew-w-sidecar-restore-backup",
-      "kinds": [
-        "runtime-getElementById",
-        "shell"
-      ]
-    },
-    {
       "source": "w-sidecar-retrieval-limit",
       "namespaced": "ew-w-sidecar-retrieval-limit",
       "kinds": [
@@ -2994,9 +3056,26 @@
       ]
     },
     {
+      "source": "w-studio-model-filters",
+      "namespaced": "ew-w-studio-model-filters",
+      "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
       "source": "w-studio-model-results",
       "namespaced": "ew-w-studio-model-results",
       "kinds": [
+        "runtime-getElementById",
+        "shell"
+      ]
+    },
+    {
+      "source": "w-studio-model-status",
+      "namespaced": "ew-w-studio-model-status",
+      "kinds": [
+        "runtime-getElementById",
         "shell"
       ]
     },
@@ -4477,14 +4556,6 @@
       "kinds": [
         "runtime-getElementById",
         "shell"
-      ]
-    },
-    {
-      "source": "world-sidecar-inspector-migrate",
-      "namespaced": "ew-world-sidecar-inspector-migrate",
-      "kinds": [
-        "runtime-getElementById",
-        "runtime-markup"
       ]
     },
     {

@@ -220,7 +220,7 @@ function sidecarReaderVisualProjection(world, sess, entityId = '') {
     const snapshot = protocol?.readerSnapshots?.filter(item => item.status === 'active' && item.settlementStatus === 'settled').at(-1);
     const envelope = snapshot?.envelope || null;
     if (!envelope) return null;
-    const candidates = activeReaderCandidates(protocol, { sceneId: snapshot?.sceneId || protocol.activeSceneId || '' });
+    const candidates = (window.ExperimentalWorldsSidecarHooks?.activeReaderCandidates?.(protocol, { sceneId: snapshot?.sceneId || protocol.activeSceneId || '' }) || []);
     const selectedId = String(entityId || '');
     const character = candidates.find(candidate => candidate.candidateType === 'character' && (!selectedId || String(candidate.canonicalMatchId || '') === selectedId));
     const outfit = candidates.find(candidate => candidate.candidateType === 'outfit' && (!selectedId || [candidate.wearerEntityId, candidate.details?.wearerEntityId, candidate.details?.characterEntityId, candidate.subjectEntityId].some(value => String(value || '') === selectedId)));

@@ -148,7 +148,7 @@
         'global-custom-headers': 'Optional JSON object of additional request headers. Treat these as secrets: they follow Remember Keys and are excluded from exports.',
         'test-custom-conn-btn': 'Calls BASE_URL/models with the current key and headers without saving them first.',
         'test-bedrock-conn-btn': 'Verify the Bedrock API key and region by loading that region’s compatible model catalog.',
-        'remember-api-key': 'Persist API keys in this browser profile. Keys are never included in Horde exports or backups.',
+        'remember-api-key': 'Persist API keys in this browser profile. Downloadable Horde exports remain credential-free. Bridge-backed rolling recovery points include configured keys for trusted-device restoration.',
         'global-local-generation-timeout': 'Maximum idle time for a local World generation. The timer resets whenever data arrives; zero disables automatic cancellation.',
         'global-embedding-url': 'Optional separate OpenAI-compatible server used only for vector embeddings. Leave blank to use the active text provider.',
         'global-embedding-key': 'Optional bearer token for the separate embedding server. It is excluded from backups and exports.',

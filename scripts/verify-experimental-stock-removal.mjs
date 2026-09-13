@@ -60,13 +60,23 @@ assert.equal((html.match(/<script[^>]+src="app\.js/g) || []).length, 1,
     'the one application document must load exactly one app bootstrap');
 assert(!/location\.assign\s*\(/.test(html), 'the document must not switch application location to enter Experimental Worlds');
 assert(!/<iframe\b/i.test(html), 'Experimental Worlds must not be an iframe application');
-const privateRpg = html.indexOf('experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js');
-const privateCompat = html.indexOf('experiences/experimental-worlds/runtime/experimental-runtime-compat.js');
-const privateVectorMemory = html.indexOf('experiences/experimental-worlds/runtime/experimental-vector-memory.js');
-const firstExperimentalCore = html.indexOf('experiences/experimental-worlds/runtime/dossier-claims.js');
-assert(privateCompat >= 0 && privateVectorMemory >= 0 && privateRpg >= 0
+// The module architecture no longer loads the private utilities as inline
+// index.html script tags: index.html bootstraps only the persistence
+// repository, and the mode import embeds every core unit inside the generated
+// module in manifest order. The same private-before-dependent invariant is
+// therefore asserted against the generated module's unit order.
+const generatedCorePath = 'experiences/experimental-worlds/experimental-worlds-core.generated.mjs';
+const generatedCore = readFileSync(generatedCorePath, 'utf8');
+const unitPosition = name => generatedCore.indexOf(`/* BEGIN experiences/experimental-worlds/runtime/${name}`);
+const privateCompat = unitPosition('experimental-runtime-compat.js');
+const privateVectorMemory = unitPosition('experimental-vector-memory.js');
+const privateRpg = unitPosition('experimental-rpg-mechanics.js');
+const firstExperimentalCore = unitPosition('dossier-claims.js');
+assert(privateCompat >= 0 && privateVectorMemory >= 0 && privateRpg >= 0 && firstExperimentalCore >= 0
     && privateCompat < privateVectorMemory && privateVectorMemory < privateRpg && privateRpg < firstExperimentalCore,
-    'Experimental Worlds must load its private utilities, cognition cache, and pinned RPG mechanics before dependent runtime');
+    'Experimental Worlds must embed its private utilities, cognition cache, and pinned RPG mechanics before dependent runtime');
+const repositoryScript = html.indexOf('experiences/experimental-worlds/runtime/experimental-worlds-repository.js');
+assert(repositoryScript >= 0, 'index.html must bootstrap the Experimental Worlds persistence repository');
 const runtimeCompat = readFileSync('experiences/experimental-worlds/runtime/experimental-runtime-compat.js', 'utf8');
 assert(runtimeCompat.includes('ExperimentalWorldsRuntime') && runtimeCompat.includes('abortAll'),
     'Experimental Worlds must own its generation, retry, and Reader request lifecycle');

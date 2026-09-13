@@ -185,7 +185,7 @@ Omit any array you are not using. Current turn is ${turn}; schedule events a few
 
     const developments = (Array.isArray(parsed.developments) ? parsed.developments : [])
         .map(item => String(item?.summary || item || '').trim()).filter(Boolean).slice(0, 5);
-    const sidecarTimeline = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    const sidecarTimeline = true;
     if (sidecarTimeline || config.proposalOnly) {
             if (protocol) {
             protocol.backgroundProposals.push({
@@ -334,7 +334,7 @@ function validateWorldReferences(world) {
     world.entities.forEach(ent => {
         check(ent.startLocation, `NPC ${ent.name} Start`);
         check(ent.homeLocation, `NPC ${ent.name} Home`);
-        (ent.schedule || []).forEach(s => check(s.locationId, `NPC ${ent.name} Schedule @ ${s.time}`));
+        (Array.isArray(ent.schedule) ? ent.schedule : []).forEach(s => check(s.locationId, `NPC ${ent.name} Schedule @ ${s.time}`));
     });
 
     world.locations.forEach(loc => {
@@ -442,7 +442,7 @@ function renderWorldScheduler() {
                 </div>
             </div>
             <div class="blocks-container" style="display:flex; flex-direction:column; gap:10px;">
-                ${(npc.schedule || []).map((block, idx) => {
+                ${(Array.isArray(npc.schedule) ? npc.schedule : []).map((block, idx) => {
                     const selectedDays = (Array.isArray(block.days) ? block.days : (block.day ? [block.day] : []))
                         .map(day => String(day || '').trim().toLowerCase()).filter(Boolean);
                     const everyDay = !selectedDays.length || selectedDays.some(day => /^(daily|everyday)$/.test(day));
@@ -1263,6 +1263,14 @@ const REASONING_PARAM_FLAGS = Object.freeze(['reasoning', 'include_reasoning', '
 // even a small batch, which is what "the reply was cut off" actually meant.
 const STRUCTURED_MIN_OUTPUT_TOKENS = 8000;
 
+function structuredModelPricePerMillion(model) {
+    const prompt = parseFloat(model?.pricing?.prompt);
+    const completion = parseFloat(model?.pricing?.completion);
+    if (!Number.isFinite(prompt) || !Number.isFinite(completion)) return null;
+    // Structured passes read a lot and write a little, so weight accordingly.
+    return ((prompt * 3 + completion) / 4) * 1_000_000;
+}
+
 /**
  * How well a model is likely to hold a long structured answer together.
  *
@@ -1284,19 +1292,11 @@ function structuredCapabilityBand(model) {
     return band;
 }
 
-function structuredModelPricePerMillion(model) {
-    const prompt = parseFloat(model?.pricing?.prompt);
-    const completion = parseFloat(model?.pricing?.completion);
-    if (!Number.isFinite(prompt) || !Number.isFinite(completion)) return null;
-    // Structured passes read a lot and write a little, so weight accordingly.
-    return ((prompt * 3 + completion) / 4) * 1_000_000;
-}
-
 /**
- * Rank the live catalog for structured work: can emit JSON, is not a reasoning
- * model, has room for a world digest, and is cheap. Returns [] when the
- * catalog has not loaded, so the picker degrades to a plain text field rather
- * than offering ids that may no longer resolve.
+ * The short curated list for the structured-model dropdown: can emit JSON, is
+ * not a reasoning model, has room for a world digest and a complete reply, and
+ * is ranked by capability band then price. Typing in the field searches the
+ * whole live catalog instead — this list is only the headliners.
  */
 function rankStructuredModels(models, limit = 12) {
     return (Array.isArray(models) ? models : [])
@@ -1306,7 +1306,6 @@ function rankStructuredModels(models, limit = 12) {
             const price = structuredModelPricePerMillion(model);
             return {
                 id: typeof model?.id === 'string' ? model.id : '',
-                name: model?.name || model?.id || '',
                 context: Number(model?.context_length) || 0,
                 // What a pass can actually WRITE, which is the ceiling that was
                 // silently truncating replies — not the context window.
@@ -1314,9 +1313,8 @@ function rankStructuredModels(models, limit = 12) {
                 price,
                 json: STRUCTURED_PARAM_FLAGS.some(flag => params.includes(flag)),
                 reasoning: REASONING_PARAM_FLAGS.some(flag => params.includes(flag)),
-                // Sorting by price alone put two music-generation models at the
-                // top: they are cheap and report response_format, but a model
-                // that answers in audio cannot return a calibration object.
+                // A model that answers in audio cannot return a calibration
+                // object, however cheap it is.
                 textOnly: Array.isArray(outputs)
                     ? outputs.length === 1 && outputs[0] === 'text'
                     : true,                    // no modality reported: assume text
@@ -1330,11 +1328,6 @@ function rankStructuredModels(models, limit = 12) {
             // ceiling that was failing, so it is now a hard requirement.
             && (model.maxOutput === 0 || model.maxOutput >= STRUCTURED_MIN_OUTPUT_TOKENS)
             && model.price != null)
-        // Cheapest first was the wrong order: it put 4-billion-parameter models
-        // at the top, and small models are exactly the ones that lose the
-        // thread of a long structured answer. Sort by capability band first,
-        // then by price inside the band, so the default is something that can
-        // actually finish the job.
         .sort((left, right) =>
             structuredCapabilityBand(right) - structuredCapabilityBand(left)
             || left.price - right.price)
@@ -1357,6 +1350,20 @@ function structuredModelFor(world) {
     if (chosen) return chosen;
     const agent = world ? normalizeWorldAgentConfig(world).model : '';
     return agent || world?.model || ExperimentalWorldsState.globalSettings.defaultModel;
+}
+
+/**
+ * Thinking level for the audit panel's structured calls — its own preference,
+ * independent of the Architect's control. "default" sends nothing (the
+ * provider does whatever it does), "off" explicitly disables reasoning, and a
+ * level sets the effort. OpenRouter's `reasoning.effort` form is accepted
+ * across models; ones without reasoning support simply ignore it.
+ */
+function structuredReasoningFor() {
+    const effort = String(ExperimentalWorldsState.globalSettings?.structuredThinking || '').trim() || 'default';
+    if (effort === 'default') return null;
+    if (effort === 'off') return { reasoning: { enabled: false } };
+    return { reasoning: { effort } };
 }
 
 /**
@@ -1471,6 +1478,11 @@ const SOCIETY_PAIR_CAP = 60;
 // Below this many people, every pair is enumerable and cheap, so the pass asks
 // about all of them rather than leaving a hand-written world with no proposals.
 const SOCIETY_SMALL_CAST = 40;
+
+// Three minutes with no model token at all on a streamed calibration reply
+// means the upstream is wedged. Streaming models emit every few seconds, so a
+// genuinely working reply never trips this — keep-alive comments do not count.
+const CALIBRATION_STALL_TIMEOUT_MS = 180000;
 
 /**
  * The pairs whose standing actually matters, most telling first.
@@ -2341,6 +2353,69 @@ function calibrationFindingsFromSociety(world, payload, carriedFactions) {
  * up to the cut. Batches are sized so an answer fits, a batch that fails does
  * not sink the ones that worked, and whatever was learned is returned.
  */
+// Reads a streamed calibration reply. Reasoning tokens are collected
+// separately as a fallback for providers that put the whole answer there, but
+// never mix into the JSON text. The watchdog keys off real model output, not
+// raw bytes: OpenRouter sends ": OPENROUTER PROCESSING" comment keep-alives
+// that would otherwise hold a wedged upstream open forever. Three silent
+// minutes with no tokens at all means the connection is dead — error out
+// (keeping whatever arrived) instead of leaving the author's panel spinning.
+async function readCalibrationStream(response) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const textChunks = [];
+    const reasoningChunks = [];
+    let buffer = '';
+    let finishReason = '';
+    let sawOutput = false;
+    const startedAt = Date.now();
+
+    for (;;) {
+        let chunk;
+        // Backstop for a connection that never sends a byte: cancel so the
+        // hanging read rejects and the error below can surface.
+        const heartbeat = setTimeout(() => reader.cancel().catch(() => {}), CALIBRATION_STALL_TIMEOUT_MS);
+        try {
+            chunk = await reader.read();
+        } catch (error) {
+            clearTimeout(heartbeat);
+            if (sawOutput) break;
+            throw new Error('The provider stopped sending before the reply finished. Run it again — anything it had finished is kept if the reply was partly delivered.');
+        }
+        clearTimeout(heartbeat);
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith(':')) continue;   // provider keep-alive comment
+            if (!trimmed.startsWith('data:')) continue;
+            const data = trimmed.slice(5).trim();
+            if (data === '[DONE]') continue;
+            try {
+                const parsed = JSON.parse(data);
+                const choice = parsed.choices?.[0] || {};
+                if (choice.delta?.content) { textChunks.push(String(choice.delta.content)); sawOutput = true; }
+                if (choice.delta?.reasoning) { reasoningChunks.push(String(choice.delta.reasoning)); sawOutput = true; }
+                if (choice.finish_reason) finishReason = choice.finish_reason;
+            } catch (error) { /* a split JSON fragment arrives whole on the next chunk */ }
+        }
+        // Keep-alive comments keep the read loop fed forever; only model
+        // output counts as progress. No token at all for three minutes means
+        // the upstream is wedged — bail out rather than spin.
+        if (!sawOutput && Date.now() - startedAt > CALIBRATION_STALL_TIMEOUT_MS) {
+            reader.cancel().catch(() => {});
+            throw new Error('The provider accepted the request but never sent a single token (three minutes silent). Run it again, or pick a different model in the audit panel.');
+        }
+    }
+    return {
+        text: textChunks.join(''),
+        reasoning: reasoningChunks.join(''),
+        finishReason
+    };
+}
+
 async function runCalibrationPass(world, pass, onProgress) {
     if (!CALIBRATION_PASSES[pass]) throw new Error(`Unknown calibration pass: ${pass}`);
     const batches = calibrationBatches(world, pass);
@@ -2411,11 +2486,18 @@ async function runCalibrationBatch(world, pass, batch, carriedFactions) {
             // is what keeps a real answer under it.
             model,
             max_tokens: 16000,
+            // Streamed, never buffered. A non-streamed reply hands the body
+            // over only once the whole answer exists, and some providers let
+            // that connection stall forever — the author watches "Reading the
+            // world…" for eternity. A stream keeps bytes flowing and the
+            // watchdog below turns a dead one into a recoverable error.
+            stream: true,
             messages
         };
         // Constrained decoding where the provider supports it — the single most
         // reliable way to stop a model narrating its way past the token limit.
         if (useJsonMode) body.response_format = { type: 'json_object' };
+        Object.assign(body, structuredReasoningFor() || {});
 
         const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
             method: 'POST',
@@ -2431,14 +2513,10 @@ async function runCalibrationBatch(world, pass, batch, carriedFactions) {
             }
             throw new Error(errorText);
         }
-        const choice = (await response.json())?.choices?.[0] || {};
-        const message = choice.message || {};
-        if (choice.finish_reason === 'length') truncated = true;
-        let text = message.content || '';
-        if (Array.isArray(text)) text = text.map(part => part?.text || '').join(' ');
+        const { text, reasoning, finishReason } = await readCalibrationStream(response);
+        if (finishReason === 'length') truncated = true;
         // Some providers put everything in `reasoning` and leave content empty.
-        if (!String(text).trim() && message.reasoning) text = String(message.reasoning);
-        return String(text);
+        return String(text).trim() ? String(text) : reasoning;
     };
 
     let raw = await callPass(null, true);
@@ -2765,19 +2843,71 @@ function wireCalibrationControls(world, calibration, container) {
     const picker = container.querySelector('#ew-structured-model-picker');
     const custom = container.querySelector('#ew-structured-model-custom');
     if (picker && custom) {
-        const commit = async (value) => {
+        const commit = (value) => {
             ExperimentalWorldsState.globalSettings.structuredModel = String(value || '').trim().slice(0, 200);
-            try { await ExperimentalWorldsHost.persist(); } catch (error) { console.error('Could not save model choice', error); }
+            // Global settings live in the host's record — the module workspace
+            // persist never carries them.
+            ExperimentalWorldsHost.persistSharedSettings().catch(error => console.error('Could not save model choice', error));
             ExperimentalWorldsHost.notify(ExperimentalWorldsState.globalSettings.structuredModel
                 ? `Audits will use ${ExperimentalWorldsState.globalSettings.structuredModel}`
                 : "Audits will use this world's own model", 'info');
         };
-        picker.onchange = () => { custom.value = picker.value; commit(picker.value); };
-        custom.onchange = () => {
-            const value = custom.value.trim();
+        const pick = (value) => {
+            // A searched model usually is not in the curated dropdown, so the
+            // select falls back to blank rather than snapping the choice back.
             picker.value = [...picker.options].some(option => option.value === value) ? value : '';
             commit(value);
         };
+        picker.onchange = () => { custom.value = picker.value; commit(picker.value); };
+        custom.onchange = () => pick(custom.value.trim());
+
+        // Typing searches the whole live catalog — the curated dropdown only
+        // shows the headliners, but nothing is off the table. Compatible
+        // models (JSON + tools) sort ahead of the rest, cheapest first.
+        const results = container.querySelector('#ew-structured-model-results');
+        let searchToken = 0;
+        custom.addEventListener('input', async () => {
+            const query = custom.value.trim().toLowerCase();
+            if (results) results.innerHTML = '';
+            if (!query || !results) return;
+            const token = ++searchToken;
+            let models = [];
+            try { models = await ExperimentalWorldsHost.getModelCatalog({}); }
+            catch (error) { /* the field still commits an exact id by hand */ }
+            if (token !== searchToken) return;   // a newer keystroke superseded this
+            const params = model => Array.isArray(model?.supported_parameters) ? model.supported_parameters : [];
+            const compatible = model => STRUCTURED_PARAM_FLAGS.some(flag => params(model).includes(flag)) && params(model).includes('tools');
+            const matches = models
+                .filter(model => `${model?.id || ''} ${model?.name || ''}`.toLowerCase().includes(query))
+                .sort((left, right) => Number(compatible(right)) - Number(compatible(left))
+                    || (structuredModelPricePerMillion(left) ?? Number.POSITIVE_INFINITY) - (structuredModelPricePerMillion(right) ?? Number.POSITIVE_INFINITY))
+                .slice(0, 25);
+            results.innerHTML = matches.length ? matches.map(model => {
+                const price = structuredModelPricePerMillion(model);
+                const priceNote = price == null ? 'price unstated' : price === 0 ? 'free' : '$' + (price < 1 ? price.toFixed(3) : price.toFixed(2)) + '/M';
+                return `<button type="button" class="btn btn-ghost structured-model-result" data-model="${experimentalEscapeHTML(model.id)}" style="display:flex; justify-content:space-between; gap:10px; width:100%; border-radius:8px; padding:6px 10px; font-size:0.78rem;"><span style="text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${experimentalEscapeHTML(model.id)}</span><span style="color:var(--text-3); white-space:nowrap;">${priceNote} · ${Math.round((Number(model?.context_length) || 0) / 1000)}k ctx${compatible(model) ? '' : ' · unverified'}</span></button>`;
+            }).join('') : '<div class="form-hint">Nothing in the live catalog matches that — an exact id typed above is still used as-is.</div>';
+            results.querySelectorAll('.structured-model-result').forEach(button => button.onclick = () => {
+                custom.value = button.dataset.model;
+                results.innerHTML = '';
+                pick(button.dataset.model);
+            });
+        });
+
+        // The thinking level is the other tooling preference: saved
+        // immediately, and sent with every calibration and Deep Audit call.
+        // Global settings live in the host's record, so they persist through
+        // the host's settings writer, not the module workspace.
+        const thinking = container.querySelector('#ew-structured-thinking-picker');
+        if (thinking) {
+            thinking.onchange = () => {
+                ExperimentalWorldsState.globalSettings.structuredThinking = thinking.value;
+                ExperimentalWorldsHost.persistSharedSettings().catch(error => console.error('Could not save thinking level', error));
+                ExperimentalWorldsHost.notify(thinking.value === 'default'
+                    ? 'Audits will let the model decide how much to think'
+                    : `Audits will ${thinking.value === 'off' ? 'skip' : `think at ${thinking.value} effort`}`, 'info');
+            };
+        }
 
         // Populated from the live catalog rather than a list written by hand,
         // which is how a retired model id ended up being offered as a
@@ -3068,14 +3198,19 @@ function renderWorldAudit() {
                 <label class="form-label" style="margin:0;">🧮 Model for audits &amp; calibration</label>
                 <button id="ew-structured-model-refresh" class="btn btn-ghost" style="font-size:0.68rem; padding:3px 9px; white-space:nowrap;">↻ Refresh list</button>
             </div>
-            <p class="form-hint" style="margin:4px 0 8px;">Used by the Deep Audit, every calibration pass, the chronicle classifier and the World Agent — but never for narration. The list is pulled live from your selected provider and shows only models that report being able to return JSON and are not reasoning models — those spend their whole budget thinking and return nothing usable. Cheapest first. Leave blank to use this world's own model.</p>
+            <p class="form-hint" style="margin:4px 0 8px;">Used by the Deep Audit, every calibration pass, the chronicle classifier and the World Agent — but never for narration. The dropdown is the shortlist: models that report JSON output, are not reasoning-only, and can hold a world digest. Typing in the field searches every model in the live catalog instead. Leave blank to use this world's own model.</p>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
                 <select id="ew-structured-model-picker" class="form-select" style="flex:1; min-width:200px;">
                     <option value="">Loading provider models…</option>
                 </select>
                 <input type="text" id="ew-structured-model-custom" class="form-input" style="flex:1; min-width:200px;"
-                       placeholder="…or type any OpenRouter model id" value="${experimentalEscapeHTML(activeStructured)}">
+                       placeholder="…or type to search every model" value="${experimentalEscapeHTML(activeStructured)}" autocomplete="off">
+                <select id="ew-structured-thinking-picker" class="form-select" style="width:auto; min-width:130px;">
+                    ${['default', 'off', 'low', 'medium', 'high'].map(level => `
+                        <option value="${level}" ${(ExperimentalWorldsState.globalSettings.structuredThinking || 'default') === level ? 'selected' : ''}>Thinking: ${level}</option>`).join('')}
+                </select>
             </div>
+            <div id="ew-structured-model-results" style="display:flex; flex-direction:column; gap:4px; margin-top:8px;"></div>
             <div class="form-hint" id="ew-structured-model-status" style="margin-top:6px;">Checking which models can do this…</div>
         </div>`;
 
@@ -3216,7 +3351,7 @@ function renderWorldAudit() {
             world.entities.forEach(ent => {
                 if (ent.startLocation === oldRef) ent.startLocation = newRef;
                 if (ent.homeLocation === oldRef) ent.homeLocation = newRef;
-                (ent.schedule || []).forEach(s => {
+                (Array.isArray(ent.schedule) ? ent.schedule : []).forEach(s => {
                     if (s.locationId === oldRef) s.locationId = newRef;
                 });
             });
@@ -3392,7 +3527,8 @@ Return ONLY JSON:
             body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({
                 model: structuredModelFor(world),
                 max_tokens: 4000, // reasoning models eat budget before emitting content
-                messages
+                messages,
+                ...structuredReasoningFor()
             }, world))
         }).finally(() => clearTimeout(timeout));
         if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error?.message || response.statusText);
@@ -3933,7 +4069,7 @@ function setupVectorMemoryViewerEvents() {
         worldOpenBtn.onclick = () => {
             const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
             const sess = getCurrentWorldSession();
-            if (world && sess && window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
+            if (world && sess) {
                 const protocol = window.ExperimentalWorldsSidecarHooks.normalizeWorldTimeline(world, sess);
                 window.ExperimentalWorldsSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
             }
@@ -4000,10 +4136,10 @@ function setupVectorMemoryViewerEvents() {
             const sess = getCurrentWorldSession();
             if (!sess) return ExperimentalWorldsHost.notify('No active world session.', 'error');
             if (currentVectorTab === 'episodic') {
-                if (window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(ExperimentalWorldsState.worlds.find(world => world.id === ExperimentalWorldsState.activeWorldId), sess)) {
+                {
                     const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar);
                     if (graph) { graph.worldHistory = []; graph.episodes = []; graph.scenes = []; graph.sequences = []; graph.lastEpisodeTurnCount = 0; graph.locationReferences = []; graph.cognition = []; sess.sidecar.jobs = []; }
-                } else sess.episodicMemories = [];
+                }
             } else {
                 const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar);
                 if (!graph) return ExperimentalWorldsHost.notify('Sidecar memory is unavailable for this timeline.', 'error');
@@ -4084,19 +4220,8 @@ function setupVectorMemoryViewerEvents() {
                     const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
                     const sess = getCurrentWorldSession();
                     if (!sess || !world) throw new Error('No active world session');
-                    if (window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)) {
-                        const memory = effectiveSidecarMemoryConfig(world);
-                        await runSidecarBackgroundMemoryJobs(world, sess, { force: true, source: 'manual_force_archive', priority: 'manual' });
-                        renderVectorMemoryList();
-                        return;
-                    }
-                    // Full rebuild: clear stale memories and re-consolidate from scratch
-                    // (otherwise we'd duplicate the entire archive on top of old entries).
-                    sess.episodicMemories = [];
-                    sess.lastConsolidatedIndex = 0;
-                    while (sess.history.length - (sess.lastConsolidatedIndex || 0) >= 8) {
-                        await consolidateSessionEpisodicMemory(sess, world);
-                    }
+                    await runSidecarBackgroundMemoryJobs(world, sess, { force: true, source: 'manual_force_archive', priority: 'manual' });
+                    renderVectorMemoryList();
                 } else {
                     const chatMemory = ExperimentalWorldsHost.chatMemoryContext();
                     const session = chatMemory?.session;
@@ -4173,18 +4298,13 @@ async function renderVectorMemoryList(filterQuery = "") {
         // Retrieve rolling episodic summaries
         if (isWorld) {
             const sess = getCurrentWorldSession();
-            const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
-            const graph = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess)
-                ? window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess.sidecar) : null;
+            const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph?.(sess?.sidecar);
             if (graph) {
                 currentEpisodicStore = [...graph.worldHistory, ...graph.episodes, ...(graph.scenes || []), ...(graph.sequences || [])];
                 candidates = currentEpisodicStore.filter(record => record.status === 'active').map(record => ({
                     text: record.kind === 'episode' ? `[EPISODE] ${record.text || record.summary || ''}` : record.kind === 'scene' ? `[SCENE] ${record.text || record.summary || ''}` : record.kind === 'sequence' ? `[SEQUENCE] ${record.text || record.summary || ''}` : `[WORLD HISTORY] ${record.text || record.narration || ''}`,
                     embedding: record.embedding, embeddingNamespace: record.embeddingNamespace, source: record.kind || 'world_history', ref: record
                 }));
-            } else if (sess && sess.episodicMemories) {
-                currentEpisodicStore = sess.episodicMemories;
-                candidates = sess.episodicMemories.map(m => ({ text: m.text, embedding: m.embedding, source: 'episodic', ref: m }));
             }
         } else {
             const session = ExperimentalWorldsHost.chatMemoryContext()?.session;
@@ -4418,24 +4538,17 @@ async function renderVectorMemoryList(filterQuery = "") {
             ? `<span style="font-size:0.6rem; font-weight:800; text-transform:uppercase; color:var(--success); opacity:0.85;">⚡ EMBEDDED</span>`
             : `<span style="font-size:0.6rem; font-weight:800; text-transform:uppercase; color:var(--text-3); opacity:0.6;">⏳ RAW TEXT</span>`;
 
-        // Legacy episodic records retain full edit controls. Sidecar cognition and
+        // Legacy episodic records are gone. Sidecar cognition and
         // unresolved-place records are independently removable, but not silently
         // rewritten: regeneration preserves their source provenance.
-        const editable = currentVectorTab === 'episodic' && item.ref && currentEpisodicStore
-            && !(isWorld && window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(ExperimentalWorldsState.worlds.find(world => world.id === ExperimentalWorldsState.activeWorldId), getCurrentWorldSession()));
         const removableSidecarRecord = isWorld && ['episodic', 'cognition', 'unresolved'].includes(currentVectorTab)
-            && item.ref && window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(ExperimentalWorldsState.worlds.find(world => world.id === ExperimentalWorldsState.activeWorldId), getCurrentWorldSession());
+            && item.ref;
         const escaped = (item.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-        const actionBtns = editable ? `
-            <div style="display:flex; gap:6px;">
-                <button class="tool-btn epi-pin-btn" title="Keep this memory in recall" style="font-size:11px; padding:2px 8px;">${item.ref?.pinned ? '★ Pinned' : '☆ Pin'}</button>
-                <button class="tool-btn epi-edit-btn" title="Edit memory" style="font-size:11px; padding:2px 8px;">✎ Edit</button>
-                <button class="tool-btn tool-btn-danger epi-del-btn" title="Delete memory" style="font-size:11px; padding:2px 8px;">✕</button>
-            </div>` : (removableSidecarRecord ? `
+        const actionBtns = removableSidecarRecord ? `
             <div style="display:flex; gap:6px;">
                 <button class="tool-btn tool-btn-danger sidecar-memory-del-btn" title="Delete this derived record" style="font-size:11px; padding:2px 8px;">✕ Delete</button>
-            </div>` : '');
+            </div>` : '';
 
         const metadata = item.ref ? [
             String(item.ref.type || 'episode').replace('_', ' '),
@@ -4452,58 +4565,7 @@ async function renderVectorMemoryList(filterQuery = "") {
             </div>
             ${metadata ? `<div style="font-size:0.68rem; color:var(--text-3); text-transform:uppercase; letter-spacing:.04em;">${experimentalEscapeHTML(metadata)}</div>` : ''}
             <div class="epi-text" style="font-size:0.9rem; line-height:1.5; color:var(--text); white-space:pre-wrap;">${escaped}</div>
-            ${editable ? `<textarea class="form-textarea epi-edit-box" rows="6" style="display:none;">${escaped}</textarea>` : ''}
         `;
-
-        if (editable) {
-            const ref = item.ref;
-            const textDiv = card.querySelector('.epi-text');
-            const box = card.querySelector('.epi-edit-box');
-            const editBtn = card.querySelector('.epi-edit-btn');
-            const delBtn = card.querySelector('.epi-del-btn');
-            const pinBtn = card.querySelector('.epi-pin-btn');
-
-            pinBtn.onclick = async () => {
-                ref.pinned = !ref.pinned;
-                ref.updatedAt = Date.now();
-                await ExperimentalWorldsHost.persist();
-                renderVectorMemoryList(filterQuery);
-            };
-
-            delBtn.onclick = async () => {
-                const i = currentEpisodicStore.indexOf(ref);
-                if (i === -1) return;
-                currentEpisodicStore.splice(i, 1);
-                await ExperimentalWorldsHost.persist();
-                renderVectorMemoryList(filterQuery);
-                ExperimentalWorldsHost.notify('Memory deleted', 'success');
-            };
-
-            editBtn.onclick = async () => {
-                const editing = box.style.display !== 'none';
-                if (!editing) {
-                    textDiv.style.display = 'none';
-                    box.style.display = 'block';
-                    box.focus();
-                    editBtn.textContent = '✓ Save';
-                } else {
-                    const newText = box.value.trim();
-                    if (!newText) return ExperimentalWorldsHost.notify('Memory text cannot be empty', 'error');
-                    ref.text = newText;
-                    try {
-                        ref.embedding = await ExperimentalWorldsHost.getEmbedding(newText);
-                        ref.embeddingNamespace = ExperimentalWorldsVectorMemory.namespace();
-                        ref.updatedAt = Date.now();
-                    } catch (e) {
-                        console.warn('Re-embed failed, keeping text only:', e);
-                        delete ref.embedding;
-                    }
-                    await ExperimentalWorldsHost.persist();
-                    renderVectorMemoryList(filterQuery);
-                    ExperimentalWorldsHost.notify('Memory updated', 'success');
-                }
-            };
-        }
 
         if (removableSidecarRecord) {
             const delBtn = card.querySelector('.sidecar-memory-del-btn');

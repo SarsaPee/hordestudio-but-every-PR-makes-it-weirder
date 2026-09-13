@@ -13,111 +13,66 @@ const sources = {
     bootstrap: fs.readFileSync(new URL('host-adapters/experimental-worlds/experimental-worlds-persistence-bootstrap.js', root), 'utf8')
 };
 
-function createIndexedDB() {
-    const databases = new Map();
-    const defer = callback => queueMicrotask(callback);
-
-    function databaseFor(record) {
-        return {
-            objectStoreNames: { contains: name => record.stores.has(name) },
-            createObjectStore(name) {
-                if (!record.stores.has(name)) record.stores.set(name, new Map());
-                return {};
-            },
-            transaction(names, mode) {
-                const name = Array.isArray(names) ? names[0] : names;
-                const records = record.stores.get(name);
-                if (!records) throw new Error(`Unknown fake IndexedDB store ${name}`);
-                const before = mode === 'readwrite' ? structuredClone([...records.entries()]) : null;
-                let pending = 0;
-                let finished = false;
-                let completionQueued = false;
-                const transaction = {
-                    error: null,
-                    oncomplete: null,
-                    onerror: null,
-                    onabort: null,
-                    objectStore() {
-                        const request = operation => {
-                            const result = {};
-                            pending += 1;
-                            defer(() => {
-                                if (finished) return;
-                                try {
-                                    result.result = operation();
-                                    result.onsuccess?.({ target: result });
-                                } catch (error) {
-                                    transaction.error = error;
-                                    finished = true;
-                                    if (before) {
-                                        records.clear();
-                                        before.forEach(([key, value]) => records.set(key, value));
-                                    }
-                                    result.error = error;
-                                    result.onerror?.({ target: result });
-                                    transaction.onerror?.({ target: transaction });
-                                    transaction.onabort?.({ target: transaction });
-                                } finally {
-                                    pending -= 1;
-                                    queueCompletion();
-                                }
-                            });
-                            return result;
-                        };
-                        return {
-                            get: key => request(() => structuredClone(records.get(key))),
-                            put: (value, key) => request(() => {
-                                records.set(key, structuredClone(value));
-                                return key;
-                            }),
-                            delete: key => request(() => records.delete(key))
-                        };
-                    }
-                };
-                const queueCompletion = () => {
-                    if (finished || pending || completionQueued) return;
-                    completionQueued = true;
-                    defer(() => {
-                        completionQueued = false;
-                        if (!finished && pending === 0) {
-                            finished = true;
-                            transaction.oncomplete?.({ target: transaction });
-                        }
-                    });
-                };
-                defer(queueCompletion);
-                return transaction;
-            },
-            close() {}
-        };
-    }
-
+function createRootFileService() {
+    let revision = 0;
+    let records = {
+        worlds: [], worldInstances: {}, activeWorldId: null,
+        worldRecoverySnapshots: {}, worldMediaAssets: {}, workspace: {},
+        savedModelCatalogs: {}, roleplayOSSources: [], theme: 'default',
+        generation: 0, restoreGeneration: 0
+    };
+    const response = (status, payload) => ({
+        ok: status >= 200 && status < 300,
+        status,
+        async json() { return structuredClone(payload); }
+    });
+    const describe = () => ({
+        authority: 'root-files', format: 'horde-studio-experimental-worlds-store',
+        version: 1, revision, checksum: `fake-${revision}`, writtenAt: Date.now(),
+        records: structuredClone(records), relativePath: 'data/experimental-worlds/state.json',
+        recovery: null
+    });
     return {
-        open(name, version) {
-            const request = {};
-            defer(() => {
-                const created = !databases.has(name);
-                if (created) databases.set(name, { version, stores: new Map() });
-                const record = databases.get(name);
-                request.result = databaseFor(record);
-                if (created) request.onupgradeneeded?.({ target: request });
-                request.onsuccess?.({ target: request });
-            });
-            return request;
+        async fetch(url, init = {}) {
+            assert.equal(String(url), '/experimental-worlds/persistence');
+            if (!init.method || init.method === 'GET') return response(200, describe());
+            const body = JSON.parse(init.body || '{}');
+            if (body.operation === 'purge') {
+                revision = 0;
+                records = {
+                    worlds: [], worldInstances: {}, activeWorldId: null,
+                    worldRecoverySnapshots: {}, worldMediaAssets: {}, workspace: {},
+                    savedModelCatalogs: {}, roleplayOSSources: [], theme: 'default',
+                    generation: 0, restoreGeneration: 0
+                };
+                return response(200, describe());
+            }
+            if (Number(body.expectedRevision) !== revision) {
+                return response(409, { error: 'root save changed', ...describe() });
+            }
+            if (body.operation === 'setMany') Object.assign(records, structuredClone(body.records));
+            else if (body.operation === 'removeMany') body.keys.forEach(key => delete records[key]);
+            else if (body.operation === 'publishSnapshot') {
+                const unchanged = Object.entries(body.snapshot || {})
+                    .every(([key, value]) => JSON.stringify(records[key]) === JSON.stringify(value));
+                if (unchanged && body.invalidateRestore !== true) return response(200, describe());
+                const generation = Number(records.generation) + 1;
+                const restoreGeneration = Number(records.restoreGeneration)
+                    + (body.invalidateRestore === true ? 1 : 0);
+                records = {
+                    ...records, ...structuredClone(body.snapshot), generation, restoreGeneration,
+                    lastWrite: { reason: body.reason, at: new Date().toISOString() }
+                };
+            } else return response(400, { error: 'unknown operation' });
+            revision += 1;
+            return response(200, describe());
         },
-        deleteDatabase(name) {
-            const request = {};
-            defer(() => {
-                databases.delete(name);
-                request.onsuccess?.({ target: request });
-            });
-            return request;
-        },
-        databases
+        read: () => structuredClone(records),
+        externalWrite(mutator) { mutator(records); revision += 1; }
     };
 }
 
-function createContext(indexedDB = createIndexedDB()) {
+function createContext(authority = createRootFileService()) {
     let recoveryNotifications = 0;
     const localRecords = new Map();
     const context = vm.createContext({
@@ -126,7 +81,7 @@ function createContext(indexedDB = createIndexedDB()) {
         TextEncoder,
         Uint8Array,
         structuredClone,
-        indexedDB,
+        fetch: authority.fetch,
         setTimeout,
         clearTimeout
     });
@@ -146,7 +101,7 @@ function createContext(indexedDB = createIndexedDB()) {
     const loadRuntimeAdapters = () => {
         for (const name of ['state', 'host']) vm.runInContext(sources[name], context, { filename: name });
     };
-    return { context, indexedDB, loadRuntimeAdapters, recoveryNotifications: () => recoveryNotifications };
+    return { context, authority, loadRuntimeAdapters, recoveryNotifications: () => recoveryNotifications };
 }
 
 function json(value) {
@@ -165,6 +120,8 @@ function payload(id, workspace = {}) {
             studioTab: 'presentation', subViews: [], revision: 7, take: 2, attempt: 1,
             futureOpaqueField: { keep: true }, ...workspace
         },
+        savedModelCatalogs: { openrouter: { version: 1, fetchedAt: 123, models: [{ id: `${id}-model` }] } },
+        roleplayOSSources: [{ id: `${id}-source`, name: `Source ${id}` }],
         theme: 'midnight'
     };
 }
@@ -177,7 +134,9 @@ const repository = context.ExperimentalWorldsRepository;
 // Blank-page bootstrap: there is deliberately no document, fetch, gameplay,
 // ScenePulse, or application state in this VM.
 const initial = await bootstrap.start();
-assert.equal(repository.DB_NAME, 'HordeStudioExperimentalWorldsDB');
+assert.equal(repository.AUTHORITY, 'root-files');
+assert.equal(repository.ROOT_RELATIVE_PATH, 'data/experimental-worlds/state.json');
+assert.equal(sources.repository.includes('indexedDB'), false);
 assert.deepEqual(Array.from(context.HordeBackupDomains.registered()), ['experimental-worlds']);
 assert.equal(initial.defaultEnabled, false);
 assert.equal(initial.enabled, false);
@@ -219,16 +178,40 @@ assert.equal(saved.worldMediaAssets.before[0].id, 'before-image');
 assert.equal(saved.workspace.route, 'play');
 assert.equal(saved.workspace.studioTab, 'presentation');
 assert.deepEqual(json(saved.workspace.futureOpaqueField), { keep: true });
+assert.equal(saved.savedModelCatalogs.openrouter.models[0].id, 'before-model');
+assert.equal(saved.roleplayOSSources[0].id, 'before-source');
 assert.equal(saved.theme, 'midnight');
 const runtimeReadback = await bootstrap.runtimeRepository.snapshot();
 assert.equal(runtimeReadback.worlds[0].mediaAssets[0].id, 'before-image');
+// Mount-time hydration must bypass the bootstrap's cached records. This is the
+// browser-refresh boundary: a newer root publication must be visible before
+// an Experimental shell can render or persist its library.
+harness.authority.externalWrite(records => {
+    records.worlds.push({ id: 'external', name: 'Externally published World' });
+});
+const freshRuntimeReadback = await bootstrap.runtimeRepository.snapshot();
+assert.equal(freshRuntimeReadback.worlds.some(world => world.id === 'external'), true);
 await bootstrap.runtimeRepository.writeSnapshot({
-    ...runtimeReadback,
-    workspace: { ...runtimeReadback.workspace, futureOpaqueField: { keep: 'through-facade' } }
+    ...freshRuntimeReadback,
+    workspace: { ...freshRuntimeReadback.workspace, futureOpaqueField: { keep: 'through-facade' } }
 }, 'runtime-facade-save');
 const facadeSaved = await repository.snapshot();
 assert.deepEqual(json(facadeSaved.workspace.futureOpaqueField), { keep: 'through-facade' });
 assert.equal(facadeSaved.worldMediaAssets.before[0].id, 'before-image');
+// A host-catalog startup refresh can produce a new timestamp without changing
+// any portable model data. That must not make the persisted Experimental
+// snapshot look different (and therefore must not feed rolling recovery with
+// another copy of every World/media payload).
+await bootstrap.runtimeRepository.writeSnapshot({
+    ...freshRuntimeReadback,
+    workspace: facadeSaved.workspace,
+    savedModelCatalogs: {
+        ...freshRuntimeReadback.savedModelCatalogs,
+        openrouter: { ...freshRuntimeReadback.savedModelCatalogs.openrouter, fetchedAt: 999999 }
+    }
+}, 'catalog-timestamp-only');
+const timestampStable = await repository.snapshot();
+assert.equal(timestampStable.savedModelCatalogs.openrouter.fetchedAt, 123);
 await bootstrap.persistWorkspace({
     ...facadeSaved.workspace,
     subViews: ['inspector'],
@@ -239,7 +222,7 @@ assert.deepEqual(json(workspaceSaved.workspace.subViews), ['inspector']);
 assert.deepEqual(json(workspaceSaved.workspace.futureOpaqueField), { keep: 'workspace-only' });
 assert.equal(workspaceSaved.worldMediaAssets.before[0].id, 'before-image');
 assert.equal(harness.recoveryNotifications(), 3);
-assert.equal((await bootstrap.discover()).worldCount, 1);
+assert.equal((await bootstrap.discover()).worldCount, 2);
 
 const lifecycle = [];
 let pendingWorkspaceFlush = null;

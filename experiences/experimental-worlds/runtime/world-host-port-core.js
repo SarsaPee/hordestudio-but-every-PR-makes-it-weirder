@@ -804,15 +804,17 @@ function configureContextSliderForModel(sliderId, modelId) {
     if (!slider) return;
 
     let physicalLimit = 102400; // Default fallback context limit if model is unknown
-    if (ExperimentalWorldsHost.modelCatalog().length > 0 && modelId) {
-        const matched = ExperimentalWorldsHost.modelCatalog().find(m => m.id === modelId);
+    if (modelId) {
+        const saved = savedExperimentalModelCatalog(ExperimentalWorldsState.globalSettings?.apiProvider);
+        const matched = ExperimentalWorldsHost.modelCatalog().find(m => m.id === modelId)
+            || saved.find(m => m.id === modelId);
         if (matched && matched.context_length) {
             physicalLimit = matched.context_length;
         }
     }
 
     slider.max = physicalLimit;
-    
+
     // Adjust slider stepping so it's smooth and highly responsive
     if (physicalLimit <= 32768) {
         slider.step = 1024;
@@ -823,6 +825,173 @@ function configureContextSliderForModel(sliderId, modelId) {
     } else {
         slider.step = 16384;
     }
+}
+
+// --- Saved provider model catalogs (Virtual Human layout, module-owned
+//     instance). The record shape and force-refresh-then-persist flow are
+//     ported from the host's normalizeStoredOpenRouterModelCatalog /
+//     getSharedOpenRouterModelCatalog pair, but the store lives in this
+//     module's own state (ExperimentalWorldsState.savedModelCatalogs) and its
+//     own repository record, so it never reads or writes the host's
+//     globalSettings catalog. ---
+const EXPERIMENTAL_SAVED_CATALOG_MAX_MODELS = 2000;
+const EXPERIMENTAL_SAVED_CATALOG_MAX_ENTRY_JSON = 20000;
+
+function normalizeStoredExperimentalModelCatalog(value) {
+    const source = Array.isArray(value?.models) ? value.models : [];
+    const seen = new Set();
+    const models = [];
+    source.forEach(raw => {
+        if (!experimentalIsPlainObject(raw) || typeof raw.id !== 'string') return;
+        const id = raw.id.trim().slice(0, 300);
+        if (!id || seen.has(id)) return;
+        const architecture = experimentalIsPlainObject(raw.architecture) ? raw.architecture : {};
+        const pricing = experimentalIsPlainObject(raw.pricing) ? raw.pricing : {};
+        const topProvider = experimentalIsPlainObject(raw.top_provider) ? raw.top_provider : {};
+        const entry = {
+            id,
+            name: String(raw.name || id).trim().slice(0, 500),
+            description: String(raw.description || '').slice(0, 4000),
+            context_length: Number(raw.context_length) || 0,
+            architecture: {
+                input_modalities: Array.isArray(architecture.input_modalities) ? architecture.input_modalities.slice(0, 12) : ['text'],
+                output_modalities: Array.isArray(architecture.output_modalities) ? architecture.output_modalities.slice(0, 12) : ['text']
+            },
+            // OpenRouter lists parameter names; NanoGPT-style image catalogs
+            // describe them as an object. Both survive so sidecar metadata and
+            // the model info card keep working from the saved record.
+            supported_parameters: Array.isArray(raw.supported_parameters)
+                ? raw.supported_parameters.slice(0, 100)
+                : experimentalIsPlainObject(raw.supported_parameters) ? raw.supported_parameters : [],
+            pricing: {
+                prompt: String(pricing.prompt ?? ''), completion: String(pricing.completion ?? ''),
+                internal_reasoning: String(pricing.internal_reasoning ?? ''),
+                input_cache_read: String(pricing.input_cache_read ?? '')
+            },
+            top_provider: {
+                max_completion_tokens: Number(topProvider.max_completion_tokens) || 0
+            },
+            supported_voices: Array.isArray(raw.supported_voices) ? raw.supported_voices.slice(0, 200) : []
+        };
+        let json;
+        try { json = JSON.stringify(entry); } catch (_) { return; }
+        if (!json || json.length > EXPERIMENTAL_SAVED_CATALOG_MAX_ENTRY_JSON) return;
+        seen.add(id);
+        models.push(entry);
+    });
+    return {
+        version: 1,
+        fetchedAt: Number.isFinite(Number(value?.fetchedAt)) ? Number(value.fetchedAt) : 0,
+        models: models.slice(0, EXPERIMENTAL_SAVED_CATALOG_MAX_MODELS)
+    };
+}
+
+function savedExperimentalModelCatalog(provider) {
+    const key = ExperimentalWorldsHost.normalizedProviderId(provider || '');
+    if (!key) return [];
+    const store = ExperimentalWorldsState.savedModelCatalogs;
+    if (!experimentalIsPlainObject(store)) return [];
+    return normalizeStoredExperimentalModelCatalog(store[key]).models;
+}
+
+function rememberExperimentalModelCatalog(provider, models) {
+    const key = ExperimentalWorldsHost.normalizedProviderId(provider || '');
+    if (!key || !Array.isArray(models) || !models.length) return false;
+    const catalog = normalizeStoredExperimentalModelCatalog({ models, fetchedAt: Date.now() });
+    if (!catalog.models.length) return false;
+    if (!experimentalIsPlainObject(ExperimentalWorldsState.savedModelCatalogs)) {
+        ExperimentalWorldsState.savedModelCatalogs = {};
+    }
+    ExperimentalWorldsState.savedModelCatalogs[key] = catalog;
+    // This is public catalog metadata only; credentials remain in Settings and
+    // are never copied into the transferable record.
+    ExperimentalWorldsHost.persist().catch(error =>
+        console.warn('Experimental Worlds model metadata loaded but could not be cached locally:', error));
+    return true;
+}
+
+// --- shared model-picker helpers (stock app.js ports, verbatim behavior) ---
+
+function modelOutputModalities(model) {
+    const architecture = experimentalIsPlainObject(model?.architecture) ? model.architecture : {};
+    if (Array.isArray(architecture.output_modalities)) {
+        return architecture.output_modalities.map(value => String(value).toLowerCase());
+    }
+    const modality = String(architecture.modality || '').toLowerCase();
+    const outputSide = modality.includes('->') ? modality.split('->').pop() : '';
+    return outputSide ? outputSide.split(/[+,/]/).map(value => value.trim()).filter(Boolean) : [];
+}
+
+function isExperimentalTextCapableModel(model) {
+    if (!model || typeof model.id !== 'string') return false;
+    const outputs = modelOutputModalities(model);
+    if (outputs.length) return outputs.includes('text');
+    const id = model.id.toLowerCase();
+    return !/(?:^|[/._-])(?:embedding|embed|rerank|moderation|whisper|transcrib|tts|speech|voice|image|video)(?:$|[/._-])/i.test(id);
+}
+
+function rankExperimentalTextModels(models) {
+    return (Array.isArray(models) ? models : [])
+        .filter(isExperimentalTextCapableModel)
+        .map(model => {
+            const parameters = Array.isArray(model.supported_parameters)
+                ? model.supported_parameters.map(value => String(value)) : [];
+            const tools = parameters.includes('tools') || parameters.includes('tool_choice');
+            const json = parameters.includes('response_format') || parameters.includes('structured_outputs');
+            const promptPrice = Number(model?.pricing?.prompt);
+            const inputModalities = Array.isArray(model?.architecture?.input_modalities)
+                ? model.architecture.input_modalities.map(value => String(value).toLowerCase())
+                : ['text'];
+            return {
+                id: model.id,
+                name: model.name || model.id,
+                contextLength: Number(model.context_length) || 0,
+                supportsTools: tools,
+                supportsJSON: json,
+                capabilitiesKnown: parameters.length > 0,
+                supportedParams: parameters,
+                inputModalities,
+                promptPrice: Number.isFinite(promptPrice) && promptPrice >= 0 ? promptPrice : null,
+                description: String(model.description || ''),
+                maxOutput: Number(model?.top_provider?.max_completion_tokens) || 0
+            };
+        })
+        .sort(compareModelPickerAlphabetically);
+}
+
+function experimentalTextModelPriceLabel(price) {
+    if (!Number.isFinite(price)) return '';
+    const perMillion = price * 1000000;
+    if (perMillion === 0) return 'Free input';
+    return `$${perMillion < 0.01 ? perMillion.toFixed(4) : perMillion.toFixed(2)}/M input`;
+}
+
+// Model names are commonly remembered as separate family and version words
+// (for example "flash 3.8" rather than the catalog's "Gemini 3.8 Flash").
+// Treat whitespace as an AND query so the order the author remembers does not
+// determine whether a model is discoverable.
+function modelSearchTerms(query) {
+    return String(query || '').toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+}
+
+function matchesModelSearch(candidate, query) {
+    const terms = modelSearchTerms(query);
+    if (!terms.length) return true;
+    const text = typeof candidate === 'string'
+        ? candidate
+        : [candidate?.name, candidate?.label, candidate?.id, candidate?.value, candidate?.description, candidate?.meta]
+            .filter(Boolean).join(' ');
+    const searchable = text.toLocaleLowerCase();
+    return terms.every(term => searchable.includes(term));
+}
+
+function compareModelPickerAlphabetically(left, right) {
+    const leftName = String(left?.name || left?.label || left?.id || left?.value || '');
+    const rightName = String(right?.name || right?.label || right?.id || right?.value || '');
+    return leftName.localeCompare(rightName, undefined, { sensitivity: 'base', numeric: true })
+        || String(left?.id || left?.value || '').localeCompare(String(right?.id || right?.value || ''), undefined, {
+            sensitivity: 'base', numeric: true
+        });
 }
 
 async function hydrateChatMemoryEmbedding(record) {

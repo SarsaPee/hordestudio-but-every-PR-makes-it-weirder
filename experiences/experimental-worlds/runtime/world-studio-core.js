@@ -84,71 +84,36 @@ function createNewWorld() {
     document.querySelector('.world-studio-tab[data-tab="w-overview"]')?.click();
 }
 
-const SIDECAR_PIPELINE_DISABLED_MESSAGE = "disabled because the current state pipeline doesn't utilise this feature";
-
 function worldUsesSidecarPipeline(world = ExperimentalWorldsState.editingWorld) {
-    return window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world)?.mode === 'sidecar';
+    // Sidecar is the only pipeline; every world uses it.
+    return true;
 }
 
 function renderStatePipelineConfig(world = ExperimentalWorldsState.editingWorld) {
-    const mode = worldUsesSidecarPipeline(world) ? 'sidecar' : 'inline_legacy';
     document.querySelectorAll('[data-pipeline-settings]').forEach(section => {
-        const visible = section.dataset.pipelineSettings === mode;
+        const visible = section.dataset.pipelineSettings === 'sidecar';
         section.classList.toggle('hidden', !visible);
         section.setAttribute('aria-hidden', visible ? 'false' : 'true');
     });
     const hint = document.getElementById('ew-w-state-pipeline-hint');
-    if (hint) hint.textContent = mode === 'sidecar'
-        ? 'Sidecar is active. It is the only canonical state authority for this world.'
-        : 'Compatibility mode for existing timelines. Inline Legacy owns its receipt repair and classifier paths.';
+    if (hint) hint.textContent = 'ScenePulse leads scene interpretation and World lookups; Sidecar adjudicates its proposals; the native reducer remains the final canonical authority.';
 }
 
-// Sidecar is deliberately visible in Studio before migration: authors should
-// be able to discover what the new pipeline unlocks.  It must not, however,
-// look editable while Inline Legacy still owns state, otherwise a world can be
-// configured with mechanics that its active turn pipeline will never consume.
 function setSidecarStudioFeatureAvailability(world = ExperimentalWorldsState.editingWorld) {
-    const sidecarActive = worldUsesSidecarPipeline(world);
     renderStatePipelineConfig(world);
-    document.querySelectorAll('[data-sidecar-feature]').forEach(feature => {
-        const unavailable = !sidecarActive;
-        feature.classList.toggle('sidecar-feature-disabled', unavailable);
-        feature.setAttribute('aria-disabled', unavailable ? 'true' : 'false');
-        if (unavailable) {
-            feature.setAttribute('title', SIDECAR_PIPELINE_DISABLED_MESSAGE);
-        } else if (feature.getAttribute('title') === SIDECAR_PIPELINE_DISABLED_MESSAGE) {
-            feature.removeAttribute('title');
-        }
-    });
     // In Sidecar mode the FF 5.4 Roleplay OS owns the narrator prompt, so the
     // legacy world preset selector has nothing left to contribute there.
     const legacyPresetSection = document.getElementById('ew-w-legacy-preset-section');
-    if (legacyPresetSection) legacyPresetSection.classList.toggle('hidden', sidecarActive);
+    if (legacyPresetSection) legacyPresetSection.classList.add('hidden');
 }
 
 function renderWorldOverviewSidecarMigration(world = ExperimentalWorldsState.editingWorld) {
+    // Sidecar is unconditional; the legacy migration card is retired.
     const host = document.getElementById('ew-w-overview-sidecar-migration');
-    if (!host) return;
-    const inlineLegacy = !!world && !worldUsesSidecarPipeline(world);
-    host.classList.toggle('hidden', !inlineLegacy);
-    if (!inlineLegacy) {
+    if (host) {
+        host.classList.add('hidden');
         host.innerHTML = '';
-        return;
     }
-    const sessions = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
-    const timelineLabel = sessions.length
-        ? `${sessions.length} existing timeline${sessions.length === 1 ? '' : 's'} will be reviewed before migration.`
-        : 'This world has no timeline yet, so the wizard will simply enable Sidecar for its first session.';
-    host.innerHTML = `
-        <div class="world-overview-sidecar-migration-head">
-            <div>
-                <span class="vh-eyebrow">STATE PIPELINE</span>
-                <h3>This world is using Inline Legacy</h3>
-                <p>Move this world to Sidecar before authoring Sidecar-only travel, vehicle, and reconciliation features. The migration wizard creates a recoverable backup and retains raw roleplay and canonical records. ${experimentalEscapeHTML(timelineLabel)}</p>
-            </div>
-            <button id="ew-w-overview-sidecar-migrate-btn" type="button" class="btn btn-primary">Review Sidecar migration</button>
-        </div>`;
-    document.getElementById('ew-w-overview-sidecar-migrate-btn')?.addEventListener('click', () => openSidecarMigrationWizard(world.id));
 }
 
 function setupWorldStudioTabs() {
@@ -157,10 +122,6 @@ function setupWorldStudioTabs() {
 
     tabs.forEach(tab => {
         tab.onclick = () => {
-            if (tab.classList.contains('sidecar-feature-disabled')) {
-                ExperimentalWorldsHost.notify('This feature is available after the world is migrated to the Sidecar state pipeline.', 'info');
-                return;
-            }
             tabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             const target = tab.dataset.tab;
@@ -198,6 +159,7 @@ function renderWorldStudioPanel(target) {
         'w-sandbox': renderWorldSandboxStudio,
         'w-lore': renderWorldLore,
         'w-visual-map': renderWorldArchitectMap,
+        'w-architect-agent': renderWorldArchitectAgent,
         'w-ai': () => renderWorldSidecarConfigEditor(ExperimentalWorldsState.editingWorld)
     };
     if (renderers[target]) renderers[target]();
@@ -205,25 +167,6 @@ function renderWorldStudioPanel(target) {
 }
 
 function setupWorldStudioLogic() {
-
-    // Do not merely make Sidecar controls look inactive: prevent pointer and
-    // keyboard changes while Inline Legacy is the selected pipeline.  The
-    // migration card and pipeline selector are intentionally outside these
-    // marked surfaces so an author always has a clear route forward.
-    if (!ExperimentalWorldsRuntime.hasRouteListener('sidecar-feature-guard-click')) {
-        const blockUnavailableSidecarFeature = event => {
-            const feature = event.target instanceof Element
-                ? event.target.closest('[data-sidecar-feature].sidecar-feature-disabled')
-                : null;
-            if (!feature) return;
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            if (event.type === 'click') ExperimentalWorldsHost.notify('This feature is available after the world is migrated to the Sidecar state pipeline.', 'info');
-        };
-        ExperimentalWorldsRuntime.bindRouteListener('sidecar-feature-guard-click', document, 'click', blockUnavailableSidecarFeature, true);
-        ExperimentalWorldsRuntime.bindRouteListener('sidecar-feature-guard-pointer', document, 'pointerdown', blockUnavailableSidecarFeature, true);
-        ExperimentalWorldsRuntime.bindRouteListener('sidecar-feature-guard-key', document, 'keydown', blockUnavailableSidecarFeature, true);
-    }
 
     const recordOverlay = document.getElementById('ew-world-record-overlay');
     document.getElementById('ew-world-record-close').onclick = closeWorldRecordInspector;
@@ -281,29 +224,37 @@ function setupWorldStudioLogic() {
     };
     document.getElementById('ew-close-audit-btn').onclick = () => document.getElementById('ew-world-audit-overlay').classList.add('hidden');
     
-    document.getElementById('ew-export-world-btn').onclick = () => {
+    document.getElementById('ew-export-world-btn').onclick = async () => {
         if (!ExperimentalWorldsState.editingWorld) return;
-        // Never hand someone a world carrying references to things that are gone.
-        normalizeAuthoredWorld(ExperimentalWorldsState.editingWorld);
-        const exportedWorld = experimentalSafeJsonClone(ExperimentalWorldsState.editingWorld);
-        pruneWorldMediaAssets(exportedWorld);
-        const media = worldMediaSummary(exportedWorld);
-        exportedWorld._format = 'horde-world';
-        exportedWorld._version = 2;
-        exportedWorld._mediaManifest = {
-            schema: WORLD_MEDIA_SCHEMA_VERSION,
-            count: media.count,
-            embedded: true
-        };
-        const data = JSON.stringify(exportedWorld, null, 2);
-        const blob = new Blob([data], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${ExperimentalWorldsState.editingWorld.name.replace(/\s+/g, '_')}.horde_world`;
-        a.click();
-        URL.revokeObjectURL(url);
-        ExperimentalWorldsHost.notify(`World exported with ${media.count} embedded media asset${media.count === 1 ? '' : 's'} (${formatByteSize(media.bytes)}).`, 'success');
+        const button = document.getElementById('ew-export-world-btn');
+        button.disabled = true;
+        try {
+            // Export is a durable-save operation. The downloaded document is
+            // produced from the exact checksummed root-file record rather
+            // than a second browser-only serializer that can drift from it.
+            await saveWorld();
+            const world = ExperimentalWorldsState.editingWorld;
+            const response = await fetch(ExperimentalWorldsHost.worldExportUrl(world.id), {
+                cache: 'no-store', credentials: 'same-origin'
+            });
+            if (!response.ok) throw new Error(`root-file export failed (HTTP ${response.status})`);
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = `${String(world.name || 'Experimental World').replace(/[^a-z0-9._-]+/gi, '_')}.horde_world`;
+            anchor.click();
+            URL.revokeObjectURL(url);
+            const media = worldMediaSummary(world);
+            ExperimentalWorldsHost.notify(
+                `Saved and exported from the root-file authority with ${media.count} embedded media asset${media.count === 1 ? '' : 's'} (${formatByteSize(media.bytes)}).`,
+                'success'
+            );
+        } catch (error) {
+            ExperimentalWorldsHost.notify(`World export failed: ${error.message || error}`, 'error');
+        } finally {
+            button.disabled = false;
+        }
     };
     document.getElementById('ew-add-location-btn')?.addEventListener('click', () => addWorldLocation('top'));
     document.getElementById('ew-add-location-btn-bottom')?.addEventListener('click', () => addWorldLocation('bottom'));
@@ -323,16 +274,15 @@ function setupWorldStudioLogic() {
     document.getElementById('ew-add-w-lore-btn').onclick = () => { addWorldLore(); updateWorldTokenCount(); };
     document.getElementById('ew-add-world-stat-btn').onclick = addWorldStat;
     document.getElementById('ew-w-fetch-model-btn').onclick = fetchWorldModelSettings;
-    document.getElementById('ew-w-sidecar-mode').onchange = () => {
-        // Kept as an informational control for existing Studio markup. It
-        // cannot re-enable the retired Inline execution path.
-        const config = ExperimentalWorldsState.editingWorld
-            && window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
-        if (config) config.mode = 'sidecar';
-    };
-    document.getElementById('ew-w-inline-legacy-migrate-btn').onclick = () => {
-        if (ExperimentalWorldsState.editingWorld?.id) openSidecarMigrationWizard(ExperimentalWorldsState.editingWorld.id);
-    };
+    // The context slider's numeric readout and tier badge were only refreshed
+    // by a full Studio re-render, so dragging appeared to do nothing. Update
+    // them live while the author drags; the value itself commits on save.
+    const contextSizeSlider = document.getElementById('ew-w-studio-context-size');
+    if (contextSizeSlider) {
+        contextSizeSlider.addEventListener('input', () => {
+            updateContextSliderUI('ew-w-studio-context-size', 'ew-w-studio-context-size-val', 'ew-w-studio-context-size-badge');
+        });
+    }
     document.getElementById('ew-w-sidecar-inherit-narrator').onchange = event => {
         if (!ExperimentalWorldsState.editingWorld) return;
         const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
@@ -358,10 +308,18 @@ function setupWorldStudioLogic() {
         document.getElementById('ew-w-sidecar-reasoning-effort-row')?.classList.toggle('hidden', event.target.value === 'disabled');
     };
     document.getElementById('ew-w-sidecar-provider').onchange = () => {
-        renderSidecarModelOptions(ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider').value));
+        const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider').value);
+        const world = ExperimentalWorldsState.editingWorld;
+        if (world) {
+            const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world);
+            if (config) config.tracker.provider = provider;
+        }
+        renderSidecarModelOptions(provider);
         updateSidecarOverrideVisibility();
+        safeInitializeOpenRouterRouting('sidecar', { force: true });
     };
     document.getElementById('ew-w-sidecar-fetch-model-btn').onclick = fetchSidecarModelSettings;
+    setupNarratorModelSearch();
     setupSidecarModelSearch();
     setupRoleplayOSConfigHandlers();
     document.getElementById('ew-w-sidecar-memory-inherit').onchange = event => {
@@ -656,6 +614,194 @@ function setupWorldImport() {
     };
 }
 
+function safeInitializeOpenRouterRouting(scope, options = {}) {
+    if (typeof initializeOpenRouterRoutingPanel === 'function') {
+        initializeOpenRouterRoutingPanel(scope, options);
+    } else if (platformWindow?.HordeOpenRouterRouting?.initialize) {
+        platformWindow.HordeOpenRouterRouting.initialize(scope, options);
+    } else if (typeof platformWindow?.initializeOpenRouterRoutingPanel === 'function') {
+        platformWindow.initializeOpenRouterRoutingPanel(scope, options);
+    }
+}
+
+const narratorProviderModelCatalogs = new Map();
+const narratorModelFilters = new Set();
+
+// Capability filter tags for the World model browser. Mirrors Virtual
+// Human's companion filter set (Tools / JSON / Vision / Audio input); a
+// model must match every active tag to stay in the results window.
+const NARRATOR_MODEL_FILTERS = Object.freeze({
+    tools: { label: 'Tools', matches: model => model.supportsTools },
+    json: { label: 'JSON', matches: model => model.supportsJSON },
+    vision: { label: 'Vision', matches: model => model.inputModalities?.includes('image') },
+    audio: { label: 'Audio input', matches: model => model.inputModalities?.includes('audio') }
+});
+
+function narratorModelMatchesFilters(model) {
+    return [...narratorModelFilters].every(filter =>
+        NARRATOR_MODEL_FILTERS[filter]?.matches(model));
+}
+
+const narratorCatalogFetchInFlight = new Set();
+
+// Virtual Human populates its model browser as soon as the editor opens
+// instead of waiting for a manual refresh. If neither the session catalog
+// nor the locally cached one has entries for this provider, pull the
+// provider catalog once (non-forced, so an existing shared cache wins) and
+// re-render the window.
+async function ensureNarratorModelCatalogLoaded() {
+    const provider = ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider);
+    if (!provider || narratorCatalogFetchInFlight.has(provider)) return;
+    if (narratorProviderModelCatalogs.has(provider) || savedExperimentalModelCatalog(provider).length) return;
+    narratorCatalogFetchInFlight.add(provider);
+    try {
+        const models = await ExperimentalWorldsHost.getModelCatalog({ provider });
+        if (Array.isArray(models) && models.length) {
+            narratorProviderModelCatalogs.set(provider, models);
+            rememberExperimentalModelCatalog(provider, models);
+            renderNarratorModelSearchResults();
+            renderArchitectModelSearchResults();
+        }
+    } catch (error) {
+        // Background populate only; the Fetch models button stays the
+        // explicit retry path and reports its own errors.
+    } finally {
+        narratorCatalogFetchInFlight.delete(provider);
+    }
+}
+
+// Shared renderer for Virtual Human-style rich model option cards. The
+// capability badges, check mark and meta row mirror the host's companion
+// model browser (vh-model-option layout, CSS copied into this module's
+// stylesheets).
+function experimentalRenderModelOptionCards(results, options, onSelect) {
+    results.innerHTML = '';
+    options.forEach(option => {
+        const model = option.model || null;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `vh-model-option${option.selected ? ' selected' : ''}`;
+        button.setAttribute('role', 'option');
+        button.setAttribute('aria-selected', option.selected ? 'true' : 'false');
+        const meta = model ? [
+            model.supportsTools ? '<span class="vh-model-feature tools">Tools</span>' : '',
+            model.supportsJSON ? '<span class="vh-model-feature json">JSON</span>' : '',
+            model.inputModalities?.includes('image') ? '<span class="vh-model-feature vision">Vision</span>' : '',
+            model.inputModalities?.includes('audio') ? '<span class="vh-model-feature audio">Audio input</span>' : '',
+            model.contextLength ? `<span>${Math.round(model.contextLength / 1000)}k context</span>` : '',
+            experimentalTextModelPriceLabel(model.promptPrice)
+                ? `<span>${experimentalEscapeHTML(experimentalTextModelPriceLabel(model.promptPrice))}</span>` : ''
+        ].filter(Boolean).join('') : '<span>Automatic</span>';
+        button.innerHTML = `
+            <span class="vh-model-option-head">
+                <strong title="${experimentalEscapeHTML(option.name || option.id)}">${experimentalEscapeHTML(option.name || option.id)}</strong>
+                <span class="vh-model-check" aria-hidden="true">✓</span>
+            </span>
+            ${option.id ? `<code title="${experimentalEscapeHTML(option.id)}">${experimentalEscapeHTML(option.id)}</code>` : ''}
+            <span class="vh-model-option-meta">${meta}</span>`;
+        button.onmousedown = event => event.preventDefault();
+        button.onclick = () => onSelect(option);
+        results.appendChild(button);
+    });
+}
+
+function narratorModelStatusText(ranked, provider, { query = '', matchCount = null } = {}) {
+    const status = document.getElementById('ew-w-studio-model-status');
+    if (!status) return;
+    if (query || matchCount !== null) {
+        const activeFilters = [...narratorModelFilters]
+            .map(filter => NARRATOR_MODEL_FILTERS[filter]?.label)
+            .filter(Boolean);
+        status.textContent = `${matchCount} of ${ranked.length} text models match${query ? ` “${query}”` : ''}${activeFilters.length ? `${query ? ' · ' : ' '}${activeFilters.join(' + ')}` : ''}.`;
+        return;
+    }
+    const effective = String(ExperimentalWorldsState.editingWorld?.model || '').trim()
+        || ExperimentalWorldsState.globalSettings?.defaultModel || '(not configured)';
+    const info = ranked.find(model => model.id === effective);
+    const capability = info
+        ? (info.supportsTools
+            ? ' · tool calling advertised'
+            : (info.capabilitiesKnown
+                ? ' · tool support not advertised; World actions may be unavailable'
+                : ' · provider catalog does not report tool capabilities'))
+        : '';
+    status.textContent = `${ranked.length} text models from ${ExperimentalWorldsHost.providerDisplayName(provider)} · effective model: ${effective}${capability}`;
+}
+
+function renderNarratorModelSearchResults() {
+    const input = document.getElementById('ew-w-studio-model');
+    const results = document.getElementById('ew-w-studio-model-results');
+    if (!input || !results) return;
+    const provider = ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider);
+    const saved = savedExperimentalModelCatalog(provider);
+    const catalog = narratorProviderModelCatalogs.get(provider)
+        || (saved.length ? saved : ExperimentalWorldsHost.modelCatalog());
+    const ranked = rankExperimentalTextModels(catalog);
+    const selected = String(ExperimentalWorldsState.editingWorld?.model || '').trim();
+    // The input doubles as the pinned-model value holder. Reopening the
+    // picker right after a selection must not filter the list down to that
+    // one model; Virtual Human clears its search field instead, so an exact
+    // pinned-ID query is treated as "show everything".
+    const rawQuery = input.value.trim().toLowerCase();
+    const query = rawQuery && rawQuery === selected.toLowerCase() ? '' : rawQuery;
+    // No result cap: Virtual Human renders every match in its browser
+    // window, and capping would make the status line undercount.
+    const filtered = ranked.filter(model => matchesModelSearch(model, query) && narratorModelMatchesFilters(model));
+
+    // Virtual Human's model browser is a separate window below the search
+    // field: always visible, filter tags above it, no dropdown toggling.
+    results.innerHTML = '';
+    const options = [
+        ...(!query && !narratorModelFilters.size ? [{ id: '', name: `Use Settings default (${ExperimentalWorldsState.globalSettings?.defaultModel || 'choose a model in Settings'})` }] : []),
+        ...filtered.map(model => ({ id: model.id, name: model.name, model, selected: model.id === selected }))
+    ];
+
+    if (!options.length) {
+        const empty = document.createElement('div');
+        empty.className = 'vh-model-empty';
+        empty.textContent = 'No text models match this search. Try a provider name, family, or exact model ID — or type one below and press Enter.';
+        results.appendChild(empty);
+    } else {
+        experimentalRenderModelOptionCards(results, options, option => {
+            input.value = option.id;
+            if (ExperimentalWorldsState.editingWorld) {
+                ExperimentalWorldsState.editingWorld.model = option.id;
+            }
+            // The new model's ceiling governs the slider: higher ceilings
+            // keep the authored size, lower ones clamp with a toast.
+            applyContextSliderForModel(
+                option.id || ExperimentalWorldsState.globalSettings?.defaultModel || '',
+                { notify: true }
+            );
+            safeInitializeOpenRouterRouting('world', { force: true });
+            if (platformWindow?.HordeOpenRouterRouting?.markModelChanged) {
+                platformWindow.HordeOpenRouterRouting.markModelChanged('world');
+            }
+            renderNarratorModelSearchResults();
+        });
+    }
+    narratorModelStatusText(ranked, provider, { query, matchCount: filtered.length });
+}
+
+function setupNarratorModelSearch() {
+    const input = document.getElementById('ew-w-studio-model');
+    const filters = document.getElementById('ew-w-studio-model-filters');
+    if (!input || input.dataset.narratorSearchReady === 'true') return;
+    input.dataset.narratorSearchReady = 'true';
+    input.addEventListener('focus', renderNarratorModelSearchResults);
+    input.addEventListener('input', renderNarratorModelSearchResults);
+    filters?.addEventListener('click', event => {
+        const button = event.target.closest('[data-ew-model-filter]');
+        if (!button) return;
+        const filter = button.dataset.ewModelFilter;
+        if (!NARRATOR_MODEL_FILTERS[filter]) return;
+        if (narratorModelFilters.has(filter)) narratorModelFilters.delete(filter);
+        else narratorModelFilters.add(filter);
+        button.setAttribute('aria-pressed', String(narratorModelFilters.has(filter)));
+        renderNarratorModelSearchResults();
+    });
+}
+
 async function fetchWorldModelSettings() {
     // This control discovers the model catalogue for the current host text
     // provider.  It must not treat an inherited model as a World override, or
@@ -669,19 +815,17 @@ async function fetchWorldModelSettings() {
         button.textContent = 'Fetching…';
     }
     try {
-        const models = await ExperimentalWorldsHost.getModelCatalog({ force: true });
+        const provider = ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider);
+        const models = await ExperimentalWorldsHost.getModelCatalog({ force: true, provider });
         if (!models.length) {
             throw new Error('The selected provider returned no usable models. Check its connection in Settings.');
         }
-        // The host owns the shared provider cache and the searchable input's
-        // existing renderer.  Dispatching input after the refresh opens that
-        // renderer without changing the field or saving a World model.
+        narratorProviderModelCatalogs.set(provider, models);
+        rememberExperimentalModelCatalog(provider, models);
         input.focus();
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        const provider = ExperimentalWorldsHost.providerDisplayName(
-            ExperimentalWorldsState.globalSettings?.apiProvider
-        );
-        ExperimentalWorldsHost.notify(`${models.length} models loaded from ${provider}. Choose one to pin this World, or leave it blank to inherit Settings.`, 'success');
+        renderNarratorModelSearchResults();
+        const providerName = ExperimentalWorldsHost.providerDisplayName(provider);
+        ExperimentalWorldsHost.notify(`${models.length} models loaded from ${providerName}. Choose one to pin this World, or leave it blank to inherit Settings.`, 'success');
     } catch (error) {
         ExperimentalWorldsHost.notify(`Could not load the selected provider's model list: ${error.message}`, 'error');
     } finally {
@@ -706,6 +850,16 @@ function updateSidecarProviderConnectionHint(providerId) {
 function renderSidecarModelOptions(provider, selected = '') {
     const input = document.getElementById('ew-w-sidecar-model');
     if (!input) return;
+    if (!sidecarProviderModelCatalogs.has(provider)) {
+        const saved = savedExperimentalModelCatalog(provider);
+        if (saved.length) sidecarProviderModelCatalogs.set(provider, saved);
+    }
+    if (provider === 'openrouter' && !sidecarProviderModelCatalogs.has('openrouter')) {
+        const catalog = ExperimentalWorldsHost.modelCatalog();
+        if (catalog && catalog.length) {
+            sidecarProviderModelCatalogs.set('openrouter', catalog);
+        }
+    }
     const models = sidecarProviderModelCatalogs.get(provider) || [];
     input.value = String(selected || '').trim();
     input.placeholder = models.length ? 'Search provider models or type an exact ID' : 'Fetch models or type an exact model ID';
@@ -718,32 +872,46 @@ function renderSidecarModelSearchResults() {
     const results = document.getElementById('ew-w-sidecar-model-results');
     if (!input || !results) return;
     const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider')?.value);
+    if (!sidecarProviderModelCatalogs.has(provider)) {
+        const saved = savedExperimentalModelCatalog(provider);
+        if (saved.length) sidecarProviderModelCatalogs.set(provider, saved);
+    }
+    if (provider === 'openrouter' && !sidecarProviderModelCatalogs.has('openrouter')) {
+        const catalog = ExperimentalWorldsHost.modelCatalog();
+        if (catalog && catalog.length) {
+            sidecarProviderModelCatalogs.set('openrouter', catalog);
+        }
+    }
+    const ranked = rankExperimentalTextModels(sidecarProviderModelCatalogs.get(provider) || []);
     const query = input.value.trim().toLowerCase();
-    const models = (sidecarProviderModelCatalogs.get(provider) || []).filter(model =>
-        !query || `${model.name || ''} ${model.id || ''}`.toLowerCase().includes(query)
-    ).slice(0, 60);
+    const models = ranked.filter(model => matchesModelSearch(model, query)).slice(0, 60);
     results.innerHTML = '';
     if (!models.length) {
         const empty = document.createElement('div');
-        empty.className = 'vh-search-empty';
+        empty.className = 'vh-model-empty';
         empty.textContent = sidecarProviderModelCatalogs.has(provider)
             ? 'No provider model matches. You can still enter an exact model ID.'
             : 'Fetch this provider’s models, or enter an exact model ID.';
         results.appendChild(empty);
     } else {
-        models.forEach(model => {
-            const option = document.createElement('button');
-            option.type = 'button';
-            option.className = 'searchable-dropdown-item';
-            option.setAttribute('role', 'option');
-            option.innerHTML = `<span class="model-display-name">${experimentalEscapeHTML(model.name || model.id)}</span><span class="model-display-id">${experimentalEscapeHTML(model.id)}</span>`;
-            option.onclick = () => {
-                input.value = model.id;
-                results.classList.add('hidden');
-                input.setAttribute('aria-expanded', 'false');
-                applySidecarSelectedModelMetadata();
-            };
-            results.appendChild(option);
+        const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
+        const selected = String(config?.tracker?.model || input.value || '').trim();
+        experimentalRenderModelOptionCards(results, models.map(model => ({
+            id: model.id, name: model.name, model, selected: model.id === selected
+        })), option => {
+            input.value = option.id;
+            results.classList.add('hidden');
+            input.setAttribute('aria-expanded', 'false');
+            applySidecarSelectedModelMetadata();
+            const liveWorld = ExperimentalWorldsState.editingWorld;
+            if (liveWorld) {
+                const liveConfig = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(liveWorld);
+                if (liveConfig) liveConfig.tracker.model = option.id;
+            }
+            safeInitializeOpenRouterRouting('sidecar', { force: true });
+            if (platformWindow?.HordeOpenRouterRouting?.markModelChanged) {
+                platformWindow.HordeOpenRouterRouting.markModelChanged('sidecar');
+            }
         });
     }
     results.classList.remove('hidden');
@@ -758,7 +926,10 @@ function setupSidecarModelSearch() {
         input.dataset.sidecarSearchReady = 'true';
         input.addEventListener('focus', renderSidecarModelSearchResults);
         input.addEventListener('input', renderSidecarModelSearchResults);
-        input.addEventListener('change', applySidecarSelectedModelMetadata);
+        input.addEventListener('change', () => {
+            applySidecarSelectedModelMetadata();
+            safeInitializeOpenRouterRouting('sidecar', { force: true });
+        });
         input.addEventListener('keydown', event => {
             if (event.key === 'Escape') {
                 results.classList.add('hidden');
@@ -767,7 +938,7 @@ function setupSidecarModelSearch() {
         });
     }
     ExperimentalWorldsRuntime.bindRouteListener('sidecar-model-search-dismiss', document, 'click', event => {
-        if (!input.contains(event.target) && !results.contains(event.target)) {
+        if (!input.contains(event.target) && !results.contains(event.target) && event.target.id !== 'ew-w-sidecar-fetch-model-btn') {
             results.classList.add('hidden');
             input.setAttribute('aria-expanded', 'false');
         }
@@ -778,7 +949,8 @@ function applySidecarSelectedModelMetadata() {
     const world = ExperimentalWorldsState.editingWorld;
     const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider')?.value);
     const model = document.getElementById('ew-w-sidecar-model')?.value || '';
-    const match = (sidecarProviderModelCatalogs.get(provider) || []).find(item => item.id === model);
+    const match = (sidecarProviderModelCatalogs.get(provider)
+        || savedExperimentalModelCatalog(provider) || []).find(item => item.id === model);
     const config = world && window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(world);
     if (config && match) config.tracker.supportedParams = Array.isArray(match.supported_parameters)
         ? match.supported_parameters : [];
@@ -794,26 +966,36 @@ async function fetchSidecarModelSettings() {
     const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider')?.value);
     const status = document.getElementById('ew-w-sidecar-model-status');
     const button = document.getElementById('ew-w-sidecar-fetch-model-btn');
+    const input = document.getElementById('ew-w-sidecar-model');
     if (!world) return;
-    if (status) status.textContent = `Fetching ${provider} model metadata…`;
+    const providerName = ExperimentalWorldsHost.providerDisplayName(provider);
+    if (status) status.textContent = `Fetching ${providerName} model metadata…`;
     if (button) { button.disabled = true; button.textContent = 'Fetching…'; }
     try {
-        const response = await fetch(`${ExperimentalWorldsHost.providerApiBase(provider)}/models`, {
-            headers: { ...ExperimentalWorldsHost.providerAuthHeaders(provider), ...ExperimentalWorldsHost.providerAttributionHeaders(provider) }
-        });
-        if (!response.ok) throw new Error(`Model catalog request failed (${response.status})`);
-        const data = await response.json();
-        const models = (Array.isArray(data) ? data : data?.data || data?.models || [])
-            .filter(item => item?.id).map(item => ({ ...item, id: String(item.id), name: String(item.name || item.id) }))
+        let models = [];
+        try {
+            models = await ExperimentalWorldsHost.getModelCatalog({ force: true, provider });
+        } catch (_) {
+            const response = await fetch(`${ExperimentalWorldsHost.providerApiBase(provider)}/models`, {
+                headers: { ...ExperimentalWorldsHost.providerAuthHeaders(provider), ...ExperimentalWorldsHost.providerAttributionHeaders(provider) }
+            });
+            if (!response.ok) throw new Error(`Model catalog request failed (${response.status})`);
+            const data = await response.json();
+            models = (Array.isArray(data) ? data : data?.data || data?.models || [])
+                .filter(item => item?.id).map(item => ({ ...item, id: String(item.id), name: String(item.name || item.id) }));
+        }
+        models = (models || []).map(item => ({ ...item, id: String(item.id), name: String(item.name || item.id) }))
             .sort((left, right) => left.name.localeCompare(right.name));
-        if (!models.length) throw new Error(`${provider} did not return any usable models.`);
-        const selected = document.getElementById('ew-w-sidecar-model')?.value || '';
+        if (!models.length) throw new Error(`${providerName} did not return any usable models.`);
+        const selected = input?.value || '';
         sidecarProviderModelCatalogs.set(provider, models);
+        rememberExperimentalModelCatalog(provider, models);
         renderSidecarModelOptions(provider, selected);
         applySidecarSelectedModelMetadata();
-        if (document.activeElement === document.getElementById('ew-w-sidecar-model')) renderSidecarModelSearchResults();
-        if (status) status.textContent = `${models.length} ${provider} models available. Choose one to use it for Sidecar.`;
-        ExperimentalWorldsHost.notify(`${models.length} Sidecar models loaded from ${provider}.`, 'success');
+        input?.focus();
+        renderSidecarModelSearchResults();
+        if (status) status.textContent = `${models.length} ${providerName} models available. Choose one to use it for Sidecar.`;
+        ExperimentalWorldsHost.notify(`${models.length} Sidecar models loaded from ${providerName}.`, 'success');
     } catch (error) {
         if (status) status.textContent = `Could not fetch metadata: ${error.message}`;
         ExperimentalWorldsHost.notify(`Sidecar model metadata failed: ${error.message}`, 'error');
@@ -825,13 +1007,15 @@ async function fetchSidecarModelSettings() {
 function updateSidecarOverrideVisibility() {
     const inheriting = document.getElementById('ew-w-sidecar-inherit-narrator')?.checked !== false;
     document.getElementById('ew-w-sidecar-override-config')?.classList.toggle('hidden', inheriting);
-    document.getElementById('ew-world-sidecar-openrouter-routing')?.classList.toggle('hidden',
-        inheriting || ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider')?.value) !== 'openrouter');
+    const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider')?.value);
+    const showOpenRouterRouting = !inheriting && provider === 'openrouter';
+    document.getElementById('ew-world-sidecar-openrouter-routing')?.classList.toggle('hidden', !showOpenRouterRouting);
     if (!inheriting) {
-        const provider = ExperimentalWorldsHost.normalizedProviderId(document.getElementById('ew-w-sidecar-provider')?.value);
         renderSidecarModelOptions(provider, document.getElementById('ew-w-sidecar-model')?.value || '');
         updateSidecarProviderConnectionHint(provider);
-        initializeOpenRouterRoutingPanel('sidecar', { force: false });
+        if (showOpenRouterRouting) {
+            safeInitializeOpenRouterRouting('sidecar', { force: false });
+        }
     }
 }
 
@@ -847,7 +1031,7 @@ function updateSidecarOverrideVisibility() {
 const FF54_CHOICE_ANNOTATIONS = Object.freeze({
     state_mode: {
         pinned: true,
-        note: 'Pinned to AGENTS: Horde Sidecar is the canonical state authority, so the upstream Internal States backend, macro persistence and regex state machinery are architecturally replaced. Every other choice resolves through the preset\'s own gating.'
+        note: 'Pinned to AGENTS: ScenePulse proposes and Sidecar adjudicates, while Horde\'s native reducer is the canonical state authority, so the upstream Internal States backend, macro persistence and regex state machinery are architecturally replaced. Every other choice resolves through the preset\'s own gating.'
     },
     internal_states: {
         replaced: true,
@@ -1147,7 +1331,6 @@ function renderWorldSidecarConfigEditor(world) {
     renderStatePipelineConfig(world);
     const tracker = config.tracker || {};
     const debug = config.debug || {};
-    document.getElementById('ew-w-sidecar-mode').value = config.mode;
     document.getElementById('ew-w-sidecar-inherit-narrator').checked = tracker.inheritNarrator !== false;
     document.getElementById('ew-w-sidecar-reader-enabled').checked = tracker.readerEnabled !== false;
     document.getElementById('ew-w-sidecar-reader-profile-inherit').checked = tracker.readerProfileInherit !== false;
@@ -1164,8 +1347,11 @@ function renderWorldSidecarConfigEditor(world) {
     document.getElementById('ew-w-sidecar-reader-reasoning-effort').value = readerProfile.reasoningEffort || 'auto';
     document.getElementById('ew-w-sidecar-reader-retry').value = readerProfile.retryPolicy || 'bounded';
     document.querySelectorAll('#ew-w-sidecar-reader-timeout, #ew-w-sidecar-reader-refresh, #ew-w-sidecar-reader-tools, #ew-w-sidecar-reader-provider, #ew-w-sidecar-reader-model, #ew-w-sidecar-reader-profile-max-tokens, #ew-w-sidecar-reader-context-budget, #ew-w-sidecar-reader-lookup-budget, #ew-w-sidecar-reader-reasoning, #ew-w-sidecar-reader-reasoning-effort, #ew-w-sidecar-reader-retry').forEach(input => input.disabled = tracker.readerProfileInherit !== false);
-    document.getElementById('ew-w-sidecar-provider').value = tracker.provider || '';
-    renderSidecarModelOptions(ExperimentalWorldsHost.normalizedProviderId(tracker.provider), tracker.model || '');
+    const activeProvider = tracker.provider
+        || ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider)
+        || 'openrouter';
+    document.getElementById('ew-w-sidecar-provider').value = activeProvider;
+    renderSidecarModelOptions(activeProvider, tracker.model || '');
     document.getElementById('ew-w-sidecar-reasoning-mode').value = tracker.reasoningMode || (tracker.reasoning === true ? 'enabled' : 'inherit');
     document.getElementById('ew-w-sidecar-reasoning-effort').value = tracker.reasoningEffort || 'auto';
     document.getElementById('ew-w-sidecar-reasoning-effort-row').classList.toggle('hidden',
@@ -1198,58 +1384,8 @@ function renderWorldSidecarConfigEditor(world) {
     const inheriting = tracker.inheritNarrator !== false;
     updateSidecarOverrideVisibility();
     const hint = document.getElementById('ew-w-sidecar-mode-hint');
-    hint.textContent = config.mode === 'sidecar'
-        ? 'Active: Narrator writes visible prose and hidden handoff notes; Sidecar performs one native canonical commit. Legacy repair and Chronicle classifier paths are bypassed.'
-        : 'Inline Legacy is retained for compatibility. It uses the existing receipt/classifier adapters; migrate a selected world deliberately before switching a live timeline to Sidecar.';
-    const restore = document.getElementById('ew-w-sidecar-restore-backup');
-    const migrate = document.getElementById('ew-w-sidecar-migrate-btn');
-    const backups = Array.isArray(world.sidecarMigrationBackups) ? world.sidecarMigrationBackups : [];
-    if (restore) {
-        restore.classList.toggle('hidden', !backups.length);
-        restore.textContent = backups.length ? `Restore latest Inline backup · ${new Date(backups.at(-1).createdAt).toLocaleString()}` : 'Restore latest Inline backup';
-        restore.onclick = async () => {
-            const backup = backups.at(-1);
-            if (!backup?.world || !confirm('Restore this selected world and its saved runtime to the pre-Sidecar Inline backup? Current Sidecar-only derived data will be replaced.')) return;
-            const restored = experimentalSafeJsonClone(backup.world);
-            const index = ExperimentalWorldsState.worlds.findIndex(item => item.id === world.id);
-            if (index >= 0) ExperimentalWorldsState.worlds[index] = restored;
-            ExperimentalWorldsState.editingWorld = experimentalSafeJsonClone(restored);
-            if (backup.runtime) ExperimentalWorldsState.worldInstances[restored.id] = experimentalSafeJsonClone(backup.runtime);
-            await ExperimentalWorldsHost.persist();
-            openWorldStudio(restored.id);
-            ExperimentalWorldsHost.notify('Restored the selected pre-Sidecar migration backup.', 'success');
-        };
-    }
-    if (migrate) {
-        const sessions = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
-        const inlineSessions = sessions.filter(session => window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, session)?.mode !== 'sidecar');
-        migrate.classList.remove('hidden');
-        migrate.disabled = false;
-        if (!sessions.length && config.mode !== 'sidecar') migrate.textContent = 'Enable Sidecar for this world';
-        else if (inlineSessions.length) migrate.textContent = config.mode === 'sidecar' ? 'Review & migrate Inline timelines' : 'Review & migrate this world';
-        else migrate.textContent = 'Review Sidecar migration';
-        migrate.onclick = () => openSidecarMigrationWizard(world.id);
-    }
-    const report = document.getElementById('ew-w-sidecar-migration-report');
-    if (report) {
-        const sessions = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
-        const inlineSessions = sessions.filter(session => window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, session)?.mode !== 'sidecar');
-        const migrations = sessions.map(session => session.sidecar?.migration).filter(Boolean);
-        const warnings = migrations.flatMap(migration => migration.warnings || []);
-        if (migrations.length) {
-            report.innerHTML = `<strong>Migration readiness:</strong> ${migrations.length}/${sessions.length || migrations.length} timeline${migrations.length === 1 ? '' : 's'} prepared · raw history and canonical receipts retained · derived vector caches cleared.${warnings.length ? `<br><span style="color:var(--warning)">${experimentalEscapeHTML(warnings.join(' · '))}</span>` : ''}`;
-        } else if (inlineSessions.length) {
-            report.innerHTML = `<strong>Migration readiness:</strong> ${inlineSessions.length} Inline timeline${inlineSessions.length === 1 ? '' : 's'} can be backed up and switched to Sidecar without rewriting raw history.`;
-        } else if (sessions.length) {
-            report.innerHTML = '<strong>Migration readiness:</strong> every existing timeline is already on Sidecar.';
-        } else if (config.mode === 'sidecar') {
-            report.innerHTML = 'This world is already set to Sidecar. New play sessions will use the Sidecar pipeline.';
-        } else {
-            report.innerHTML = 'This world is still on Inline Legacy. Enable Sidecar here to switch the world; existing play sessions, if any, stay Inline until you migrate them.';
-        }
-    }
-    initializeOpenRouterRoutingPanel('sidecar');
-    renderWorldOverviewSidecarMigration(world);
+    if (hint) hint.textContent = 'Active: Narrator writes visible prose and hidden handoff notes; Sidecar performs one native canonical commit. Legacy repair and Chronicle classifier paths are bypassed.';
+    safeInitializeOpenRouterRouting('sidecar');
     setSidecarStudioFeatureAvailability(world);
     renderRoleplayOSConfigEditor(world);
 }
@@ -1289,14 +1425,20 @@ function openWorldStudio(worldId = null, options = {}) {
     worldModelInput.placeholder = w.model
         ? 'Search provider models…'
         : `Use Settings default · ${ExperimentalWorldsState.globalSettings.defaultModel || 'choose a model in Settings'}`;
+    // The model browser is an always-visible window below the search field;
+    // populate it as soon as the studio renders the AI config.
+    renderNarratorModelSearchResults();
+    ensureNarratorModelCatalogLoaded();
 
     const agentConfig = normalizeWorldAgentConfig(w);
     document.getElementById('ew-w-agent-enabled').checked = agentConfig.enabled;
     document.getElementById('ew-w-agent-interval').value = agentConfig.intervalTurns;
     document.getElementById('ew-w-agent-model').value = agentConfig.model;
     document.getElementById('ew-w-agent-proposal-only').checked = agentConfig.proposalOnly === true;
-    initializeOpenRouterRoutingPanel('world');
-    initializeOpenRouterRoutingPanel('worldAgent');
+    setupNarratorModelSearch();
+    setupSidecarModelSearch();
+    safeInitializeOpenRouterRouting('world');
+    safeInitializeOpenRouterRouting('worldAgent');
     const kernelConfig = normalizeWorldKernelConfig(w);
     document.getElementById('ew-w-kernel-enabled').checked = kernelConfig.enabled;
     document.getElementById('ew-w-kernel-location-limit').value = kernelConfig.sceneLocationLimit;
@@ -1316,9 +1458,8 @@ function openWorldStudio(worldId = null, options = {}) {
     
     const contextSizeInput = document.getElementById('ew-w-studio-context-size');
     if (contextSizeInput) {
-        configureContextSliderForModel('ew-w-studio-context-size', w.model || ExperimentalWorldsState.globalSettings.defaultModel);
         contextSizeInput.value = w.contextSize ?? 8192;
-        updateContextSliderUI('ew-w-studio-context-size', 'ew-w-studio-context-size-val', 'ew-w-studio-context-size-badge');
+        applyContextSliderForModel(w.model || ExperimentalWorldsState.globalSettings.defaultModel, { notify: true });
     }
 
     document.getElementById('ew-w-studio-reasoning').checked = w.reasoning || false;
@@ -1354,124 +1495,46 @@ function openWorldStudio(worldId = null, options = {}) {
     const activeTab = document.querySelector('.world-studio-tab.active')?.dataset.tab || 'w-basics';
     renderWorldStudioPanel(activeTab);
 
-    const cachedWorldModel = ExperimentalWorldsHost.modelCatalog().find(model => model.id === w.model);
+    const savedCatalog = savedExperimentalModelCatalog(ExperimentalWorldsState.globalSettings?.apiProvider);
+    const cachedWorldModel = ExperimentalWorldsHost.modelCatalog().find(model => model.id === w.model)
+        || savedCatalog.find(model => model.id === w.model);
     if (cachedWorldModel) {
         populateModelInfoCard(cachedWorldModel, 'w-');
         updateReasoningVisibility(cachedWorldModel.supported_parameters || [], w.model, false, 'w-');
     }
 }
 
-function migrateWorldTimelinesToSidecar(world, legacyConfig = null, options = {}) {
-    const instance = ExperimentalWorldsState.worldInstances?.[world?.id];
-    const sessions = Array.isArray(instance?.sessions) ? instance.sessions : [];
-    const selected = Array.isArray(options.selectedSessionIds) ? new Set(options.selectedSessionIds.map(String)) : null;
-    const reports = [];
-    sessions.forEach(sess => {
-        if (selected && !selected.has(String(sess.id))) return;
-        const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-        if (!protocol || protocol.mode === 'sidecar') return;
-        const warnings = [];
-        if ((sess.pendingChecks || []).length) warnings.push('pending checks require narration before their outcome can commit');
-        if (sess.unresolvedDestination) warnings.push('an unresolved destination is already queued');
-        if ((sess.worldTurnReceipts || []).some(entry => entry?.audit?.rejected?.length)) warnings.push('prior legacy receipts contain rejected proposals');
-        protocol.migration = {
-            from: 'inline_legacy', to: 'sidecar', migratedAt: new Date().toISOString(),
-            sourceHistoryCount: (sess.history || []).length,
-            sourceReceiptCount: (sess.worldTurnReceipts || []).length,
-            warnings,
-            // Canonical source history and receipts remain in their existing
-            // stores. This compact audit supports a future rollback/import UI.
-            legacyConfig: experimentalSafeJsonClone(legacyConfig || world.sidecarConfig || {})
-        };
-        protocol.mode = 'sidecar';
-        (sess.history || []).forEach(message => { delete message.embedding; });
-        delete sess.vectorMemory;
-        delete sess.embeddingCache;
-        // These are derived retrieval material; raw turns and canonical
-        // receipts remain, then rebuild under Sidecar when requested.
-        sess.episodicMemories = [];
-        // Migration does not retroactively fabricate Sidecar handoffs for
-        // Legacy turns. It does make existing raw history available as pinned
-        // evidence and prepares a real Sidecar packet for the next turn.
-        window.ExperimentalWorldsSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
-        protocol.packet = buildSidecarScenePacket(world, sess);
-        reports.push({ id: sess.id, warnings });
-    });
-    return reports;
-}
-
-function openSidecarMigrationWizard(worldId = ExperimentalWorldsState.editingWorld?.id) {
-    const world = ExperimentalWorldsState.worlds.find(item => item.id === worldId) || ExperimentalWorldsState.editingWorld;
-    const overlay = document.getElementById('ew-sidecar-migration-wizard-overlay');
-    const list = document.getElementById('ew-sidecar-migration-wizard-list');
-    const status = document.getElementById('ew-sidecar-migration-wizard-status');
-    if (!world || !overlay || !list) return;
-    const sessions = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
-    const inline = sessions.filter(sess => {
-        const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-        return protocol?.mode !== 'sidecar';
-    });
-    const alreadySidecar = world.sidecarConfig?.mode === 'sidecar';
-    list.innerHTML = inline.length ? inline.map(sess => {
-        const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-        const warnings = [
-            (sess.pendingChecks || []).length ? 'pending checks' : '',
-            sess.unresolvedDestination ? 'unresolved destination' : '',
-            (sess.worldTurnReceipts || []).some(entry => entry?.audit?.rejected?.length) ? 'rejected legacy proposals' : ''
-        ].filter(Boolean);
-        return `<label class="world-migration-card" style="display:flex; align-items:flex-start; gap:10px; padding:10px; cursor:pointer;"><input type="checkbox" class="sidecar-migration-session" data-session-id="${experimentalEscapeHTML(sess.id)}" checked><span style="flex:1;"><strong>${experimentalEscapeHTML(sess.name || sess.id)}</strong><small style="display:block; color:var(--text-3);">${sess.history?.length || 0} messages · ${sess.worldTurnReceipts?.length || 0} receipts · ${protocol?.mode === 'sidecar' ? 'already Sidecar' : 'Inline Legacy'}${warnings.length ? ` · <span style="color:var(--warning)">${experimentalEscapeHTML(warnings.join(', '))}</span>` : ''}</small></span></label>`;
-    }).join('') : (sessions.length
-        ? '<div class="form-hint">No Inline Legacy timelines are waiting for migration.</div>'
-        : `<div class="form-hint">${alreadySidecar ? 'This world is already set to Sidecar. New play sessions will use the Sidecar pipeline.' : 'This world has no play sessions yet. Enabling Sidecar switches the world so the next session uses the new pipeline.'}</div>`);
-    status.textContent = inline.length
-        ? `${inline.length} timeline${inline.length === 1 ? '' : 's'} available. Select the timelines to migrate.`
-        : (sessions.length ? 'Every existing timeline is already on Sidecar.' : (alreadySidecar ? 'The world is already on Sidecar.' : 'No timelines to migrate. You can still enable Sidecar for this world.'));
-    const runBtn = document.getElementById('ew-run-sidecar-migration-btn');
-    if (runBtn) {
-        runBtn.disabled = alreadySidecar && !inline.length;
-        runBtn.textContent = inline.length ? 'Back up & migrate selected' : 'Back up & enable Sidecar';
-    }
-    overlay.classList.remove('hidden');
-    const close = () => overlay.classList.add('hidden');
-    document.getElementById('ew-close-sidecar-migration-wizard-btn').onclick = close;
-    document.getElementById('ew-cancel-sidecar-migration-btn').onclick = close;
-    document.getElementById('ew-sidecar-migration-select-all-btn').onclick = () => {
-        const boxes = [...list.querySelectorAll('.sidecar-migration-session')];
-        const shouldSelect = boxes.some(box => !box.checked);
-        boxes.forEach(box => { box.checked = shouldSelect; });
-    };
-    document.getElementById('ew-run-sidecar-migration-btn').onclick = async () => {
-        const selectedIds = [...list.querySelectorAll('.sidecar-migration-session:checked')].map(box => box.dataset.sessionId);
-        if (inline.length && !selectedIds.length) return ExperimentalWorldsHost.notify('Select at least one Inline timeline to migrate.', 'info');
-        if (!inline.length && world.sidecarConfig?.mode === 'sidecar') return ExperimentalWorldsHost.notify('This world is already on Sidecar.', 'info');
-        const backupList = Array.isArray(world.sidecarMigrationBackups) ? world.sidecarMigrationBackups : [];
-        backupList.push({ id: `sidecar_migration_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), from: 'inline_legacy', to: 'sidecar', selectedSessionIds: selectedIds.slice(), world: cloneSidecarMigrationRollbackWorld(world), runtime: experimentalSafeJsonClone(ExperimentalWorldsState.worldInstances?.[world.id] || null), note: inline.length ? 'Selected-timeline migration backup.' : 'World-level Sidecar enablement backup.' });
-        world.sidecarMigrationBackups = backupList.slice(-5);
-        world.sidecarConfig = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.({ ...world, sidecarConfig: { ...(world.sidecarConfig || {}), mode: 'sidecar' } }) || { ...(world.sidecarConfig || {}), mode: 'sidecar' };
-        const reports = inline.length ? migrateWorldTimelinesToSidecar(world, world.sidecarConfig, { selectedSessionIds: selectedIds }) : [];
-        const index = ExperimentalWorldsState.worlds.findIndex(item => item.id === world.id);
-        if (index >= 0) ExperimentalWorldsState.worlds[index] = experimentalSafeJsonClone(world);
-        if (ExperimentalWorldsState.editingWorld?.id === world.id) {
-            ExperimentalWorldsState.editingWorld = experimentalSafeJsonClone(world);
-            const modeSelect = document.getElementById('ew-w-sidecar-mode');
-            if (modeSelect) modeSelect.value = 'sidecar';
+/**
+ * Re-derive the context slider's ceiling for a narrator model. A larger
+ * ceiling keeps the authored size untouched and simply adds headroom; a value
+ * above the model's physical limit is pulled down to that limit, with an
+ * explanatory toast so the reduction is never silent.
+ */
+function applyContextSliderForModel(modelId, { notify = false } = {}) {
+    const slider = document.getElementById('ew-w-studio-context-size');
+    if (!slider) return;
+    configureContextSliderForModel('ew-w-studio-context-size', modelId);
+    const maximum = Number(slider.max) || 102400;
+    const current = Number(slider.value);
+    if (Number.isFinite(current) && current > maximum) {
+        slider.value = String(maximum);
+        if (notify) {
+            const saved = savedExperimentalModelCatalog(ExperimentalWorldsState.globalSettings?.apiProvider);
+            const matched = ExperimentalWorldsHost.modelCatalog().find(model => model.id === modelId)
+                || saved.find(model => model.id === modelId);
+            const modelName = matched?.name || matched?.id || modelId || 'the selected model';
+            ExperimentalWorldsHost.notify(
+                `Context size lowered to ${maximum.toLocaleString()} tokens — ${modelName} supports at most ${maximum.toLocaleString()}.`,
+                'info'
+            );
         }
-        await ExperimentalWorldsHost.persist();
-        close();
-        renderWorlds();
-        if (ExperimentalWorldsState.activeWorldId === world.id) renderWorldPlayState();
-        if (ExperimentalWorldsState.editingWorld?.id === world.id) { renderWorldSidecarConfigEditor(ExperimentalWorldsState.editingWorld); }
-        ExperimentalWorldsHost.notify(reports.length
-            ? `Migrated ${reports.length} timeline${reports.length === 1 ? '' : 's'} to Sidecar.`
-            : 'Sidecar enabled for this world.', 'success');
-    };
+    }
+    updateContextSliderUI('ew-w-studio-context-size', 'ew-w-studio-context-size-val', 'ew-w-studio-context-size-badge');
 }
 
 async function saveWorld() {
     const w = ExperimentalWorldsState.editingWorld;
     if (!w) return;
-    const storedBeforeSave = ExperimentalWorldsState.worlds.find(world => world.id === w.id);
-    const wasSidecar = storedBeforeSave?.sidecarConfig?.mode === 'sidecar';
 
     w.name = document.getElementById('ew-w-studio-name').value.trim();
     w.description = document.getElementById('ew-w-studio-desc').value.trim();
@@ -1548,25 +1611,6 @@ async function saveWorld() {
         }
     };
     w.sidecarConfig = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(sidecarDraftWorld) || priorSidecarConfig;
-    const switchingToSidecar = !!storedBeforeSave && w.sidecarConfig?.mode === 'sidecar' && !wasSidecar;
-    if (switchingToSidecar && !confirm(
-        'Enable Sidecar for this world? Existing timelines remain Inline Legacy until you choose them in the migration wizard. Horde Studio will preserve raw roleplay and canonical receipts and create a local backup.'
-    )) return;
-    if (switchingToSidecar) {
-        // A Sidecar migration must be both deliberate and recoverable. Keep a
-        // compact, per-world backup rather than using the orphan-world rescue
-        // store (which is reserved for worlds that disappear from the library).
-        const backups = Array.isArray(w.sidecarMigrationBackups) ? w.sidecarMigrationBackups : [];
-        backups.push({
-            id: `sidecar_migration_${Date.now().toString(36)}`,
-            createdAt: new Date().toISOString(),
-            from: 'inline_legacy', to: 'sidecar',
-            world: cloneSidecarMigrationRollbackWorld(storedBeforeSave),
-            runtime: experimentalSafeJsonClone(ExperimentalWorldsState.worldInstances?.[w.id] || null),
-            note: 'Raw history and canonical receipts are preserved in the migrated runtime; this backup exists for explicit rollback/re-import.'
-        });
-        w.sidecarMigrationBackups = backups.slice(-3);
-    }
     w.temp = parseFloat(document.getElementById('ew-w-studio-temp').value) || 0.9;
     w.minP = parseFloat(document.getElementById('ew-w-studio-min-p').value) || 0.0;
     w.topP = parseFloat(document.getElementById('ew-w-studio-top-p').value) || 1.0;
@@ -1610,28 +1654,11 @@ async function saveWorld() {
     }
 
     const savedWorld = ExperimentalWorldsState.worlds[idx !== -1 ? idx : ExperimentalWorldsState.worlds.length - 1];
-    // Changing the world-level mode never silently migrates established
-    // timelines. The migration wizard performs the explicit per-timeline
-    // selection, backup, and import step instead.
-    const migrationReports = [];
 
     ExperimentalWorldsHost.markMediaChanged();
     await ExperimentalWorldsHost.persist();
     renderWorlds();
-    // Never leave a world-looking Sidecar-enabled while its existing play
-    // timelines silently remain on the Legacy path. The wizard still owns
-    // selection, backup and the actual migration; opening it makes that
-    // required next action visible at the moment the setting changes.
-    const inlineTimelines = (ExperimentalWorldsState.worldInstances?.[savedWorld.id]?.sessions || []).filter(session =>
-        window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(savedWorld, session)?.mode !== 'sidecar');
-    if (switchingToSidecar && inlineTimelines.length) {
-        ExperimentalWorldsHost.notify('Sidecar is configured. Select the existing timeline(s) to migrate before generating another turn.', 'info');
-        openSidecarMigrationWizard(savedWorld.id);
-    } else {
-        ExperimentalWorldsHost.notify(migrationReports.length
-            ? `World saved; ${migrationReports.length} timeline${migrationReports.length === 1 ? '' : 's'} prepared for Sidecar.`
-            : 'World Saved!', 'success');
-    }
+    ExperimentalWorldsHost.notify('World Saved!', 'success');
 }
 
 async function deleteWorld() {
@@ -2353,7 +2380,7 @@ const WORLD_VISUAL_PIPELINE_UI = Object.freeze({
 
 const worldVisualModelSearchRenderId = { new: 0, revision: 0 };
 
-async function renderWorldVisualModelSearch(world, pipeline = 'new', force = false) {
+async function renderWorldVisualModelSearch(world, pipeline = 'new', force = false, forceOpen = false) {
     const ui = WORLD_VISUAL_PIPELINE_UI[pipeline] || WORLD_VISUAL_PIPELINE_UI.new;
     const input = document.getElementById(ui.model);
     const results = document.getElementById(ui.results);
@@ -2384,7 +2411,7 @@ async function renderWorldVisualModelSearch(world, pipeline = 'new', force = fal
     if (renderId !== worldVisualModelSearchRenderId[pipeline] || ExperimentalWorldsState.editingWorld?.id !== world.id) return;
     // A render that completes after the user picked an option (or clicked
     // away) must not rebuild and force the closed list back open.
-    if (document.activeElement !== input && results.classList.contains('hidden')) return;
+    if (!forceOpen && document.activeElement !== input && results.classList.contains('hidden')) return;
     // Revision generation is deliberately an image-reference operation. A
     // catalogue model which explicitly lacks that capability is not offered
     // here; exact custom IDs remain available for providers whose catalogue
@@ -2867,19 +2894,22 @@ function renderWorldVisuals() {
             }
             modelInput.value = nextModel;
             syncFalAdvancedVisibility();
-            void renderWorldVisualModelSearch(world, pipeline);
+            void renderWorldVisualModelSearch(world, pipeline, false, true);
         };
-        modelInput.onfocus = () => void renderWorldVisualModelSearch(world, pipeline);
+        modelInput.onfocus = () => void renderWorldVisualModelSearch(world, pipeline, false, true);
         modelInput.oninput = event => {
             presentation[ui.modelField] = event.target.value.trim().slice(0, 500);
             if (pipeline === 'new') presentation.imageModel = presentation[ui.modelField];
-            void renderWorldVisualModelSearch(world, pipeline);
+            void renderWorldVisualModelSearch(world, pipeline, false, true);
         };
         modelInput.onkeydown = event => {
             if (event.key === 'Escape') experimentalSetSearchOpen(modelInput, modelResults, false);
         };
-        modelInput.onblur = () => setTimeout(() =>
-            experimentalSetSearchOpen(modelInput, modelResults, false), 120);
+        ExperimentalWorldsRuntime.bindRouteListener(`visual-model-search-dismiss-${pipeline}`, document, 'click', event => {
+            if (!modelInput.contains(event.target) && !modelResults.contains(event.target) && !byId(ui.refresh)?.contains(event.target)) {
+                experimentalSetSearchOpen(modelInput, modelResults, false);
+            }
+        });
         byId(ui.refresh).onclick = async event => {
             const button = event.currentTarget;
             const provider = worldVisualProvider(world, pipeline);
@@ -2889,7 +2919,7 @@ function renderWorldVisuals() {
             button.disabled = true;
             button.textContent = '↻ Loading…';
             try {
-                await renderWorldVisualModelSearch(world, pipeline, true);
+                await renderWorldVisualModelSearch(world, pipeline, true, true);
                 modelInput.focus();
                 ExperimentalWorldsHost.notify(`${pipeline === 'revision' ? 'Reference-capable' : 'New image'} model catalog refreshed.`, 'success');
             } catch (error) {
@@ -3254,7 +3284,7 @@ function normalizeWorldDirectoryData(world) {
         if (entity.type === 'vehicle') window.ExperimentalWorldsSidecarTraversal?.normalizeVehicle(entity);
         entity.persona = String(entity.persona || '').slice(0, 6000);
         const inferredDepth = entity.isMajor ? 'core'
-            : (entity.persona || entity.goal || (entity.schedule || []).length ? 'recurring' : 'background');
+            : (entity.persona || entity.goal || (Array.isArray(entity.schedule) && entity.schedule.length) ? 'recurring' : 'background');
         entity.simulationDepth = WORLD_DIRECTORY_DEPTHS.includes(entity.simulationDepth)
             ? entity.simulationDepth : inferredDepth;
         // Keep the old engine flag as a compatibility projection. Persona is no
@@ -3314,7 +3344,7 @@ function worldDirectoryUsedBy(kind, id) {
         (world.entities || []).forEach(entity => {
             if (entity.homeLocation === id) found.push(`Home of ${entity.name}`);
             if (entity.startLocation === id) found.push(`Starting place of ${entity.name}`);
-            if ((entity.schedule || []).some(block => block.locationId === id)) found.push(`Schedule for ${entity.name}`);
+            if ((Array.isArray(entity.schedule) ? entity.schedule : []).some(block => block.locationId === id)) found.push(`Schedule for ${entity.name}`);
         });
         (world.startingLives || []).forEach(life => { if (life.startLocationId === id) found.push(`Starting life: ${life.name}`); });
     } else {
@@ -3505,7 +3535,7 @@ function renameWorldLocationId(world, location, requestedId) {
     (world.entities || []).forEach(entity => {
         if (entity.startLocation === oldId) entity.startLocation = newId;
         if (entity.homeLocation === oldId) entity.homeLocation = newId;
-        (entity.schedule || []).forEach(block => {
+        (Array.isArray(entity.schedule) ? entity.schedule : []).forEach(block => {
             if (block.locationId === oldId) block.locationId = newId;
         });
     });
@@ -3532,7 +3562,7 @@ function removeWorldLocationRecord(world, locationId) {
     (world.entities || []).forEach(entity => {
         if (entity.startLocation === locationId) entity.startLocation = '';
         if (entity.homeLocation === locationId) entity.homeLocation = '';
-        entity.schedule = (entity.schedule || []).filter(block => block.locationId !== locationId);
+        entity.schedule = (Array.isArray(entity.schedule) ? entity.schedule : []).filter(block => block.locationId !== locationId);
     });
     (world.groups || []).forEach(group => {
         if (group.homeLocationId === locationId) group.homeLocationId = '';
@@ -7573,5 +7603,1500 @@ function renderWorlds() {
         grid.innerHTML = `<div class="empty-state"><h3>${hasFilter ? 'No Worlds Match This Search' : 'No Worlds Found'}</h3><p>${hasFilter ? 'Clear the search to show every saved world.' : 'Import a world or click "+ Create New World" to begin.'}</p>${hasFilter ? '<button class="btn btn-ghost clear-world-search-btn">Clear Search</button>' : ''}</div>`;
         const clear = grid.querySelector('.clear-world-search-btn');
         if (clear) clear.onclick = () => { document.getElementById('ew-world-search').value = ''; renderWorlds(); };
+    }
+}
+
+// --- World Architect Agent (ported from stock 17.4 worlds) ------------------
+// Expands an existing world as a resumable, reviewable migration. The model is
+// never handed the whole world to rewrite: it may only propose these typed
+// operations, which are replayed against a clone and validated before apply.
+const WORLD_ARCHITECT_OPERATION_TYPES = new Set([
+    'add_region', 'update_region', 'add_location', 'update_location', 'connect_locations',
+    'add_character', 'update_character', 'add_item', 'update_item', 'add_group',
+    'update_group', 'merge_groups', 'delete_group', 'add_faction', 'add_relationship',
+    'add_lore', 'update_lore'
+]);
+const WORLD_ARCHITECT_POLICIES = new Set(['add_only', 'fill_gaps', 'allow_edits']);
+const WORLD_ARCHITECT_MAP_TYPES = new Set(['region', 'transit', 'route', 'building', 'outdoor', 'room', 'area']);
+
+function worldArchitectSnapshot(world) {
+    const copy = experimentalSafeJsonClone(world || {});
+    delete copy.architectJob;
+    delete copy.architectUndo;
+    return copy;
+}
+
+function worldArchitectFingerprint(world) {
+    const text = JSON.stringify(worldArchitectSnapshot(world));
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+}
+
+function worldArchitectRequestedCounts(request) {
+    const out = { regions: 0, locations: 0, rooms: 0, people: 0, items: 0, groups: 0, factions: 0, lore: 0 };
+    const aliases = [
+        ['rooms', /(?:add|create|make|build|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?rooms?\b/gi],
+        ['locations', /(?:add|create|make|build|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?(?:locations?|places?)\b/gi],
+        ['people', /(?:add|create|make|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?(?:characters?|npcs?|people|persons?)\b/gi],
+        ['items', /(?:add|create|make|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?(?:items?|objects?)\b/gi],
+        ['regions', /(?:add|create|make|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?regions?\b/gi],
+        ['groups', /(?:add|create|make|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?(?:groups?|households?|organizations?)\b/gi],
+        ['factions', /(?:add|create|make|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?factions?\b/gi],
+        ['lore', /(?:add|create|make|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?(?:lore entries|lorebooks?|lore)\b/gi]
+    ];
+    aliases.forEach(([key, pattern]) => {
+        for (const match of String(request || '').matchAll(pattern)) out[key] += Math.min(2000, Number(match[1]) || 0);
+    });
+    return out;
+}
+
+function worldArchitectCountRecords(world) {
+    const locations = Array.isArray(world?.locations) ? world.locations : [];
+    const entities = Array.isArray(world?.entities) ? world.entities : [];
+    return {
+        regions: (world?.regions || []).length,
+        // Rooms are tracked separately so “10 locations and 100 rooms” has a
+        // meaningful, satisfiable exact-count contract rather than counting
+        // every room twice.
+        locations: locations.filter(item => item.mapType !== 'room').length,
+        rooms: locations.filter(item => item.mapType === 'room').length,
+        people: entities.filter(item => item.type === 'npc').length,
+        items: entities.filter(item => item.type === 'item').length,
+        groups: (world?.groups || []).length,
+        factions: (world?.factions || []).length,
+        lore: (world?.lorebook || []).length
+    };
+}
+
+function defaultWorldArchitectPlan(world, request, options = {}) {
+    const counts = worldArchitectRequestedCounts(request);
+    const batchSize = Math.max(4, Math.min(25, Number(options.batchSize) || 12));
+    const units = [];
+    Object.entries(counts).forEach(([kind, count]) => {
+        for (let offset = 0; offset < count; offset += batchSize) {
+            const amount = Math.min(batchSize, count - offset);
+            units.push({ kind, amount, offset });
+        }
+    });
+    if (!units.length) units.push({ kind: options.scope || 'whole', amount: 0, offset: 0 });
+    const batches = units.map((unit, index) => ({
+        id: `batch_${index + 1}`,
+        label: unit.amount ? `${unit.amount} ${unit.kind} (${unit.offset + 1}–${unit.offset + unit.amount})` : 'Requested world changes',
+        instruction: unit.amount
+            ? `Create exactly ${unit.amount} new ${unit.kind}. This batch covers requested records ${unit.offset + 1} through ${unit.offset + unit.amount}.`
+            : String(request || '').trim(),
+        expectedCounts: { regions: 0, locations: 0, rooms: 0, people: 0, items: 0, groups: 0, factions: 0, lore: 0, ...(unit.amount ? { [unit.kind]: unit.amount } : {}) }
+    }));
+    return {
+        title: 'World expansion plan',
+        summary: String(request || '').trim(),
+        assumptions: ['Existing authored canon is preserved.', 'Every proposed change is staged and validated before apply.'],
+        requestedCounts: counts,
+        batches,
+        estimatedCalls: batches.length
+    };
+}
+
+function normalizeWorldArchitectPlan(raw, fallback) {
+    const source = experimentalIsPlainObject(raw) ? raw : {};
+    const batches = Array.isArray(source.batches) ? source.batches.slice(0, 200).map((batch, index) => ({
+        id: `batch_${index + 1}`,
+        label: String(batch?.label || fallback.batches[index]?.label || `Batch ${index + 1}`).slice(0, 160),
+        instruction: String(batch?.instruction || fallback.batches[index]?.instruction || fallback.summary).slice(0, 2000),
+        expectedCounts: { ...(fallback.batches[index]?.expectedCounts || {}), ...(experimentalIsPlainObject(batch?.expectedCounts) ? batch.expectedCounts : {}) }
+    })) : [];
+    // The deterministic plan owns explicit numeric promises. A planner may add
+    // useful sequencing, but it may not silently shrink “100 rooms” to 12.
+    const hasExactCounts = Object.values(fallback.requestedCounts).some(Boolean);
+    // Exact-count work keeps deterministic, type-specific batches. Previously
+    // an LLM could rename the “7 people” batch to “establish family structure”
+    // while inheriting expectedCounts.people=7 by array position. It then quite
+    // reasonably emitted groups and relationships, and our validator blamed
+    // the model for producing zero characters. The planner may describe the
+    // overall approach, but numeric batching is engine-owned.
+    const planned = hasExactCounts ? fallback.batches : (batches.length ? batches : fallback.batches);
+    return {
+        title: String(source.title || fallback.title).slice(0, 160),
+        summary: String(source.summary || fallback.summary).slice(0, 2000),
+        assumptions: (Array.isArray(source.assumptions) ? source.assumptions : fallback.assumptions).map(item => String(item).slice(0, 300)).slice(0, 12),
+        requestedCounts: fallback.requestedCounts,
+        batches: planned,
+        estimatedCalls: planned.length
+    };
+}
+
+function normalizeWorldArchitectOperation(raw, index = 0) {
+    if (!experimentalIsPlainObject(raw)) return null;
+    const token = value => String(value || '').trim().toLowerCase().replace(/[\s.-]+/g, '_');
+    const aliases = {
+        create_region: 'add_region', edit_region: 'update_region', modify_region: 'update_region',
+        create_location: 'add_location', create_place: 'add_location', add_place: 'add_location',
+        create_room: 'add_location', add_room: 'add_location', edit_location: 'update_location',
+        update_place: 'update_location', edit_place: 'update_location', modify_location: 'update_location',
+        link_locations: 'connect_locations', connect_location: 'connect_locations', add_connection: 'connect_locations',
+        create_character: 'add_character', create_person: 'add_character', create_npc: 'add_character',
+        add_npc: 'add_character', add_person: 'add_character', update_npc: 'update_character',
+        update_person: 'update_character', edit_npc: 'update_character', edit_character: 'update_character',
+        create_item: 'add_item', create_object: 'add_item', add_object: 'add_item', edit_item: 'update_item',
+        create_group: 'add_group', create_household: 'add_group', create_family: 'add_group',
+        add_household: 'add_group', add_family: 'add_group', add_organization: 'add_group',
+        update_household: 'update_group', update_family: 'update_group', update_organization: 'update_group',
+        edit_group: 'update_group', edit_household: 'update_group', edit_family: 'update_group',
+        merge_households: 'merge_groups', merge_families: 'merge_groups',
+        delete_household: 'delete_group', delete_family: 'delete_group',
+        create_faction: 'add_faction', create_relationship: 'add_relationship', link_characters: 'add_relationship',
+        create_lore: 'add_lore', add_lore_entry: 'add_lore', create_lore_entry: 'add_lore', edit_lore: 'update_lore'
+    };
+    const suppliedType = token(raw.type || raw.operation || raw.operationType || raw.op);
+    let inferredSubject = token(raw.entityType || raw.entity_type || raw.resource || raw.kind || raw.subject || suppliedType);
+    let type = aliases[suppliedType] || suppliedType;
+    if (!WORLD_ARCHITECT_OPERATION_TYPES.has(type)) {
+        const actionAliases = { create: 'add', insert: 'add', new: 'add', edit: 'update', modify: 'update', set: 'update', remove: 'delete', link: 'add' };
+        const subjectAliases = {
+            npc: 'character', person: 'character', people: 'character', characters: 'character',
+            place: 'location', room: 'room', object: 'item', household: 'group', family: 'group',
+            organization: 'group', lore_entry: 'lore', connection: 'connection'
+        };
+        const action = actionAliases[token(raw.action || raw.verb)] || token(raw.action || raw.verb);
+        const subject = subjectAliases[inferredSubject] || inferredSubject;
+        const combined = subject === 'connection' && ['add', 'create', 'link'].includes(action)
+            ? 'connect_locations'
+            : `${action}_${subject}`;
+        type = aliases[combined] || combined;
+    }
+    if (!WORLD_ARCHITECT_OPERATION_TYPES.has(type)) return null;
+    const nestedRecord = [raw.record, raw.character, raw.person, raw.npc, raw.entity, raw.location, raw.place,
+        raw.room, raw.item, raw.group, raw.household, raw.family, raw.faction, raw.relationship, raw.lore,
+        raw.data, raw.payload, raw.value, raw.details].find(experimentalIsPlainObject);
+    const flattened = experimentalSafeJsonClone(raw);
+    ['type', 'operation', 'operationType', 'op', 'action', 'verb', 'entityType', 'entity_type', 'resource', 'kind', 'subject',
+        'operationId', 'targetId', 'target', 'fields', 'changes', 'updates', 'reason'].forEach(key => delete flattened[key]);
+    const nestedFields = [raw.fields, raw.changes, raw.updates].find(experimentalIsPlainObject);
+    const recordFields = nestedRecord && [nestedRecord.fields, nestedRecord.changes, nestedRecord.updates].find(experimentalIsPlainObject);
+    // Models commonly split an add operation into {record:{id},fields:{name}}
+    // or wrap it as {character:{...}}. Merge those equivalent shapes here so
+    // a valid record is not shown in review and then rejected during staging.
+    const record = {
+        ...flattened,
+        ...(nestedFields ? experimentalSafeJsonClone(nestedFields) : {}),
+        ...(nestedRecord ? experimentalSafeJsonClone(nestedRecord) : {}),
+        ...(recordFields ? experimentalSafeJsonClone(recordFields) : {})
+    };
+    ['fields', 'changes', 'updates'].forEach(key => delete record[key]);
+    if (!record.name) record.name = String(record.displayName || record.display_name || record.title || '').trim();
+    const addTypesNeedingName = new Set(['add_region', 'add_location', 'add_character', 'add_item', 'add_group', 'add_faction']);
+    if (addTypesNeedingName.has(type) && !record.name) {
+        const meaningfulId = String(record.id || raw.id || '').trim()
+            .replace(/^(?:ent|npc|char|person|item|loc|location|reg|region|grp|group|fac|faction)_+/i, '')
+            .replace(/[_-]+/g, ' ').trim();
+        if (meaningfulId && !/^\d+$/.test(meaningfulId)) {
+            record.name = meaningfulId.replace(/\b\p{L}/gu, letter => letter.toUpperCase());
+        }
+    }
+    if ([suppliedType, inferredSubject].some(value => value === 'room' || value === 'add_room' || value === 'create_room') && !record.mapType) record.mapType = 'room';
+    if (type === 'add_group' && !record.type) {
+        if ([suppliedType, inferredSubject].some(value => value.includes('household'))) record.type = 'household';
+        else if ([suppliedType, inferredSubject].some(value => value.includes('family'))) record.type = 'family';
+        else if ([suppliedType, inferredSubject].some(value => value.includes('organization'))) record.type = 'organization';
+    }
+    const clean = {
+        type, operationId: String(raw.operationId || `op_${index + 1}`).slice(0, 100),
+        id: String(raw.id || record.id || '').trim().slice(0, 100),
+        targetId: String(raw.targetId || raw.target || '').trim().slice(0, 100),
+        record,
+        fields: nestedFields ? experimentalSafeJsonClone(nestedFields) : (type.startsWith('update_') ? experimentalSafeJsonClone(record) : {}),
+        from: String(raw.from || '').trim().slice(0, 100), to: String(raw.to || '').trim().slice(0, 100),
+        a: String(raw.a || '').trim().slice(0, 100), b: String(raw.b || '').trim().slice(0, 100),
+        mode: String(raw.mode || '').trim().slice(0, 80), minutes: Number(raw.minutes ?? raw.travelTime) || 0,
+        oneWay: raw.oneWay === true || raw.isOneWay === true,
+        label: String(raw.label || '').trim().slice(0, 100), reason: String(raw.reason || '').trim().slice(0, 300),
+        score: Number(raw.score) || 0, keyword: String(raw.keyword || '').trim().slice(0, 160),
+        text: String(raw.text || '').trim().slice(0, 10000)
+    };
+    return clean;
+}
+
+function worldArchitectOperationCounts(operations) {
+    const counts = { regions: 0, locations: 0, rooms: 0, people: 0, items: 0, groups: 0, factions: 0, lore: 0 };
+    (operations || []).forEach(operation => {
+        const op = normalizeWorldArchitectOperation(operation);
+        if (!op) return;
+        if (op.type === 'add_region') counts.regions++;
+        if (op.type === 'add_location') counts[op.record.mapType === 'room' ? 'rooms' : 'locations']++;
+        if (op.type === 'add_character') counts.people++;
+        if (op.type === 'add_item') counts.items++;
+        if (op.type === 'add_group') counts.groups++;
+        if (op.type === 'add_faction') counts.factions++;
+        if (op.type === 'add_lore') counts.lore++;
+    });
+    return counts;
+}
+
+function worldArchitectFind(records, ref) {
+    const key = String(ref || '').trim().toLowerCase();
+    return (records || []).find(record => String(record.id || '').toLowerCase() === key || String(record.name || '').trim().toLowerCase() === key);
+}
+
+function worldArchitectApplyFields(target, fields, allowed, policy) {
+    if (policy === 'add_only') return 0;
+    let changed = 0;
+    allowed.forEach(key => {
+        if (!(key in fields)) return;
+        const old = target[key];
+        const blank = old == null || old === '' || (Array.isArray(old) && !old.length);
+        if (policy === 'fill_gaps' && !blank) return;
+        let value = experimentalSafeJsonClone(fields[key]);
+        // Model output is untrusted: list-typed fields must arrive as lists or
+        // the edit is dropped/coerced. A prose "schedule" once slipped in here
+        // and later reference-repair passes crashed on `.forEach` of a string.
+        if (key === 'schedule') {
+            if (!Array.isArray(value)) return;
+            value = value.filter(block => block && typeof block === 'object' && !Array.isArray(block)).slice(0, 30);
+        } else if (key === 'tags' || key === 'goalSteps' || key === 'groupIds') {
+            if (!Array.isArray(value)) value = typeof value === 'string' ? value.split(',') : [];
+            value = value.map(item => String(item || '').trim()).filter(Boolean).slice(0, 30);
+        }
+        target[key] = value;
+        changed++;
+    });
+    return changed;
+}
+
+function removeWorldGroupRecord(world, groupId) {
+    if (!world || !groupId || !(world.groups || []).some(group => group.id === groupId)) return false;
+    world.groups = world.groups.filter(group => group.id !== groupId);
+    (world.entities || []).forEach(entity => {
+        entity.groupIds = (entity.groupIds || []).filter(id => id !== groupId);
+        if (entity.householdId === groupId) {
+            entity.householdId = entity.groupIds.find(id => world.groups.some(group => group.id === id && group.type === 'household')) || '';
+        }
+    });
+    return true;
+}
+
+function mergeWorldGroupRecords(world, sourceId, targetId) {
+    if (!world || !sourceId || !targetId || sourceId === targetId) return false;
+    const source = (world.groups || []).find(group => group.id === sourceId);
+    const target = (world.groups || []).find(group => group.id === targetId);
+    if (!source || !target) return false;
+    if (!target.description && source.description) target.description = source.description;
+    if (!target.homeLocationId && source.homeLocationId) target.homeLocationId = source.homeLocationId;
+    target.tags = [...new Set([...(target.tags || []), ...(source.tags || [])])].slice(0, 30);
+    (world.entities || []).forEach(entity => {
+        const memberships = (entity.groupIds || []).map(id => id === sourceId ? targetId : id);
+        entity.groupIds = [...new Set(memberships)];
+        if (entity.householdId === sourceId) {
+            entity.householdId = target.type === 'household'
+                ? targetId
+                : entity.groupIds.find(id => world.groups.some(group => group.id === id && group.type === 'household' && id !== sourceId)) || '';
+        }
+    });
+    world.groups = world.groups.filter(group => group.id !== sourceId);
+    return true;
+}
+
+function applyWorldArchitectOperation(world, input, policy = 'fill_gaps') {
+    const op = normalizeWorldArchitectOperation(input);
+    if (!op) return { applied: false, reason: 'Unsupported or malformed operation.' };
+    const records = op.record;
+    const strings = value => (Array.isArray(value) ? value : (typeof value === 'string' ? value.split(',') : []))
+        .map(item => String(item || '').trim()).filter(Boolean);
+    const idFor = (list, prefix, name) => op.id || records.id || `${prefix}_${worldDirectorySlug(name, prefix)}`;
+    const addRecord = (list, record, prefix) => {
+        const existing = worldArchitectFind(list, record.id) || worldArchitectFind(list, record.name);
+        if (existing) return { applied: true, idempotent: true, summary: `${record.name || record.id} already exists.` };
+        if (!record.name) return { applied: false, reason: `${op.type} needs a name.` };
+        list.push(record);
+        return { applied: true, summary: `Added ${record.name}.` };
+    };
+    world.locations ||= []; world.entities ||= []; world.regions ||= []; world.groups ||= []; world.factions ||= []; world.lorebook ||= [];
+    if (op.type === 'add_region') {
+        const name = String(records.name || '').trim().slice(0, 300);
+        return addRecord(world.regions, { id: idFor(world.regions, 'reg', name), name, description: String(records.description || '').slice(0, 4000), tags: strings(records.tags).slice(0, 30) }, 'reg');
+    }
+    if (op.type === 'add_location') {
+        const name = String(records.name || '').trim().slice(0, 300);
+        const region = worldArchitectFind(world.regions, records.regionId || records.region);
+        const parent = worldArchitectFind(world.locations, records.parentLocationId || records.parent);
+        if ((records.regionId || records.region) && !region) return { applied: false, reason: `Missing region: ${records.regionId || records.region}` };
+        if ((records.parentLocationId || records.parent) && !parent) return { applied: false, reason: `Missing parent location: ${records.parentLocationId || records.parent}` };
+        const mapType = WORLD_ARCHITECT_MAP_TYPES.has(records.mapType) ? records.mapType : (parent ? 'room' : 'area');
+        return addRecord(world.locations, {
+            id: idFor(world.locations, 'loc', name), name, description: String(records.description || '').slice(0, 6000),
+            regionId: region?.id || parent?.regionId || '', region: region?.name || '', parentLocationId: parent?.id || '', mapType,
+            tags: strings(records.tags).slice(0, 30), exits: []
+        }, 'loc');
+    }
+    if (op.type === 'connect_locations') {
+        const from = worldArchitectFind(world.locations, op.from || records.from);
+        const to = worldArchitectFind(world.locations, op.to || records.to);
+        if (!from || !to || from.id === to.id) return { applied: false, reason: 'Connection needs two existing, different locations.' };
+        upsertWorldTravelConnection(world, from, to, { mode: op.mode || records.mode || 'walk', travelTime: op.minutes || records.minutes || 1, isOneWay: op.oneWay || records.oneWay, routeName: records.routeName || '' });
+        return { applied: true, summary: `Connected ${from.name} and ${to.name}.` };
+    }
+    if (op.type === 'add_character' || op.type === 'add_item') {
+        const isItem = op.type === 'add_item';
+        const name = String(records.name || '').trim().slice(0, 300);
+        const place = worldArchitectFind(world.locations, records.startLocation || records.locationId);
+        const home = worldArchitectFind(world.locations, records.homeLocation || records.homeLocationId) || place;
+        if ((records.startLocation || records.locationId) && !place) return { applied: false, reason: `Missing location: ${records.startLocation || records.locationId}` };
+        const record = {
+            id: idFor(world.entities, isItem ? 'item' : 'npc', name), type: isItem ? 'item' : 'npc', name,
+            description: String(records.description || '').slice(0, 6000), startLocation: place?.id || world.startLocationId || world.locations[0]?.id || '',
+            tags: strings(records.tags).slice(0, 30)
+        };
+        if (!isItem) Object.assign(record, {
+            persona: String(records.persona || '').slice(0, 6000), homeLocation: home?.id || record.startLocation,
+            goal: String(records.goal || '').slice(0, 1000), goalSteps: strings(records.goalSteps).slice(0, 20),
+            groupIds: strings(records.groupIds || records.groups).map(ref => worldArchitectFind(world.groups, ref)?.id).filter(Boolean).slice(0, 20),
+            schedule: (Array.isArray(records.schedule) ? records.schedule : []).map(block => {
+                const location = worldArchitectFind(world.locations, block?.locationId || block?.location);
+                return location ? { ...experimentalSafeJsonClone(block), locationId: location.id } : null;
+            }).filter(Boolean).slice(0, 30),
+            simulationDepth: ['background', 'recurring', 'core'].includes(records.simulationDepth) ? records.simulationDepth : 'recurring'
+        });
+        if (!isItem) {
+            const household = worldArchitectFind(world.groups, records.householdId || records.household);
+            record.householdId = household?.id || record.groupIds.find(id => world.groups.some(group => group.id === id && group.type === 'household')) || '';
+            if (record.householdId && !record.groupIds.includes(record.householdId)) record.groupIds.unshift(record.householdId);
+        }
+        return addRecord(world.entities, record, isItem ? 'item' : 'npc');
+    }
+    if (op.type === 'add_group' || op.type === 'add_faction') {
+        const list = op.type === 'add_group' ? world.groups : world.factions;
+        const prefix = op.type === 'add_group' ? 'grp' : 'fac';
+        const name = String(records.name || '').trim().slice(0, 300);
+        const home = op.type === 'add_group' && records.homeLocationId
+            ? worldArchitectFind(world.locations, records.homeLocationId) : null;
+        if (op.type === 'add_group' && records.homeLocationId && !home) return { applied: false, reason: `Missing group home location: ${records.homeLocationId}` };
+        return addRecord(list, {
+            id: idFor(list, prefix, name), name,
+            type: String(records.type || (op.type === 'add_group' ? 'organization' : '')).slice(0, 80),
+            description: String(records.description || '').slice(0, 5000), goal: String(records.goal || '').slice(0, 1000),
+            tags: strings(records.tags).slice(0, 30), ...(op.type === 'add_group' ? { homeLocationId: home?.id || '' } : {})
+        }, prefix);
+    }
+    if (op.type === 'update_group') {
+        const target = worldArchitectFind(world.groups, op.targetId || op.id || records.id || records.name);
+        if (!target) return { applied: false, reason: `Group update target not found: ${op.targetId || op.id || records.name}` };
+        const fields = { ...records, ...op.fields };
+        if ('homeLocationId' in fields && fields.homeLocationId && !worldArchitectFind(world.locations, fields.homeLocationId)) {
+            return { applied: false, reason: `Missing group home location: ${fields.homeLocationId}` };
+        }
+        if ('type' in fields && !['household', 'family', 'organization', 'crew', 'other'].includes(fields.type)) fields.type = 'other';
+        const changed = worldArchitectApplyFields(target, fields, ['name', 'type', 'description', 'homeLocationId', 'tags'], policy);
+        if (changed && target.type !== 'household') {
+            (world.entities || []).forEach(person => {
+                if (person.householdId === target.id) person.householdId = (person.groupIds || []).find(id => world.groups.some(group => group.id === id && group.type === 'household')) || '';
+            });
+        }
+        return changed ? { applied: true, summary: `Updated ${target.name}.` } : { applied: true, idempotent: true, summary: `No permitted gaps in ${target.name}.` };
+    }
+    if (op.type === 'merge_groups') {
+        if (policy !== 'allow_edits') return { applied: false, reason: 'Merging groups requires the Allow safe edits policy.' };
+        const source = worldArchitectFind(world.groups, op.from || records.from || records.sourceId);
+        const target = worldArchitectFind(world.groups, op.to || records.to || records.targetId);
+        if (!source || !target || source.id === target.id) return { applied: false, reason: 'Group merge needs two existing, different groups.' };
+        const sourceName = source.name;
+        mergeWorldGroupRecords(world, source.id, target.id);
+        return { applied: true, summary: `Merged ${sourceName} into ${target.name}.` };
+    }
+    if (op.type === 'delete_group') {
+        if (policy !== 'allow_edits') return { applied: false, reason: 'Deleting a group requires the Allow safe edits policy.' };
+        const target = worldArchitectFind(world.groups, op.targetId || op.id || records.id || records.name);
+        if (!target) return { applied: false, reason: 'Group delete target not found.' };
+        const name = target.name;
+        removeWorldGroupRecord(world, target.id);
+        return { applied: true, summary: `Deleted ${name}; its characters were kept.` };
+    }
+    if (op.type === 'add_relationship') {
+        const a = worldArchitectFind(world.entities, op.a || records.a);
+        const b = worldArchitectFind(world.entities, op.b || records.b);
+        if (!a || !b || a.id === b.id || a.type !== 'npc' || b.type !== 'npc') return { applied: false, reason: 'Relationship needs two existing characters.' };
+        world.relationships ||= [];
+        const existing = world.relationships.find(item => new Set([item.a, item.b]).has(a.id) && new Set([item.a, item.b]).has(b.id));
+        if (existing) return { applied: true, idempotent: true, summary: 'Relationship already exists.' };
+        world.relationships.push({ a: a.id, b: b.id, label: op.label || records.label || '', score: livingClamp(op.score || records.score || 0, -100, 100), reason: op.reason || records.reason || '' });
+        return { applied: true, summary: `Linked ${a.name} and ${b.name}.` };
+    }
+    if (op.type === 'add_lore') {
+        const keyword = op.keyword || records.keyword;
+        const text = op.text || records.text;
+        const existing = world.lorebook.find(item => String(item.keyword || '').trim().toLowerCase() === String(keyword || '').trim().toLowerCase());
+        if (existing) return { applied: true, idempotent: true, summary: `Lore “${keyword}” already exists.` };
+        if (!keyword || !text) return { applied: false, reason: 'Lore needs a keyword and text.' };
+        world.lorebook.push({ keyword, text });
+        return { applied: true, summary: `Added lore: ${keyword}.` };
+    }
+    const updateLists = {
+        update_region: [world.regions, ['name', 'description', 'tags']],
+        update_location: [world.locations, ['name', 'description', 'tags', 'mapType', 'parentLocationId', 'regionId']],
+        update_character: [world.entities, ['name', 'description', 'persona', 'startLocation', 'homeLocation', 'goal', 'goalSteps', 'groupIds', 'schedule', 'simulationDepth', 'tags']],
+        update_item: [world.entities, ['name', 'description', 'startLocation', 'tags']]
+    };
+    if (updateLists[op.type]) {
+        const [list, allowed] = updateLists[op.type];
+        const target = worldArchitectFind(list, op.targetId || op.id || records.id || records.name);
+        if (!target) return { applied: false, reason: `Update target not found: ${op.targetId || op.id || records.name}` };
+        if (op.type === 'update_character' && target.type !== 'npc') return { applied: false, reason: 'Character update target is not a character.' };
+        if (op.type === 'update_item' && target.type !== 'item') return { applied: false, reason: 'Item update target is not an item.' };
+        const changed = worldArchitectApplyFields(target, { ...records, ...op.fields }, allowed, policy);
+        return changed ? { applied: true, summary: `Updated ${target.name}.` } : { applied: true, idempotent: true, summary: `No permitted gaps in ${target.name}.` };
+    }
+    if (op.type === 'update_lore') {
+        const target = world.lorebook.find(item => String(item.keyword || '').toLowerCase() === String(op.keyword || op.targetId || records.keyword || '').toLowerCase());
+        if (!target) return { applied: false, reason: 'Lore update target not found.' };
+        const changed = worldArchitectApplyFields(target, { keyword: records.keyword, text: op.text || records.text }, ['keyword', 'text'], policy);
+        return changed ? { applied: true, summary: `Updated lore: ${target.keyword}.` } : { applied: true, idempotent: true, summary: 'No permitted lore gaps.' };
+    }
+    return { applied: false, reason: 'Operation was not handled.' };
+}
+
+function stageWorldArchitectJob(world, job) {
+    const staged = worldArchitectSnapshot(world);
+    const before = worldArchitectCountRecords(staged);
+    const dismissed = new Set((job?.dismissed || []).map(Number));
+    const results = [];
+    const priority = operation => ({
+        add_region: 10, add_location: 20, add_group: 30, add_faction: 30,
+        add_character: 40, add_item: 40, update_region: 50, update_location: 50,
+        update_group: 50, update_character: 50, update_item: 50, update_lore: 50,
+        connect_locations: 60, add_relationship: 70, merge_groups: 80, delete_group: 80
+    })[normalizeWorldArchitectOperation(operation)?.type] ?? 55;
+    let pending = (job?.operations || []).map((operation, index) => ({ operation, index }))
+        .filter(item => !dismissed.has(item.index))
+        .sort((left, right) => priority(left.operation) - priority(right.operation) || left.index - right.index);
+    // References may point to records created later in the same batch (a room
+    // to its new parent, a relationship to its new characters). Retry only
+    // failed atomic operations after each successful pass; successful ones are
+    // never replayed.
+    while (pending.length) {
+        const retry = [];
+        let progress = false;
+        pending.forEach(item => {
+            let outcome;
+            try { outcome = applyWorldArchitectOperation(staged, item.operation, job?.options?.policy || 'fill_gaps'); }
+            catch (error) { outcome = { applied: false, reason: error.message || String(error) }; }
+            if (outcome.applied) {
+                results.push({ index: item.index, ...outcome });
+                progress = true;
+            } else retry.push({ ...item, outcome });
+        });
+        if (!progress) {
+            retry.forEach(item => results.push({ index: item.index, ...item.outcome }));
+            break;
+        }
+        pending = retry;
+    }
+    results.sort((left, right) => left.index - right.index);
+    normalizeAuthoredWorld(staged);
+    const after = worldArchitectCountRecords(staged);
+    const deltas = Object.fromEntries(Object.keys(after).map(key => [key, after[key] - (before[key] || 0)]));
+    const blockers = results.filter(result => !result.applied).map(result => `Operation ${result.index + 1}: ${result.reason}`);
+    // A migration must be judged by what it introduces, not by unrelated
+    // damage that was already present in an imported or hand-authored world.
+    // The old implementation reran a whole-world audit and disabled Apply for
+    // defects such as a pre-existing missing exit—even when the staged batch
+    // only added characters.
+    const validationFor = candidate => {
+        const blocking = [];
+        const warnings = [];
+        try { validateWorldData(candidate); }
+        catch (error) {
+            const text = String(error.message || error).trim();
+            if (text) blocking.push({ key: `schema:${text.toLowerCase()}`, text });
+        }
+        validateWorldReferences(candidate).broken.forEach(item => {
+            const source = String(item.source || 'World reference').trim();
+            const ref = String(item.ref || '').trim();
+            blocking.push({ key: `reference:${source.toLowerCase()}|${ref.toLowerCase()}`, text: `${source}: missing “${ref}”.` });
+        });
+        buildWorldLintReport(candidate).forEach(item => {
+            // buildWorldLintReport uses sev/area/msg. Reading the unrelated
+            // severity/detail property names previously produced the empty
+            // yellow bullet visible in the broken review UI.
+            const text = [item.area, item.msg].filter(Boolean).join(': ').trim();
+            if (!text) return;
+            const entry = { key: `lint:${String(item.area || '').toLowerCase()}|${String(item.msg || '').toLowerCase()}`, text };
+            if (item.sev === 'critical') blocking.push(entry);
+            else warnings.push(entry);
+        });
+        return { blocking, warnings };
+    };
+    const baselineValidation = validationFor(worldArchitectSnapshot(world));
+    const stagedValidation = validationFor(staged);
+    const baselineBlockers = new Set(baselineValidation.blocking.map(item => item.key));
+    const baselineWarnings = new Set(baselineValidation.warnings.map(item => item.key));
+    const existingIssues = stagedValidation.blocking
+        .filter(item => baselineBlockers.has(item.key)).map(item => item.text);
+    stagedValidation.blocking
+        .filter(item => !baselineBlockers.has(item.key)).forEach(item => blockers.push(item.text));
+    Object.entries(job?.plan?.requestedCounts || {}).forEach(([key, expected]) => {
+        if (expected && deltas[key] !== expected) blockers.push(`Requested exactly ${expected} ${key}; selected operations produce ${deltas[key] || 0}.`);
+    });
+    const warnings = stagedValidation.warnings
+        .filter(item => !baselineWarnings.has(item.key)).map(item => item.text);
+    return {
+        world: staged, results,
+        blockers: [...new Set(blockers.filter(Boolean))],
+        warnings: [...new Set(warnings.filter(Boolean))],
+        existingIssues: [...new Set(existingIssues.filter(Boolean))],
+        deltas, health: worldDirectoryHealth(staged)
+    };
+}
+
+function worldArchitectIndex(world) {
+    const compact = {
+        name: world?.name, premise: world?.description, startLocationId: world?.startLocationId,
+        regions: (world?.regions || []).map(item => ({ id: item.id, name: item.name })),
+        locations: (world?.locations || []).map(item => ({ id: item.id, name: item.name, regionId: item.regionId, parentLocationId: item.parentLocationId, mapType: item.mapType })),
+        people: (world?.entities || []).filter(item => item.type === 'npc').map(item => ({ id: item.id, name: item.name, homeLocation: item.homeLocation, groupIds: item.groupIds })),
+        items: (world?.entities || []).filter(item => item.type === 'item').map(item => ({ id: item.id, name: item.name, startLocation: item.startLocation })),
+        groups: (world?.groups || []).map(item => ({ id: item.id, name: item.name, type: item.type })),
+        factions: (world?.factions || []).map(item => ({ id: item.id, name: item.name }))
+    };
+    const text = JSON.stringify(compact);
+    return text.length > 90000 ? text.slice(0, 90000) + '…' : text;
+}
+
+function worldArchitectOperationArray(raw) {
+    if (Array.isArray(raw)) return raw;
+    if (!experimentalIsPlainObject(raw)) return [];
+    for (const key of ['operations', 'changes', 'actions', 'edits', 'proposals']) {
+        if (Array.isArray(raw[key])) return raw[key];
+    }
+    const domainTypes = {
+        regions: 'add_region', locations: 'add_location', places: 'add_location', rooms: 'add_room',
+        characters: 'add_character', people: 'add_character', npcs: 'add_character', items: 'add_item',
+        groups: 'add_group', households: 'add_household', families: 'add_family', factions: 'add_faction',
+        relationships: 'add_relationship', lore: 'add_lore', lorebook: 'add_lore'
+    };
+    return Object.entries(domainTypes).flatMap(([key, type]) =>
+        Array.isArray(raw[key]) ? raw[key].filter(experimentalIsPlainObject).map(record => ({ type, record })) : []);
+}
+
+function parseWorldArchitectJSON(raw, expectedKey = '') {
+    if (experimentalIsPlainObject(raw)) {
+        if (!expectedKey || Array.isArray(raw[expectedKey])) return raw;
+        if (expectedKey === 'operations') {
+            const operations = worldArchitectOperationArray(raw);
+            if (operations.length) return { ...raw, operations };
+        }
+        for (const key of ['result', 'output', 'data', 'response', 'arguments']) {
+            if (raw[key] != null) {
+                const nested = parseWorldArchitectJSON(raw[key], expectedKey);
+                if (nested) return nested;
+            }
+        }
+    }
+    if (Array.isArray(raw)) return expectedKey ? { [expectedKey]: raw } : null;
+    const source = String(raw || '').trim();
+    if (!source) return null;
+    const candidates = [source];
+    for (const match of source.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) candidates.push(match[1]);
+    const anchor = expectedKey ? source.indexOf(`"${expectedKey}"`) : -1;
+    if (anchor >= 0) candidates.push(source.slice(Math.max(0, source.lastIndexOf('{', anchor)), source.length));
+
+    // Models often surround the payload with reasoning or emit several JSON
+    // objects. Scan balanced blocks instead of taking the first and last brace,
+    // which accidentally joins unrelated objects into invalid JSON.
+    const balancedBlocks = (text, open, close) => {
+        const blocks = [];
+        for (let start = text.indexOf(open); start >= 0; start = text.indexOf(open, start + 1)) {
+            let depth = 0, quote = '', escaped = false;
+            for (let index = start; index < text.length; index++) {
+                const char = text[index];
+                if (quote) {
+                    if (escaped) escaped = false;
+                    else if (char === '\\') escaped = true;
+                    else if (char === quote) quote = '';
+                    continue;
+                }
+                if (char === '"' || char === "'") { quote = char; continue; }
+                if (char === open) depth++;
+                else if (char === close && --depth === 0) { blocks.push(text.slice(start, index + 1)); break; }
+            }
+        }
+        return blocks;
+    };
+    candidates.push(...balancedBlocks(source, '{', '}'));
+    if (expectedKey) candidates.push(...balancedBlocks(source, '[', ']'));
+    for (const candidate of candidates) {
+        let parsed = null;
+        try { parsed = JSON.parse(String(candidate).trim()); }
+        catch (_) { parsed = experimentalSafeParseJSONRepair(candidate); }
+        if (experimentalIsPlainObject(parsed)) {
+            if (!expectedKey || Array.isArray(parsed[expectedKey])) return parsed;
+            if (expectedKey === 'operations') {
+                const operations = worldArchitectOperationArray(parsed);
+                if (operations.length) return { ...parsed, operations };
+            }
+            for (const key of ['result', 'output', 'data', 'response', 'arguments']) {
+                if (parsed[key] != null) {
+                    const nested = parseWorldArchitectJSON(parsed[key], expectedKey);
+                    if (nested) return nested;
+                }
+            }
+        }
+        if (Array.isArray(parsed) && expectedKey) return { [expectedKey]: parsed };
+    }
+    return null;
+}
+
+function worldArchitectResponseCandidates(payload) {
+    const message = payload?.choices?.[0]?.message || {};
+    const content = Array.isArray(message.content)
+        ? message.content.map(part => typeof part === 'string' ? part : part?.text || part?.content || '').join('')
+        : message.content;
+    return [
+        content, payload?.choices?.[0]?.text, payload?.output_text,
+        ...(message.tool_calls || []).map(call => call?.function?.arguments),
+        message.function_call?.arguments, message.reasoning_content, message.reasoning
+    ].filter(value => value != null && String(value).trim());
+}
+
+// Reasoning controls: the Thinking select sets the Director's effort and the
+// budget caps its reasoning tokens. Models advertising `reasoning_effort`
+// (OpenAI o-series and friends) take the native parameter; everyone else gets
+// OpenRouter's unified reasoning object. "Off" requests explicit disable,
+// "Default" sends nothing at all.
+function worldArchitectReasoningFor(model) {
+    const effort = document.getElementById('ew-w-architect-thinking')?.value || 'default';
+    if (effort === 'default') return null;
+    if (effort === 'off') return { reasoning: { enabled: false } };
+    const usesEffortParam = (architectModelCatalogFor(ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider))
+        .find(entry => entry.id === model)?.supportedParams || []).includes('reasoning_effort')
+        || /(o1|o3|o4|deepseek)/.test(String(model || ''));
+    return usesEffortParam ? { reasoning_effort: effort } : { reasoning: { effort } };
+}
+
+async function worldArchitectJSON(world, model, messages, maxTokens = 8000, expectedKey = '', { onDelta } = {}) {
+    maxTokens = worldArchitectReplyCeiling(maxTokens);
+    let lastError = null;
+    let previousRaw = '';
+    let useResponseFormat = true;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const retryMessages = attempt === 0 ? messages : [
+            ...messages,
+            ...(previousRaw ? [{ role: 'assistant', content: previousRaw.slice(-6000) }] : []),
+            { role: 'user', content: `Your previous reply was not valid structured output. Return ONLY one JSON object with a top-level "${expectedKey || 'result'}" field. No reasoning, prose or markdown fences.` }
+        ];
+        const requestBody = {
+            model, max_tokens: maxTokens, temperature: attempt ? 0 : 0.2,
+            messages: ExperimentalWorldsHost.sanitizeMessagesForProvider(retryMessages, model)
+        };
+        if (useResponseFormat) requestBody.response_format = { type: 'json_object' };
+        if (onDelta) requestBody.stream = true;
+        Object.assign(requestBody, worldArchitectReasoningFor(model) || {});
+        const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...ExperimentalWorldsHost.authHeaders(), ...ExperimentalWorldsHost.attributionHeaders() },
+            body: JSON.stringify(requestBody)
+        });
+        if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            lastError = new Error(payload?.error?.message || `Director request failed (${response.status}).`);
+            // Some otherwise capable OpenAI-compatible servers reject the
+            // response_format parameter itself. Retry once with prompt-only JSON.
+            if (attempt === 0 && [400, 404, 422].includes(response.status)
+                && /response.?format|json.?object|unsupported|unknown/i.test(lastError.message)) {
+                useResponseFormat = false;
+                continue;
+            }
+            throw lastError;
+        }
+        // A reply the ceiling cut off is unrecoverable within this attempt —
+        // the repair retry would re-run into the same wall — so surface it as
+        // a truncation error and let the author Continue with more headroom.
+        let candidates;
+        if (onDelta) {
+            const streamed = await readWorldArchitectStream(response, onDelta);
+            if (streamed.finishReason === 'length') throw worldArchitectTruncatedError();
+            candidates = [streamed.text];
+        } else {
+            const payload = await response.json().catch(() => ({}));
+            if (payload?.choices?.[0]?.finish_reason === 'length') throw worldArchitectTruncatedError();
+            candidates = worldArchitectResponseCandidates(payload);
+        }
+        previousRaw = candidates.map(String).join('\n');
+        for (const candidate of candidates) {
+            const parsed = parseWorldArchitectJSON(candidate, expectedKey);
+            if (parsed) return parsed;
+        }
+        lastError = new Error(`The model returned no usable ${expectedKey || 'JSON'} object.`);
+    }
+    throw new Error(`${lastError?.message || 'Invalid structured response'} A strict repair retry also failed.`);
+}
+
+// Consumes an SSE chat-completions body, feeding incremental text deltas to
+// onDelta so the Architect console can show the Director working in real time.
+// Resolves to the full text and the terminal finish_reason ('length' marks a
+// reply the token ceiling cut off mid-stream).
+async function readWorldArchitectStream(response, onDelta) {
+    const reader = response.body?.getReader?.();
+    if (!reader) {
+        // The server ignored stream:true and replied with a normal body.
+        const text = await response.text();
+        if (text) onDelta?.(text);
+        return { text, finishReason: '' };
+    }
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let full = '';
+    let finishReason = '';
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data:')) continue;
+            const data = trimmed.slice(5).trim();
+            if (!data || data === '[DONE]') continue;
+            try {
+                const choice = JSON.parse(data)?.choices?.[0];
+                if (choice?.finish_reason) finishReason = choice.finish_reason;
+                const delta = choice?.delta;
+                // Reasoning tokens are display-only: they show the Director
+                // thinking but must never reach the JSON parser.
+                if (typeof delta?.reasoning === 'string' && delta.reasoning) onDelta?.(delta.reasoning);
+                if (typeof delta?.content === 'string' && delta.content) {
+                    full += delta.content;
+                    onDelta?.(delta.content);
+                }
+            } catch (_) { /* keep-alive comments and partial frames are ignored. */ }
+        }
+    }
+    return { text: full, finishReason };
+}
+
+// The reply ceiling: an explicit Max reply override from the panel, else the
+// batch-size-derived default the caller passed in.
+function worldArchitectReplyCeiling(defaultTokens) {
+    const override = Math.round(Number(document.getElementById('ew-w-architect-max-reply')?.value) || 0);
+    return override >= 1000 ? override : defaultTokens;
+}
+
+function worldArchitectTruncatedError(detail) {
+    const error = new Error(`The reply ran out of tokens before the Director finished. ${detail || ''}`.trim());
+    error.truncated = true;
+    return error;
+}
+
+function worldArchitectSyncBasics(world) {
+    const fields = [['ew-w-studio-name', 'name'], ['ew-w-studio-desc', 'description'], ['ew-w-studio-dm-prompt', 'dmPrompt'], ['ew-w-studio-intro', 'intro'], ['ew-w-studio-note', 'authorNote']];
+    fields.forEach(([id, key]) => { const input = document.getElementById(id); if (input) world[key] = input.value; });
+}
+
+async function persistWorldArchitectCheckpoint(world, clear = false) {
+    const index = ExperimentalWorldsState.worlds.findIndex(candidate => candidate.id === world?.id);
+    if (index < 0) return;
+    if (clear || !world.architectJob) delete ExperimentalWorldsState.worlds[index].architectJob;
+    else ExperimentalWorldsState.worlds[index].architectJob = experimentalSafeJsonClone(world.architectJob);
+    await ExperimentalWorldsHost.persist();
+}
+
+const architectModelFilters = new Set();
+// The committed Architect model choice. The search input is a live draft
+// (search text or an exact custom ID); without a separate committed value
+// the "exact pinned ID shows everything" rule would swallow every query.
+let architectPinnedModel = '';
+
+// The pinned model is a per-world setting stored on the world record, so the
+// author's choice survives reloads. Unknown fields on world records are
+// preserved by normalizeAuthoredWorld.
+function persistArchitectModelChoice(world, modelId) {
+    if (!world) return;
+    world.architectModel = String(modelId || '').trim();
+    const index = ExperimentalWorldsState.worlds.findIndex(candidate => candidate.id === world.id);
+    if (index >= 0) ExperimentalWorldsState.worlds[index] = experimentalSafeJsonClone(world);
+    void ExperimentalWorldsHost.persist();
+}
+
+// Conversation state for the review surface: which proposal is open in the
+// direct JSON editor, and which plan/operation revision call is in flight.
+let worldArchitectEditingIndex = null;
+let worldArchitectRevisingIndex = null;
+let worldArchitectPlanRevising = false;
+
+function architectModelMatchesFilters(model) {
+    return [...architectModelFilters].every(filter =>
+        NARRATOR_MODEL_FILTERS[filter]?.matches(model));
+}
+
+function architectModelCatalogFor(provider) {
+    // Same shared index the Narrator and Sidecar browsers read from: the
+    // session cache first, then the locally persisted catalog, then the
+    // host's current catalog.
+    const saved = savedExperimentalModelCatalog(provider);
+    return narratorProviderModelCatalogs.get(provider)
+        || (saved.length ? saved : ExperimentalWorldsHost.modelCatalog());
+}
+
+function renderArchitectModelSearchResults(scrollToSelected = false) {
+    const input = document.getElementById('ew-w-architect-model');
+    const results = document.getElementById('ew-w-architect-model-results');
+    if (!input || !results) return;
+    // Rebuilding the window resets its scroll; put it back where it was so a
+    // selection click never jumps the list to the top.
+    const keepScroll = results.scrollTop;
+    const provider = ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider);
+    const ranked = rankExperimentalTextModels(architectModelCatalogFor(provider));
+    const selected = String(architectPinnedModel || '').trim();
+    // An exact pinned-ID query is treated as "show everything", like the
+    // Narrator browser.
+    const rawQuery = input.value.trim().toLowerCase();
+    const query = rawQuery && rawQuery === selected.toLowerCase() ? '' : rawQuery;
+    // No result cap: capping would make the status line undercount.
+    const filtered = ranked.filter(model => matchesModelSearch(model, query) && architectModelMatchesFilters(model));
+
+    results.innerHTML = '';
+    const fallbackModel = structuredModelFor(ExperimentalWorldsState.editingWorld);
+    const options = [
+        ...(!query && !architectModelFilters.size ? [{ id: '', name: `Use structured fallback (${fallbackModel})` }] : []),
+        ...filtered.map(model => ({ id: model.id, name: model.name, model, selected: model.id === selected }))
+    ];
+
+    if (!options.length) {
+        const empty = document.createElement('div');
+        empty.className = 'vh-model-empty';
+        empty.textContent = 'No models match this search. Try a provider name, family, or exact model ID — or type one below and press Enter.';
+        results.appendChild(empty);
+    } else {
+        experimentalRenderModelOptionCards(results, options, option => {
+            // Clicking the pinned card again unpins it (back to the world's
+            // structured fallback); either way the choice persists on the
+            // world record so it survives a reload.
+            architectPinnedModel = architectPinnedModel === option.id ? '' : option.id;
+            input.value = option.id;
+            void persistArchitectModelChoice(ExperimentalWorldsState.editingWorld, architectPinnedModel);
+            renderArchitectModelSearchResults();
+        });
+    }
+    const status = document.getElementById('ew-w-architect-model-status');
+    if (status) {
+        if (query || architectModelFilters.size) {
+            const activeFilters = [...architectModelFilters]
+                .map(filter => NARRATOR_MODEL_FILTERS[filter]?.label)
+                .filter(Boolean);
+            status.textContent = `${filtered.length} of ${ranked.length} text models match${query ? ` “${query}”` : ''}${activeFilters.length ? `${query ? ' · ' : ' '}${activeFilters.join(' + ')}` : ''}.`;
+        } else {
+            status.textContent = `${ranked.length} models in the shared catalog · pinned: ${selected || fallbackModel} · no generation starts until you approve a plan.`;
+        }
+    }
+    results.scrollTop = Math.min(keepScroll, results.scrollHeight);
+    if (scrollToSelected) {
+        results.querySelector('[aria-selected="true"], .vh-model-option.selected')?.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+function setupArchitectModelSearch() {
+    const input = document.getElementById('ew-w-architect-model');
+    const filters = document.getElementById('ew-w-architect-model-filters');
+    if (!input || input.dataset.architectSearchReady === 'true') return;
+    input.dataset.architectSearchReady = 'true';
+    input.addEventListener('focus', renderArchitectModelSearchResults);
+    input.addEventListener('input', renderArchitectModelSearchResults);
+    filters?.addEventListener('click', event => {
+        const button = event.target.closest('[data-ew-architect-model-filter]');
+        if (!button) return;
+        const filter = button.dataset.ewArchitectModelFilter;
+        if (!NARRATOR_MODEL_FILTERS[filter]) return;
+        if (architectModelFilters.has(filter)) architectModelFilters.delete(filter);
+        else architectModelFilters.add(filter);
+        button.setAttribute('aria-pressed', String(architectModelFilters.has(filter)));
+        renderArchitectModelSearchResults();
+    });
+}
+
+async function populateWorldArchitectModels(force = false) {
+    // Refreshes the shared model index both Architect and Narrator browsers
+    // read from, then repaints every open browser window.
+    const input = document.getElementById('ew-w-architect-model');
+    const status = document.getElementById('ew-w-architect-model-status');
+    if (!input) return;
+    try {
+        const provider = ExperimentalWorldsHost.normalizedProviderId(ExperimentalWorldsState.globalSettings?.apiProvider);
+        const models = await ExperimentalWorldsHost.getModelCatalog({ force, provider });
+        if (!Array.isArray(models) || !models.length) {
+            if (status) status.textContent = `The live ${ExperimentalWorldsHost.isLocalProvider() ? 'local server' : ExperimentalWorldsHost.cloudProviderName()} /models endpoint returned no compatible models. You may type an exact model ID.`;
+            return;
+        }
+        narratorProviderModelCatalogs.set(provider, models);
+        rememberExperimentalModelCatalog(provider, models);
+        renderArchitectModelSearchResults();
+        renderNarratorModelSearchResults();
+    } catch (error) {
+        if (status) status.textContent = `Catalog unavailable: ${error.message}. You may type an exact model ID.`;
+    }
+}
+
+function worldArchitectOperationLabel(operation) {
+    const op = normalizeWorldArchitectOperation(operation) || {};
+    return op.record?.name || op.keyword || op.label || op.targetId || op.id || `${op.from || ''}${op.to ? ` → ${op.to}` : ''}` || 'change';
+}
+
+// One proposed change as a roomy tile: checkbox, edit glyph, and a revision
+// field so the author can either fix the proposal by hand or ask the Director
+// to redo it with a change request.
+function worldArchitectOperationTile(operation, index, job) {
+    const dismissed = (job.dismissed || []).includes(index);
+    const editing = worldArchitectEditingIndex === index;
+    const head = `<div class="world-architect-operation-head"><strong>${experimentalEscapeHTML(String(operation.type || '').replaceAll('_', ' '))}: ${experimentalEscapeHTML(worldArchitectOperationLabel(operation))}</strong><button type="button" class="world-architect-edit-btn" data-ew-architect-edit="${index}" title="${editing ? 'Close the editor' : 'Edit this proposal as JSON'}" aria-label="Edit proposal">${editing ? '✕' : '✎'}</button></div>`;
+    if (editing) {
+        // The author edits the fields the tile already shows — name and
+        // description land back in the operation's record on save. Only
+        // record-less operations (connections, relationships) fall back to
+        // whole-operation JSON.
+        const usesRecord = operation.record && typeof operation.record === 'object';
+        if (usesRecord) {
+            return `<div class="world-architect-operation is-editing"><input type="checkbox" data-ew-architect-operation="${index}" ${dismissed ? '' : 'checked'}><div>${head}<div class="world-architect-edit-fields"><label>Name<input class="form-input" data-ew-architect-edit-name="${index}" value="${experimentalEscapeHTML(String(operation.record.name || ''))}"></label><label>Description<textarea class="form-textarea" data-ew-architect-edit-desc="${index}" rows="4">${experimentalEscapeHTML(String(operation.record.description || ''))}</textarea></label></div><div class="world-architect-edit-actions"><button type="button" class="btn btn-primary" data-ew-architect-edit-save="${index}">Save proposal</button><button type="button" class="btn btn-ghost" data-ew-architect-edit-cancel="${index}">Cancel</button></div></div></div>`;
+        }
+        const editorValue = JSON.stringify({ ...operation, batchId: undefined }, null, 2);
+        return `<div class="world-architect-operation is-editing"><input type="checkbox" data-ew-architect-operation="${index}" ${dismissed ? '' : 'checked'}><div>${head}<textarea class="world-architect-edit-json" data-ew-architect-edit-json="${index}" spellcheck="false">${experimentalEscapeHTML(editorValue)}</textarea><div class="world-architect-edit-actions"><button type="button" class="btn btn-primary" data-ew-architect-edit-save="${index}">Save proposal</button><button type="button" class="btn btn-ghost" data-ew-architect-edit-cancel="${index}">Cancel</button></div></div></div>`;
+    }
+    return `<div class="world-architect-operation ${dismissed ? 'is-dismissed' : ''}"><input type="checkbox" data-ew-architect-operation="${index}" ${dismissed ? '' : 'checked'}><div>${head}<small>${experimentalEscapeHTML(operation.reason || operation.record?.description || '')}</small><div class="world-architect-revision"><input type="text" class="form-input" placeholder="Reply with a change for this proposal…" data-ew-architect-revision-input="${index}"><button type="button" class="btn btn-ghost" data-ew-architect-redo="${index}" title="Send this revision request to the Director" ${worldArchitectRevisingIndex === index ? 'disabled' : ''}>${worldArchitectRevisingIndex === index ? 'Revising…' : '↻ Redo'}</button></div></div></div>`;
+}
+
+// One Director call: apply the author's change request to a single proposed
+// operation and swap it in place.
+async function reviseWorldArchitectOperation(world, job, index, instruction) {
+    const operation = job.operations?.[index];
+    if (!operation || worldArchitectRevisingIndex !== null) return;
+    worldArchitectRevisingIndex = index;
+    renderWorldArchitectAgent();
+    worldArchitectStreamLog(`▸ Revising “${worldArchitectOperationLabel(operation)}”: ${instruction}`);
+    try {
+        const raw = await worldArchitectJSON(world, job.model, [
+            { role: 'system', content: `You revise one operation of a roleplay World Architect job after author feedback. Return only one JSON operation object. Allowed operation types: ${[...WORLD_ARCHITECT_OPERATION_TYPES].join(', ')}. Never delete locations, people, items, factions or lore. New records need stable snake_case IDs and put new data inside "record". Preserve the operation's identity unless the author asks to change it.` },
+            { role: 'user', content: `WORLD INDEX: ${worldArchitectIndex(world)}\nCURRENT OPERATION: ${JSON.stringify(operation)}\nAUTHOR REVISION REQUEST: ${instruction}\nReturn the revised single operation as JSON.` }
+        ], 4000, '');
+        const normalized = normalizeWorldArchitectOperation(raw, index);
+        if (!normalized) throw new Error('the revised reply was not a supported operation');
+        normalized.batchId = operation.batchId;
+        job.operations[index] = normalized;
+        job.updatedAt = Date.now();
+        worldArchitectStreamLog(`✓ Revision applied to “${worldArchitectOperationLabel(normalized)}”.`, { cls: 'is-success' });
+        await persistWorldArchitectCheckpoint(world);
+    } catch (error) {
+        worldArchitectStreamLog(`✕ Revision failed: ${error.message}`, { cls: 'is-error' });
+        ExperimentalWorldsHost.notify(`Revision failed: ${error.message}`, 'error');
+    } finally {
+        worldArchitectRevisingIndex = null;
+    }
+    renderWorldArchitectAgent();
+}
+
+// The author replies to the plan itself: the Director re-plans the pending
+// batches; already-completed batches are kept and never re-run.
+async function reviseWorldArchitectPlan(world, job, instruction) {
+    if (!job?.plan || worldArchitectPlanRevising) return;
+    worldArchitectPlanRevising = true;
+    renderWorldArchitectAgent();
+    worldArchitectStreamLog(`▸ Revising the plan: ${instruction}`);
+    try {
+        const done = job.plan.batches.filter(batch => (job.completedBatchIds || []).includes(batch.id));
+        const pending = job.plan.batches.filter(batch => !(job.completedBatchIds || []).includes(batch.id));
+        const raw = await worldArchitectJSON(world, job.model, [
+            { role: 'system', content: 'You revise an existing roleplay World Architect plan after author feedback. Return only JSON: {"title":"","summary":"","assumptions":[],"batches":[{"label":"","instruction":"","expectedCounts":{"rooms":0,"locations":0,"people":0,"items":0,"regions":0,"groups":0,"factions":0,"lore":0}}]}. Plan only the remaining work.' },
+            { role: 'user', content: `ORIGINAL REQUEST: ${job.request}\nAUTHOR REPLY: ${instruction}\nALREADY-COMPLETE BATCHES (do not re-plan these): ${JSON.stringify(done.map(batch => batch.label))}\nCURRENT PENDING PLAN: ${JSON.stringify({ title: job.plan.title, summary: job.plan.summary, assumptions: job.plan.assumptions, batches: pending })}\nReturn the revised plan.` }
+        ], 3000, 'batches');
+        const revised = normalizeWorldArchitectPlan(raw, job.plan);
+        job.plan = { ...revised, batches: [...done, ...revised.batches] };
+        job.updatedAt = Date.now();
+        worldArchitectStreamLog(`✓ Plan revised: ${revised.batches.length} pending batch${revised.batches.length === 1 ? '' : 'es'} after the author's reply.`, { cls: 'is-success' });
+        await persistWorldArchitectCheckpoint(world);
+    } catch (error) {
+        worldArchitectStreamLog(`✕ Plan revision failed: ${error.message}`, { cls: 'is-error' });
+        ExperimentalWorldsHost.notify(`Plan revision failed: ${error.message}`, 'error');
+    } finally {
+        worldArchitectPlanRevising = false;
+    }
+    renderWorldArchitectAgent();
+}
+
+function renderWorldArchitectAgent() {
+    const world = ExperimentalWorldsState.editingWorld;
+    const host = document.getElementById('ew-w-architect-job');
+    if (!world || !host) return;
+    // The saved per-world choice is the source of truth for the pin; card
+    // clicks write straight back to the world record.
+    architectPinnedModel = String(world.architectModel || '').trim();
+    // Show the running model in the search bar too. Only fill an empty bar so
+    // an in-progress search draft is never clobbered mid-run.
+    const modelInput = document.getElementById('ew-w-architect-model');
+    if (modelInput && !modelInput.value.trim() && architectPinnedModel) modelInput.value = architectPinnedModel;
+    renderArchitectModelSearchResults(true);
+    const job = world.architectJob;
+    if (!job) {
+        host.innerHTML = '<div class="world-architect-empty"><strong>No staged job</strong><p>Describe an expansion or repair. Horde will show assumptions, batches and expected calls before generating anything.</p></div>';
+        return;
+    }
+    // Jobs saved by the first Architect build treated a perfectly usable
+    // deterministic fallback as a red error. Repair that presentation in place
+    // so users do not have to discard and recreate an already-valid plan.
+    if (job.plan && String(job.error || '').startsWith('Planner fallback used:')) {
+        job.notice = `Horde used its safe deterministic plan because the Director's planning reply was not structured. You can continue normally.`;
+        job.error = '';
+    }
+    const completed = (job.completedBatchIds || []).length;
+    const total = job.plan?.batches?.length || 0;
+    const stage = job.status === 'review' && job.operations?.length ? stageWorldArchitectJob(world, job) : null;
+    const reviewDeltas = stage?.deltas || job.appliedDeltas || {};
+    const counts = job.plan?.requestedCounts || {};
+    // Selecting/deselecting a proposal re-renders this whole section; carry
+    // the operations list scroll and the focused checkbox across so the
+    // surface never jumps to the top under the author's cursor.
+    const operationsScroll = host.querySelector('.world-architect-operations')?.scrollTop || 0;
+    const activeOperationIndex = Number(document.activeElement?.dataset?.ewArchitectOperation ?? -1);
+    host.innerHTML = `<div class="world-architect-job-head"><div><span class="world-architect-kicker">${experimentalEscapeHTML(job.options?.policy || 'fill gaps')} · ${experimentalEscapeHTML(job.model || '')}</span><h3>${experimentalEscapeHTML(job.plan?.title || 'Planning changes')}</h3><small>${experimentalEscapeHTML(job.request || '')}</small></div><span class="world-architect-status">${experimentalEscapeHTML(job.status || 'draft')}</span></div>
+        ${job.error ? `<p class="world-architect-error">${experimentalEscapeHTML(job.error)}</p>` : ''}
+        ${job.notice ? `<p class="world-architect-warning">${experimentalEscapeHTML(job.notice)}</p>` : ''}
+        ${job.plan ? `<div class="world-architect-plan-summary"><p>${experimentalEscapeHTML(job.plan.summary || '')}</p><div class="world-architect-counts">${Object.entries(counts).filter(([, value]) => value).map(([key, value]) => `<span>${value} ${experimentalEscapeHTML(key)}</span>`).join('') || '<span>No exact numeric target</span>'}<span>${job.plan.estimatedCalls || job.plan.batches.length} Director call${(job.plan.estimatedCalls || job.plan.batches.length) === 1 ? '' : 's'}</span></div>${(job.plan.assumptions || []).map(item => `<small>• ${experimentalEscapeHTML(item)}</small>`).join('<br>')}</div>` : '<p>Asking the Director to structure the work…</p>'}
+        ${job.status === 'planned' ? `<div class="world-architect-batches">${job.plan.batches.map((batch, index) => `<div class="world-architect-batch"><strong>${index + 1}</strong><div><strong>${experimentalEscapeHTML(batch.label)}</strong><small>${experimentalEscapeHTML(batch.instruction)}</small></div></div>`).join('')}</div><div class="world-architect-plan-revision"><input type="text" class="form-input" id="ew-w-architect-plan-revision" placeholder="Reply to the plan — ask for a change…"><button type="button" class="btn btn-ghost" id="ew-w-architect-plan-revise-btn" ${worldArchitectPlanRevising ? 'disabled' : ''}>${worldArchitectPlanRevising ? 'Revising…' : '↻ Revise plan'}</button></div>` : ''}
+        ${['running', 'failed', 'cancelled'].includes(job.status) ? `<div class="world-architect-progress"><span style="width:${total ? Math.round(completed / total * 100) : 0}%"></span></div><p>${completed} of ${total} batches complete · ${job.operations?.length || 0} proposed operations</p>` : ''}
+        ${job.status === 'review' || job.status === 'applied' ? `<div class="world-architect-counts">${Object.entries(reviewDeltas).filter(([, value]) => value).map(([key, value]) => `<span>+${value} ${experimentalEscapeHTML(key)}</span>`).join('') || '<span>No net additions</span>'}<span>Health ${stage?.health?.score ?? job.appliedHealth ?? '—'}%</span></div>
+            ${stage?.blockers?.length ? `<div class="world-architect-validation is-blocking"><strong>${stage.blockers.length} proposed-change blocker${stage.blockers.length === 1 ? '' : 's'}</strong>${stage.blockers.slice(0, 8).map(item => `<p class="world-architect-error">⚠ ${experimentalEscapeHTML(item)}</p>`).join('')}</div>` : ''}
+            ${stage?.existingIssues?.length ? `<details class="world-architect-validation is-existing"><summary>${stage.existingIssues.length} pre-existing world issue${stage.existingIssues.length === 1 ? '' : 's'} — does not block this batch</summary>${stage.existingIssues.slice(0, 12).map(item => `<p class="world-architect-warning">• ${experimentalEscapeHTML(item)}</p>`).join('')}</details>` : ''}
+            ${(stage?.warnings || []).slice(0, 5).map(item => `<p class="world-architect-warning">• ${experimentalEscapeHTML(item)}</p>`).join('')}
+            ${job.status === 'review' ? `<div class="world-architect-operations">${(job.operations || []).map((operation, index) => worldArchitectOperationTile(operation, index, job)).join('')}</div>` : '<p>Changes are in the draft. Use Undo below or Save World to keep them.</p>'}` : ''}
+        <div class="world-architect-actions">
+            ${job.status === 'planned' ? '<button class="btn btn-primary" data-ew-architect-action="generate">Approve plan &amp; generate</button>' : ''}
+            ${job.status === 'running' ? '<button class="btn btn-ghost" data-ew-architect-action="cancel">Pause after this batch</button>' : ''}
+            ${['failed', 'cancelled'].includes(job.status) ? `<button class="btn btn-primary" data-ew-architect-action="generate">${job.truncated ? 'Continue' : 'Resume remaining batches'}</button>` : ''}
+            ${job.status === 'review' ? `<button class="btn ${stage?.blockers?.length ? 'btn-ghost' : 'btn-primary'}" data-ew-architect-action="apply">${stage?.blockers?.length ? `Review ${stage.blockers.length} blocker${stage.blockers.length === 1 ? '' : 's'}` : `Apply ${job.operations.length - (job.dismissed || []).length} changes &amp; save`}</button>` : ''}
+            ${world.architectUndo ? '<button class="btn btn-ghost" data-ew-architect-action="undo">Undo last apply</button>' : ''}
+            ${job.status !== 'running' ? '<button class="btn btn-ghost" data-ew-architect-action="discard">Discard job</button>' : ''}
+        </div>`;
+    host.querySelectorAll('[data-ew-architect-operation]').forEach(input => input.onchange = () => {
+        const index = Number(input.dataset.ewArchitectOperation);
+        job.dismissed ||= [];
+        job.dismissed = input.checked ? job.dismissed.filter(item => item !== index) : [...new Set([...job.dismissed, index])];
+        void persistWorldArchitectCheckpoint(world);
+        renderWorldArchitectAgent();
+    });
+    host.querySelectorAll('[data-ew-architect-edit]').forEach(button => button.onclick = () => {
+        const index = Number(button.dataset.ewArchitectEdit);
+        worldArchitectEditingIndex = worldArchitectEditingIndex === index ? null : index;
+        renderWorldArchitectAgent();
+    });
+    host.querySelectorAll('[data-ew-architect-edit-cancel]').forEach(button => button.onclick = () => {
+        worldArchitectEditingIndex = null;
+        renderWorldArchitectAgent();
+    });
+    host.querySelectorAll('[data-ew-architect-edit-save]').forEach(button => button.onclick = () => {
+        const index = Number(button.dataset.ewArchitectEditSave);
+        const operation = job.operations[index];
+        const nameInput = host.querySelector(`[data-ew-architect-edit-name="${index}"]`);
+        const descriptionInput = host.querySelector(`[data-ew-architect-edit-desc="${index}"]`);
+        if (operation?.record && (nameInput || descriptionInput)) {
+            // Field-form edit: write the tile's visible fields straight into
+            // the record; everything else in the operation is untouched.
+            const name = String(nameInput?.value || '').trim().slice(0, 300);
+            if (nameInput && name) operation.record.name = name;
+            if (descriptionInput) operation.record.description = String(descriptionInput.value || '').slice(0, 6000);
+        } else {
+            const parsed = experimentalSafeParseJSONRepair(String(host.querySelector(`[data-ew-architect-edit-json="${index}"]`)?.value || ''));
+            const editsRecord = operation?.record && typeof operation.record === 'object';
+            if (editsRecord && (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))) {
+                return ExperimentalWorldsHost.notify('The record must be a JSON object.', 'error');
+            }
+            const normalized = normalizeWorldArchitectOperation(editsRecord ? { ...operation, record: parsed } : parsed, index);
+            if (!normalized) return ExperimentalWorldsHost.notify('That JSON is not a supported Architect operation.', 'error');
+            normalized.batchId = operation?.batchId;
+            job.operations[index] = normalized;
+        }
+        worldArchitectEditingIndex = null;
+        void persistWorldArchitectCheckpoint(world);
+        worldArchitectStreamLog(`✓ Proposal ${index + 1} edited directly.`, { cls: 'is-success' });
+        renderWorldArchitectAgent();
+    });
+    host.querySelectorAll('[data-ew-architect-redo]').forEach(button => button.onclick = () => {
+        const index = Number(button.dataset.ewArchitectRedo);
+        const instruction = host.querySelector(`[data-ew-architect-revision-input="${index}"]`)?.value.trim();
+        if (!instruction) return ExperimentalWorldsHost.notify('Describe the change you want for this proposal.', 'info');
+        void reviseWorldArchitectOperation(world, job, index, instruction);
+    });
+    document.getElementById('ew-w-architect-plan-revise-btn')?.addEventListener('click', () => {
+        const instruction = document.getElementById('ew-w-architect-plan-revision')?.value.trim();
+        if (!instruction) return ExperimentalWorldsHost.notify('Describe what should change about the plan.', 'info');
+        void reviseWorldArchitectPlan(world, job, instruction);
+    });
+    host.querySelectorAll('[data-ew-architect-action]').forEach(button => button.onclick = () => handleWorldArchitectAction(button.dataset.ewArchitectAction));
+    const operationsList = host.querySelector('.world-architect-operations');
+    if (operationsList) operationsList.scrollTop = operationsScroll;
+    if (activeOperationIndex >= 0) host.querySelector(`[data-ew-architect-operation="${activeOperationIndex}"]`)?.focus({ preventScroll: true });
+}
+
+// Live activity console: the Director's streamed output and per-batch notes
+// land here so the author can watch the agent work instead of staring at a
+// frozen "running" badge between repaints.
+function worldArchitectStreamLog(text, { cls = 'is-note', reset = false } = {}) {
+    const log = document.getElementById('ew-w-architect-stream');
+    if (!log) return null;
+    document.getElementById('ew-w-architect-stream-card')?.classList.remove('hidden');
+    if (reset) log.replaceChildren();
+    const entry = document.createElement('div');
+    entry.className = `world-architect-stream-entry ${cls}`.trim();
+    entry.textContent = text;
+    log.appendChild(entry);
+    while (log.children.length > 400) log.removeChild(log.firstChild);
+    worldArchitectStreamScroll(log);
+    return entry;
+}
+
+function worldArchitectStreamScroll(log) {
+    const el = log || document.getElementById('ew-w-architect-stream');
+    if (el) el.scrollTop = el.scrollHeight;
+}
+
+function worldArchitectStreamEntry(entry, delta) {
+    if (!entry) return;
+    // Cap a single streamed reply in the DOM; the full text still reaches the
+    // JSON parser, this is only the watching window.
+    if (entry.textContent.length < 60000) entry.textContent += delta;
+    worldArchitectStreamScroll();
+}
+
+async function planWorldArchitectJob() {
+    const world = ExperimentalWorldsState.editingWorld;
+    const request = document.getElementById('ew-w-architect-request')?.value.trim();
+    if (!world || !request) return ExperimentalWorldsHost.notify('Describe what the Architect should change.', 'info');
+    if (!ExperimentalWorldsHost.hasApiCredentials()) return ExperimentalWorldsHost.notify('Configure a text provider first.', 'error');
+    worldArchitectSyncBasics(world);
+    const options = {
+        scope: document.getElementById('ew-w-architect-scope')?.value || 'whole',
+        policy: WORLD_ARCHITECT_POLICIES.has(document.getElementById('ew-w-architect-policy')?.value) ? document.getElementById('ew-w-architect-policy').value : 'fill_gaps',
+        detail: document.getElementById('ew-w-architect-detail')?.value || 'standard',
+        batchSize: Number(document.getElementById('ew-w-architect-batch-size')?.value) || 12
+    };
+    const modelInput = document.getElementById('ew-w-architect-model');
+    // A committed card selection beats a half-typed search draft; a typed
+    // exact custom ID is still honored when nothing was selected.
+    const model = architectPinnedModel || modelInput?.value.trim() || structuredModelFor(world);
+    const fallback = defaultWorldArchitectPlan(world, request, options);
+    const job = world.architectJob = {
+        id: `architect_${Date.now()}`, request, options, model, status: 'planning', plan: null, operations: [], dismissed: [],
+        completedBatchIds: [], baseRevision: Number(world.authoringRevision) || 0, baseFingerprint: worldArchitectFingerprint(world), createdAt: Date.now(), updatedAt: Date.now()
+    };
+    renderWorldArchitectAgent();
+    await persistWorldArchitectCheckpoint(world);
+    const hasExactCounts = Object.values(fallback.requestedCounts).some(Boolean);
+    worldArchitectStreamLog(`▸ Planning staged job for “${model}”.`, { reset: true });
+    try {
+        // Numeric requests already have a safer engine-owned plan. Asking a
+        // model to repeat “7 people in one batch” only adds latency and a JSON
+        // failure point, while normalizeWorldArchitectPlan must ignore its
+        // re-batching anyway.
+        if (hasExactCounts) {
+            job.plan = fallback;
+            job.notice = 'Exact quantities use Horde’s deterministic resumable batching; the Director will write the records after approval.';
+        } else {
+            worldArchitectStreamLog('Asking the Director for a batch plan…', { cls: 'is-note' });
+            const planningEntry = worldArchitectStreamLog('', { cls: 'is-raw' });
+            const raw = await worldArchitectJSON(world, model, [
+                { role: 'system', content: 'You plan safe, incremental edits to an existing roleplay world. Return only JSON. Never reduce an explicit requested count. Plan small resumable batches; do not write the records yet.' },
+                { role: 'user', content: `REQUEST: ${request}\nOPTIONS: ${JSON.stringify(options)}\nEXACT COUNTS: ${JSON.stringify(fallback.requestedCounts)}\nCURRENT WORLD INDEX: ${worldArchitectIndex(world)}\nReturn {"title":"","summary":"","assumptions":[],"batches":[{"label":"","instruction":"","expectedCounts":{"rooms":0,"locations":0,"people":0,"items":0,"regions":0,"groups":0,"factions":0,"lore":0}}]}.` }
+            ], 3000, 'batches', { onDelta: delta => worldArchitectStreamEntry(planningEntry, delta) });
+            job.plan = normalizeWorldArchitectPlan(raw, fallback);
+            worldArchitectStreamLog(`✓ Plan ready: ${job.plan.batches.length} batch${job.plan.batches.length === 1 ? '' : 'es'} — ${job.plan.summary || job.plan.title || 'no summary'}.`, { cls: 'is-success' });
+        }
+    } catch (error) {
+        job.plan = fallback;
+        job.notice = `The Director's planning reply was not structured, so Horde used its safe one-batch plan. You can continue normally. (${error.message})`;
+        worldArchitectStreamLog(`⚠ Planning fell back to the safe one-batch plan: ${error.message}`, { cls: 'is-error' });
+    }
+    job.status = 'planned'; job.updatedAt = Date.now();
+    await persistWorldArchitectCheckpoint(world);
+    renderWorldArchitectAgent();
+}
+
+async function runWorldArchitectJob() {
+    const world = ExperimentalWorldsState.editingWorld;
+    const job = world?.architectJob;
+    if (!world || !job?.plan) return;
+    worldArchitectSyncBasics(world);
+    // Repair plans created by the earlier positional merge bug in place. This
+    // lets an already-failed job Resume without forcing the author to discard
+    // completed, valid batches.
+    job.plan = normalizeWorldArchitectPlan(job.plan, defaultWorldArchitectPlan(world, job.request, job.options));
+    if (worldArchitectFingerprint(world) !== job.baseFingerprint || (Number(world.authoringRevision) || 0) !== job.baseRevision) {
+        job.status = 'failed'; job.error = 'The world changed after this plan was created. Discard it and make a fresh plan.'; renderWorldArchitectAgent(); return;
+    }
+    job.status = 'running'; job.error = ''; job.cancelRequested = false; renderWorldArchitectAgent();
+    for (const batch of job.plan.batches) {
+        if ((job.completedBatchIds || []).includes(batch.id)) continue;
+        if (job.cancelRequested) {
+            job.status = 'cancelled'; job.updatedAt = Date.now();
+            await persistWorldArchitectCheckpoint(world);
+            renderWorldArchitectAgent(); return;
+        }
+        try {
+            const current = stageWorldArchitectJob(world, { ...job, plan: { requestedCounts: {} } }).world;
+            const batchMessages = [
+                { role: 'system', content: `You are a roleplay World Architect. Return JSON only: {"operations":[]}. Allowed operation types: ${[...WORLD_ARCHITECT_OPERATION_TYPES].join(', ')}. Never delete locations, people, items, factions or lore. delete_group and merge_groups are permitted only when the user's request explicitly asks for that and the change policy allows edits. Use existing IDs exactly. New records need stable snake_case IDs. Put new data inside "record". A location operation is {"type":"add_location","record":{"id":"loc_example","name":"Example","description":"...","regionId":"existing_region_id","parentLocationId":"","mapType":"room","tags":[]}}. A character uses record {id,name,description,persona,startLocation,homeLocation,goal,goalSteps,groupIds,schedule,tags}; a group uses {id,name,type,description,homeLocationId,tags}; connections use from,to,mode,minutes,oneWay. Every operation is atomic.` },
+                { role: 'user', content: `ORIGINAL REQUEST: ${job.request}\nPOLICY: ${job.options.policy}; DETAIL: ${job.options.detail}\nTHIS BATCH: ${batch.instruction}\nEXACT BATCH COUNTS: ${JSON.stringify(batch.expectedCounts)}\nCURRENT STAGED WORLD INDEX: ${worldArchitectIndex(current)}\nGenerate only this batch. Respect the exact counts and make additions coherent, playable and reference-valid.` }
+            ];
+            const baseTokens = Math.max(6000, Math.min(24000, (job.options.batchSize || 12) * 900));
+            const maxTokens = Math.min(64000, baseTokens + (Number(job.replyBoost) || 0));
+            worldArchitectStreamLog(`▸ ${batch.label}: ${batch.instruction}`);
+            const batchEntry = worldArchitectStreamLog('', { cls: 'is-raw' });
+            let raw = await worldArchitectJSON(world, job.model, batchMessages, maxTokens, 'operations', {
+                onDelta: delta => worldArchitectStreamEntry(batchEntry, delta)
+            });
+            let operations = worldArchitectOperationArray(raw)
+                .map((operation, index) => normalizeWorldArchitectOperation(operation, job.operations.length + index)).filter(Boolean);
+            if (!operations.length) {
+                // A syntactically valid object used to bypass JSON repair and
+                // then die here if its operation vocabulary was slightly off.
+                // Give the model one validation-aware correction with the exact
+                // rejected payload and schema instead of asking the user to
+                // discard an otherwise healthy resumable job.
+                worldArchitectStreamLog('↻ Reply parsed but used no supported operation schema — requesting a schema repair.', { cls: 'is-note' });
+                raw = await worldArchitectJSON(world, job.model, [
+                    ...batchMessages,
+                    { role: 'assistant', content: JSON.stringify(raw).slice(0, 12000) },
+                    { role: 'user', content: `That JSON parsed, but none of its entries used a supported operation schema. Rewrite the same requested changes as {"operations":[{"type":"one exact allowed type","record":{}}]}. Exact allowed types: ${[...WORLD_ARCHITECT_OPERATION_TYPES].join(', ')}. Return only the corrected JSON object.` }
+                ], maxTokens, 'operations', {
+                    onDelta: delta => worldArchitectStreamEntry(batchEntry, delta)
+                });
+                operations = worldArchitectOperationArray(raw)
+                    .map((operation, index) => normalizeWorldArchitectOperation(operation, job.operations.length + index)).filter(Boolean);
+            }
+            if (!operations.length) throw new Error('The model returned JSON, but no supported changes could be recovered after a schema repair retry.');
+            const generatedCounts = worldArchitectOperationCounts(operations);
+            const mismatch = Object.entries(batch.expectedCounts || {}).find(([key, expected]) => Number(expected) > 0 && generatedCounts[key] !== Number(expected));
+            if (mismatch) throw new Error(`The model produced ${generatedCounts[mismatch[0]] || 0} ${mismatch[0]}, but this batch requires exactly ${mismatch[1]}. Retry this batch or choose a stronger structured model.`);
+            operations.forEach(operation => { operation.batchId = batch.id; });
+            job.operations.push(...operations);
+            job.completedBatchIds.push(batch.id);
+            job.updatedAt = Date.now();
+            job.truncated = false;
+            worldArchitectStreamLog(`✓ ${batch.label}: ${operations.length} operation${operations.length === 1 ? '' : 's'} staged (${generatedCounts.locations || 0} locations, ${generatedCounts.people || 0} people, ${generatedCounts.items || 0} items, ${generatedCounts.groups || 0} groups, ${generatedCounts.factions || 0} factions, ${generatedCounts.lore || 0} lore).`, { cls: 'is-success' });
+            await persistWorldArchitectCheckpoint(world);
+            renderWorldArchitectAgent();
+        } catch (error) {
+            job.status = 'failed'; job.error = `Stopped at ${batch.label}: ${error.message}`; job.updatedAt = Date.now();
+            if (error.truncated) {
+                // Keep the job going: each Continue retries the same batch with
+                // a higher ceiling, since the plan itself is still valid.
+                job.truncated = true;
+                job.replyBoost = Math.min(56000, (Number(job.replyBoost) || 0) + 8000);
+                const nextCeiling = Math.min(64000, Math.max(6000, Math.min(24000, (job.options.batchSize || 12) * 900)) + (Number(job.replyBoost) || 0));
+                worldArchitectStreamLog(`✕ ${batch.label}: hit the reply token ceiling. Continue retries this batch with up to ${nextCeiling} reply tokens.`, { cls: 'is-error' });
+            } else {
+                job.truncated = false;
+                worldArchitectStreamLog(`✕ ${batch.label}: ${error.message}`, { cls: 'is-error' });
+            }
+            await persistWorldArchitectCheckpoint(world);
+            renderWorldArchitectAgent(); return;
+        }
+    }
+    job.status = 'review'; job.updatedAt = Date.now();
+    await persistWorldArchitectCheckpoint(world);
+    renderWorldArchitectAgent();
+}
+
+async function handleWorldArchitectAction(action) {
+    const world = ExperimentalWorldsState.editingWorld;
+    const job = world?.architectJob;
+    if (!world || !job) return;
+    if (action === 'generate') return runWorldArchitectJob();
+    if (action === 'cancel') { job.cancelRequested = true; ExperimentalWorldsHost.notify('The Architect will pause after the current request.', 'info'); return; }
+    if (action === 'discard') {
+        delete world.architectJob;
+        await persistWorldArchitectCheckpoint(world, true);
+        renderWorldArchitectAgent(); return;
+    }
+    if (action === 'undo' && world.architectUndo?.snapshot) {
+        ExperimentalWorldsState.editingWorld = experimentalSafeJsonClone(world.architectUndo.snapshot);
+        const index = ExperimentalWorldsState.worlds.findIndex(candidate => candidate.id === ExperimentalWorldsState.editingWorld.id);
+        if (index >= 0) ExperimentalWorldsState.worlds[index] = experimentalSafeJsonClone(ExperimentalWorldsState.editingWorld);
+        await ExperimentalWorldsHost.persist();
+        ExperimentalWorldsHost.markMediaChanged();
+        openWorldStudio();
+        document.querySelector('.world-studio-tab[data-tab="w-architect-agent"]')?.click();
+        ExperimentalWorldsHost.notify('Architect changes undone and saved.', 'success');
+        return;
+    }
+    if (action === 'apply') {
+        worldArchitectSyncBasics(world);
+        if (worldArchitectFingerprint(world) !== job.baseFingerprint || (Number(world.authoringRevision) || 0) !== job.baseRevision) {
+            job.error = 'The world changed after this plan was created. Discard it and make a fresh plan.';
+            ExperimentalWorldsHost.notify(job.error, 'error'); renderWorldArchitectAgent(); return;
+        }
+        const staged = stageWorldArchitectJob(world, job);
+        if (staged.blockers.length) {
+            job.error = `Cannot apply yet: ${staged.blockers[0]}`;
+            ExperimentalWorldsHost.notify(job.error, 'error'); renderWorldArchitectAgent(); return;
+        }
+        const before = worldArchitectSnapshot(world);
+        staged.world.authoringRevision = job.baseRevision + 1;
+        staged.world.architectUndo = { jobId: job.id, createdAt: Date.now(), snapshot: before };
+        staged.world.architectJob = { ...job, status: 'applied', appliedDeltas: staged.deltas, appliedHealth: staged.health.score, updatedAt: Date.now() };
+        const index = ExperimentalWorldsState.worlds.findIndex(candidate => candidate.id === staged.world.id);
+        const previousStoredWorld = index >= 0 ? experimentalSafeJsonClone(ExperimentalWorldsState.worlds[index]) : null;
+        ExperimentalWorldsState.editingWorld = staged.world;
+        if (index >= 0) ExperimentalWorldsState.worlds[index] = experimentalSafeJsonClone(staged.world);
+        try {
+            ExperimentalWorldsHost.markMediaChanged();
+            await ExperimentalWorldsHost.persist();
+        } catch (error) {
+            // Do not strand the editor on an in-memory revision that was not
+            // durably committed. Keep the review intact so Apply can be retried.
+            ExperimentalWorldsState.editingWorld = world;
+            if (index >= 0 && previousStoredWorld) ExperimentalWorldsState.worlds[index] = previousStoredWorld;
+            job.status = 'review';
+            job.error = `The changes were valid, but could not be saved: ${error.message}`;
+            ExperimentalWorldsHost.notify(job.error, 'error');
+            renderWorldArchitectAgent();
+            return;
+        }
+        openWorldStudio();
+        document.querySelector('.world-studio-tab[data-tab="w-architect-agent"]')?.click();
+        ExperimentalWorldsHost.notify('Architect changes applied and saved.', 'success');
+    }
+}
+
+// The default reply ceiling derives from the batch size; surface it as the
+// Max reply field's placeholder so "auto" is never a mystery number.
+function worldArchitectDefaultReplyTokens() {
+    return Math.max(6000, Math.min(24000, (Number(document.getElementById('ew-w-architect-batch-size')?.value) || 12) * 900));
+}
+
+function updateWorldArchitectReplyPlaceholder() {
+    const input = document.getElementById('ew-w-architect-max-reply');
+    if (input) input.placeholder = `auto (${worldArchitectDefaultReplyTokens()})`;
+}
+
+function setupWorldArchitectLogic() {
+    const plan = document.getElementById('ew-w-architect-plan-btn');
+    if (!plan || plan.dataset.ready) return;
+    plan.dataset.ready = '1';
+    plan.onclick = () => void planWorldArchitectJob();
+    document.getElementById('ew-w-architect-refresh-models').onclick = () => void populateWorldArchitectModels(true);
+    setupArchitectModelSearch();
+    document.getElementById('ew-w-architect-batch-size')?.addEventListener('change', updateWorldArchitectReplyPlaceholder);
+    updateWorldArchitectReplyPlaceholder();
+    document.querySelectorAll('[data-ew-architect-quick]').forEach(button => button.onclick = () => {
+        const input = document.getElementById('ew-w-architect-request');
+        input.value = [input.value.trim(), button.dataset.ewArchitectQuick].filter(Boolean).join('\n');
+        input.focus();
+    });
+    void populateWorldArchitectModels();
+}
+
+// --- Workspace subview restore ---------------------------------------------
+// The host remembers which modal was visible upon refresh (Settings) and
+// reopens it after boot. The shell's captureWorkspace already records which
+// overlay roots are visible; this reopens the recorded modal with its content
+// actually rendered. Parameter-dependent surfaces (NPC dossier, record
+// inspector, visual editor, outfit manager, sidecar inspector, item editor)
+// have no parameterless reopener and are intentionally not restored — an
+// empty modal frame is worse than a closed one.
+function restoreExperimentalWorldSubView(id) {
+    const element = document.getElementById(id);
+    if (!element) return;
+    const unhide = () => {
+        element.classList.remove('hidden');
+        element.setAttribute('aria-hidden', 'false');
+    };
+    switch (id) {
+        case 'ew-world-check-modal':
+            openWorldCheckModal();
+            return;
+        case 'ew-map-modal':
+            void renderWorldMap();
+            return;
+        case 'ew-world-timeline-browser-overlay':
+            renderWorldTimelineBrowser();
+            unhide();
+            return;
+        case 'ew-world-quest-modal-overlay':
+            openWorldQuestManager();
+            return;
+        case 'ew-world-session-zero-overlay':
+            openSessionZero(null);
+            return;
+        case 'ew-world-audit-overlay':
+            renderWorldAudit();
+            unhide();
+            return;
+        case 'ew-world-scheduler-overlay':
+            renderWorldScheduler();
+            unhide();
+            return;
+        case 'ew-vector-memory-modal-overlay': {
+            currentVectorTab = 'episodic';
+            unhide();
+            updateVectorTabUI();
+            renderVectorMemoryList();
+            return;
+        }
+        case 'ew-world-ledger-modal-overlay': {
+            const session = getCurrentWorldSession();
+            if (!session) return;
+            document.getElementById('ew-m-ledger-content').value = session.ledger || '';
+            unhide();
+            return;
+        }
+        case 'ew-world-outfit-modal-overlay': {
+            const session = getCurrentWorldSession();
+            if (!session) return;
+            document.getElementById('ew-m-outfit-content').value = session.outfit || '';
+            unhide();
+            return;
+        }
+        case 'ew-world-stats-modal-overlay': {
+            const sess = getCurrentWorldSession();
+            const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
+            if (!sess || !world || !normalizeWorldGameRules(world).modules.stats) return;
+            const body = element.querySelector('.modal-body-dynamic');
+            if (body) {
+                body.innerHTML = '';
+                (world.hudConfig?.stats || []).forEach(s => {
+                    const val = sess.playerStats[s.id] !== undefined ? sess.playerStats[s.id] : s.value;
+                    const div = document.createElement('div');
+                    div.style.marginBottom = '12px';
+                    div.innerHTML = `
+                        <label class="form-label">${experimentalEscapeHTML(s.name)}</label>
+                        <input type="number" class="form-input m-stat-input" data-id="${experimentalEscapeHTML(s.id)}" value="${experimentalEscapeHTML(String(val))}" min="${experimentalEscapeHTML(String(s.min ?? 0))}" ${s.max > 0 ? `max="${experimentalEscapeHTML(String(s.max))}"` : ''}>
+                    `;
+                    body.appendChild(div);
+                });
+            }
+            unhide();
+            return;
+        }
+        case 'ew-world-clock-modal-overlay': {
+            const sess = getCurrentWorldSession();
+            const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
+            if (!sess || !world) return;
+            const adjustedTotalMinutes = getWorldTimeData(world, sess).currentTotalMinutes;
+            const days = Math.floor(adjustedTotalMinutes / (24 * 60)) + 1;
+            const totalMinutesToday = adjustedTotalMinutes % (24 * 60);
+            const hours24 = Math.floor(totalMinutesToday / 60);
+            document.getElementById('ew-m-clock-offset').value = 0;
+            document.getElementById('ew-m-clock-day').value = days;
+            document.getElementById('ew-m-clock-hour').value = hours24 % 12 || 12;
+            document.getElementById('ew-m-clock-minute').value = totalMinutesToday % 60;
+            document.getElementById('ew-m-clock-ampm').value = hours24 >= 12 ? 'PM' : 'AM';
+            unhide();
+            return;
+        }
+        case 'ew-system-inject-modal-overlay': {
+            const input = document.getElementById('ew-system-inject-input');
+            if (input) input.value = '';
+            unhide();
+            input?.focus();
+            return;
+        }
+        default:
+            return;
     }
 }

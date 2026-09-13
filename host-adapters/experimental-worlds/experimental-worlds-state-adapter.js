@@ -11,30 +11,49 @@
         'worlds', 'worldInstances', 'activeWorldId', 'worldRecoverySnapshots',
         'worldMediaAssets', 'workspace',
         'editingWorld', 'lastWorldStudioId', 'lastWorldStudioTab',
+        // Module-owned global Roleplay OS source registry (imported FF source
+        // presets). Deliberately NOT a shared host record: an import copies
+        // the preset into this module's own database exactly once and travels
+        // with Experimental Worlds snapshots and backups.
+        'roleplayOSSources',
+        // Saved provider model catalogs, in the Virtual Human record layout
+        // ({version, fetchedAt, models}). This is the module's own instance:
+        // it never reads or writes the host's globalSettings catalog.
+        'savedModelCatalogs',
         // These shapes are private to the preserved runtime. The host sees one
         // `experimentalWorlds` mode and must never receive its internal route
         // names or ScenePulse presentation theme.
         'view', 'theme'
     ]);
     const SHARED_KEYS = new Set([
-        'globalSettings', 'roleplayOSSources', 'systemPresets', 'chatContinuities'
+        'globalSettings', 'systemPresets', 'chatContinuities'
     ]);
-    const OBJECT_KEYS = new Set(['worldInstances', 'worldRecoverySnapshots', 'worldMediaAssets', 'workspace']);
+    const OBJECT_KEYS = new Set(['worldInstances', 'worldRecoverySnapshots', 'worldMediaAssets', 'workspace', 'savedModelCatalogs']);
     let binding = null;
 
     function defaultValue(key) {
-        if (key === 'worlds') return [];
+        if (key === 'worlds' || key === 'roleplayOSSources') return [];
         if (OBJECT_KEYS.has(key)) return {};
         if (key === 'view') return 'worlds';
         if (key === 'theme') return 'default';
         return null;
     }
 
-    function normalizedExperimentalState(nextState) {
+    function normalizedExperimentalState(nextState, { seedLegacySources = false } = {}) {
         const source = nextState && typeof nextState === 'object' ? nextState : {};
         const next = Object.fromEntries([...EXPERIMENTAL_KEYS].map(key => [key,
             source[key] == null ? defaultValue(key) : structuredClone(source[key])
         ]));
+        // One-time legacy seed: older builds routed the Roleplay OS source
+        // registry through host shared state. If this module's own copy is
+        // empty, adopt whatever the host had installed. The host record is
+        // never written back and future imports stay module-owned.
+        if (seedLegacySources && Array.isArray(next.roleplayOSSources) && !next.roleplayOSSources.length && binding) {
+            try {
+                const legacy = binding.readShared('roleplayOSSources');
+                if (Array.isArray(legacy) && legacy.length) next.roleplayOSSources = structuredClone(legacy);
+            } catch (_) { /* host binding unavailable or refused; start empty. */ }
+        }
         return next;
     }
 
@@ -78,7 +97,7 @@
             });
         },
         hydrate(nextState) {
-            experimental = normalizedExperimentalState(nextState);
+            experimental = normalizedExperimentalState(nextState, { seedLegacySources: true });
         },
         snapshot() { return structuredClone(experimental); },
         workspace() { return structuredClone(experimental.workspace); },

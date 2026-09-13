@@ -63,17 +63,21 @@
         return [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, '0')).join('');
     }
 
-    async function buildManifest() {
+    async function buildManifest(options = {}) {
         requireIdle('export a backup');
         activeOperation = 'export';
         try {
+            const exportContext = Object.freeze({
+                purpose: String(options?.purpose || 'portable-export').trim().slice(0, 80) || 'portable-export',
+                includeCredentials: options?.includeCredentials === true
+            });
             const payloads = {};
             for (const definition of domains.values()) {
-                const payload = await definition.serialize();
+                const payload = await definition.serialize(exportContext);
                 payloads[definition.id] = {
                     schemaVersion: definition.schemaVersion,
                     checksum: await checksum(payload),
-                    metadata: await definition.describe?.(payload) || {},
+                    metadata: await definition.describe?.(payload, exportContext) || {},
                     payload
                 };
             }

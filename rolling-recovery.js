@@ -3,8 +3,9 @@
  *
  * This deliberately transports opaque domain-backup manifests through the
  * current bridge. It never probes a legacy origin, selects an authority, or
- * automatically replaces browser state. Credentials are absent because the
- * registered host serializer already redacts them.
+ * automatically replaces browser state. Unlike downloadable/shareable
+ * exports, this trusted-device recovery channel intentionally carries the
+ * configured provider credentials needed to resume work after restore.
  */
 (() => {
     'use strict';
@@ -129,7 +130,10 @@
         if (!runtime.ready || runtime.publishing || !window.HordeBackupDomains) return null;
         runtime.publishing = true;
         try {
-            const snapshot = await window.HordeBackupDomains.export();
+            const snapshot = await window.HordeBackupDomains.export({
+                purpose: 'rolling-recovery',
+                includeCredentials: true
+            });
             const data = await request('/recovery/publish', {
                 method: 'POST',
                 body: { deviceId: deviceId(), label: deviceLabel(), baseRevision: runtime.revision, snapshot, trigger }
@@ -153,7 +157,7 @@
     const restoreManifest = async (manifest, description) => {
         await window.HordeBackupDomains.validate(manifest);
         window.showConfirmModal('Restore Rolling Recovery Point',
-            `${description} will atomically replace every registered data domain on this browser. Credentials are never included. Continue?`,
+            `${description} will atomically replace every registered data domain on this browser. Rolling recovery points include configured API keys and authentication headers and will remember them on this trusted device. Continue?`,
             async () => {
                 await window.HordeBackupDomains.restore(manifest);
                 window.showToast?.('Recovery point restored. Reloading…', 'success');

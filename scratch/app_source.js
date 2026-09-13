@@ -51,7 +51,13 @@ const additionalSourceFiles = String(process.env.HORDE_TEST_SOURCE_FILES || '')
     .map(value => value.trim())
     .filter(Boolean)
     .map(value => path.join(repositoryRoot, value));
-const app = [path.join(repositoryRoot, 'app.js'), ...experimentalCoreFiles, ...additionalSourceFiles]
+// VH2 moved core schema and simulation helpers out of app.js. Keep them ahead
+// of the host source while retaining the Experimental module manifest below.
+const vhRuntimeFiles = [
+    path.join(repositoryRoot, 'vh-simulation-core.js'),
+    path.join(repositoryRoot, 'vh-life-schema.js')
+];
+const app = [...vhRuntimeFiles, path.join(repositoryRoot, 'app.js'), ...experimentalCoreFiles, ...additionalSourceFiles]
     .map(file => fs.readFileSync(file, 'utf8'))
     .join('\n');
 
@@ -335,6 +341,16 @@ function resolveDependencies(seeds, options = {}) {
  * so a test can reach a helper it never named without the suite listing it.
  */
 function buildContext(vm, seeds, context = {}, options = {}) {
+    // The host now keeps compact per-surface OpenRouter routing state on the
+    // browser global. Headless engine suites do not mount the page, so give
+    // them an inert browser-shaped object unless a suite deliberately stubs it.
+    context.window ||= {};
+    context.HordeHumanPackage ||= require('../human-package.js');
+    context.Blob ||= Blob;
+    context.crypto ||= require('node:crypto').webcrypto;
+    context.VHWorldEngine ||= require('../vh-world-engine.js');
+    context.VHActivityEngine ||= require('../vh-activity-engine.js');
+    context.VHConversationEngine ||= require('../vh-conversation-engine.js');
     const resolved = resolveDependencies(seeds, {
         provided: Object.keys(context),
         exclude: options.exclude || []

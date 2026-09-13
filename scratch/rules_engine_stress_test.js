@@ -60,7 +60,12 @@ const context = {
     experimentalIsPlainObject(value) {
         return !!value && typeof value === 'object' && !Array.isArray(value);
     },
+    isPlainObject(value) {
+        return !!value && typeof value === 'object' && !Array.isArray(value);
+    },
     experimentalCssColor(value, fallback) { return String(value || fallback); },
+    cssColor(value, fallback) { return String(value || fallback); },
+    showToast() {},
     ExperimentalWorldsHost: { notify(message) { toasts.push(message); } },
     queueEngineEvent(session, text) {
         session.engineEvents = session.engineEvents || [];

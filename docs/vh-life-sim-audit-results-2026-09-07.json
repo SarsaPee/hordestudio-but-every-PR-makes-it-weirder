@@ -1,0 +1,171 @@
+{
+  "generatedAt": "2026-09-07T07:56:24.051Z",
+  "timing": [
+    {
+      "name": "Available: hey",
+      "readSeconds": 10,
+      "readySeconds": 35,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Available: legacy pending message",
+      "readSeconds": 15,
+      "readySeconds": 40,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Available: yes",
+      "readSeconds": 10,
+      "readySeconds": 35,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Available: 900-character message",
+      "readSeconds": 10,
+      "readySeconds": 55,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Available: high energy",
+      "readSeconds": 5,
+      "readySeconds": 25,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Available: photo",
+      "readSeconds": 10,
+      "readySeconds": 60,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Already chatting: follow-up",
+      "readSeconds": 10,
+      "readySeconds": 35,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Busy alone: hey",
+      "readSeconds": 135,
+      "readySeconds": 1840,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Busy with two people: hey",
+      "readSeconds": 225,
+      "readySeconds": 2770,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Busy: urgent content",
+      "readSeconds": 135,
+      "readySeconds": 1840,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Busy: ordinary content",
+      "readSeconds": 135,
+      "readySeconds": 1840,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Busy: closer relationship",
+      "readSeconds": 135,
+      "readySeconds": 1840,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Busy: unrelated old promise",
+      "readSeconds": 135,
+      "readySeconds": 160,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Very low capacity, constant circumstances",
+      "readSeconds": 25,
+      "readySeconds": null,
+      "finalStage": "deferred",
+      "finalReason": "There is not enough energy and attention for this message yet."
+    },
+    {
+      "name": "Twenty-minute restorative activity",
+      "readSeconds": 135,
+      "readySeconds": 1225,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    },
+    {
+      "name": "Free after five-minute meeting",
+      "readSeconds": 135,
+      "readySeconds": 325,
+      "finalStage": "ready",
+      "finalReason": "There is attention available to finish the response."
+    }
+  ],
+  "labelEffects": [
+    {
+      "label": "work",
+      "energyAfter8h": 62.4,
+      "stressAfter8h": 37.5
+    },
+    {
+      "label": "working",
+      "energyAfter8h": 62.4,
+      "stressAfter8h": 24
+    },
+    {
+      "label": "working on an essay",
+      "energyAfter8h": 62.4,
+      "stressAfter8h": 24
+    },
+    {
+      "label": "studying",
+      "energyAfter8h": 62.4,
+      "stressAfter8h": 24
+    },
+    {
+      "label": "rest",
+      "energyAfter8h": 62.4,
+      "stressAfter8h": 17.5
+    },
+    {
+      "label": "resting",
+      "energyAfter8h": 62.4,
+      "stressAfter8h": 24
+    },
+    {
+      "label": "at home",
+      "energyAfter8h": 62.4,
+      "stressAfter8h": 17.5
+    }
+  ],
+  "meal": {
+    "state": "completed",
+    "supplies": {
+      "ingredients": 0,
+      "meal": 0
+    },
+    "outcomes": [
+      "Finished Getting ingredients.",
+      "Finished Preparing a meal.",
+      "Finished Eating the prepared meal."
+    ]
+  },
+  "ungroundedLifeBeat": {
+    "acceptedLifeEvents": 1,
+    "acceptedAsCertain": 100,
+    "summary": "Completed a trip to an unauthored place."
+  }
+}

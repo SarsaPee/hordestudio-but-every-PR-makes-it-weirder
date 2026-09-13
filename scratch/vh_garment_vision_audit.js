@@ -1,0 +1,11 @@
+const assert=require('node:assert/strict'),vm=require('node:vm');
+const {buildContext}=require('./app_source');const c={console,URL};buildContext(vm,['normalizeOpenAICompatibleBase','companionGarmentVisionRequest'],c);
+const photo='data:image/png;base64,YQ==';
+const remote=c.companionGarmentVisionRequest({provider:'openrouter',openrouterModel:'test/vision'},photo,{localApiKey:'LOCAL_SECRET'},'REMOTE_SECRET');
+assert.equal(remote.url,'https://openrouter.ai/api/v1/chat/completions');assert.equal(remote.options.headers.Authorization,'Bearer REMOTE_SECRET');assert(!JSON.stringify(remote).includes('LOCAL_SECRET'));assert.equal(JSON.parse(remote.options.body).messages[0].content[1].image_url.url,photo);
+assert.throws(()=>c.companionGarmentVisionRequest({provider:'openrouter',openrouterModel:'test'},photo,{},''),/OpenRouter API key/);
+assert.throws(()=>c.companionGarmentVisionRequest({provider:'local'},photo,{},''),/model first/);
+assert.throws(()=>c.companionGarmentVisionRequest({provider:'local',localModel:'test'},photo,{localBaseUrl:'https://example.com/v1'},'REMOTE_SECRET'),/localhost/);
+const local=c.companionGarmentVisionRequest({provider:'local',localModel:'test'},photo,{localApiKey:'LOCAL_SECRET'},'REMOTE_SECRET');assert.equal(local.options.headers.Authorization,'Bearer LOCAL_SECRET');assert(!JSON.stringify(local).includes('REMOTE_SECRET'));
+const world=require('../vh-world-engine');const saved=world.config({vision:{provider:'openrouter',localModel:'local',openrouterModel:'remote'}});assert.deepEqual(world.config(JSON.parse(JSON.stringify(saved))).vision,saved.vision);
+console.log('PASS garment vision routes, credential isolation, missing settings, reference forwarding and persistence');

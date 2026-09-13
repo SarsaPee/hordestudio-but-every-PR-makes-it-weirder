@@ -43,6 +43,7 @@ export const coreSources = Object.freeze([
     'experiences/experimental-worlds/runtime/world-intelligence-core.js',
     'experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js',
     'experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js',
+    'experiences/experimental-worlds/runtime/ff54-bundled-source.js',
     'experiences/experimental-worlds/runtime/world-protocol-core.js',
     'experiences/experimental-worlds/runtime/sidecar-core.js'
 ]);
@@ -70,6 +71,7 @@ export function createExperimentalWorldsCoreRuntime(environment) {
     const ResizeObserver = environment.ResizeObserver;
     const IntersectionObserver = environment.IntersectionObserver;
     const URL = environment.URL;
+    const URLConstructor = environment.URLConstructor;
     const localStorage = environment.localStorage;
     const navigator = environment.navigator;
     const confirm = environment.confirm;
@@ -251,7 +253,12 @@ const footer = String.raw`
 
     function captureWorkspace() {
         const timeline = activeTimeline();
-        const visibleSubViews = document.querySelectorAll('.modal-overlay:not(.hidden), [role="dialog"]:not(.hidden)')
+        // modal-bg is the shell's own overlay pattern (play and studio modals);
+        // modal-overlay covers the shell's hub overlays and dynamically built
+        // inspectors. Without .modal-bg here, a refresh closed every play modal.
+        const visibleSubViews = document.querySelectorAll(
+            '.modal-overlay:not(.hidden), .modal-bg:not(.hidden), [role="dialog"]:not(.hidden)'
+        )
             .map(element => element.id).filter(Boolean);
         return {
             version: 1,
@@ -266,9 +273,18 @@ const footer = String.raw`
         };
     }
 
+    // Side-effect persists (catalog writes, studio opens) can fire while the
+    // boot sequence is still hydrating. Until the first restoreWorkspace
+    // completes, the live DOM capture describes a half-initialized module, so
+    // persist the hydrated workspace from the snapshot instead of clobbering
+    // it with a blank route/subViews capture.
+    let workspaceCaptureReady = false;
+
     async function persist(reason = 'experimental-runtime') {
         const snapshot = ExperimentalWorldsStateAdapter.snapshot();
-        const workspace = captureWorkspace();
+        const workspace = workspaceCaptureReady
+            ? captureWorkspace()
+            : (ExperimentalWorldsStateAdapter.workspace() || captureWorkspace());
         environment.onWorkspaceChange?.(clone(workspace));
         if (typeof environment.repository?.writeSnapshot === 'function') {
             return environment.repository.writeSnapshot({ ...snapshot, workspace }, reason);
@@ -329,6 +345,7 @@ const footer = String.raw`
         return {
             persistSharedContinuities: services.persistSharedContinuities || (async () => undefined),
             persist,
+            worldExportUrl: services.worldExportUrl || (worldId => environment.repository.worldExportUrl(worldId)),
             navigate: navigateFromCore,
             markMediaChanged: services.markMediaChanged || noOp,
             mediaDirty: services.mediaDirty || (() => false),
@@ -396,11 +413,45 @@ const footer = String.raw`
         setupWorldStudioTabs();
         setupWorldStudioLogic();
         setupWorldImport();
+        setupWorldArchitectLogic();
         setupWorldPlayLogic();
         // The host multiplayer hub belongs to native 17.4. Experimental
         // Worlds never binds its host-owned DOM or installs a parallel hub.
         setupVectorMemoryViewerEvents();
+        setupWorkspaceModalWatcher();
         initialized = true;
+    }
+
+    // Modal visibility is part of the persisted workspace, but the ~16 shell
+    // modals are opened from many call sites and a pagehide-time write cannot
+    // be awaited reliably. Watch visibility changes on modal overlays and
+    // debounce a persist so open/closed state survives a refresh.
+    let workspaceModalPersistTimer = null;
+
+    function scheduleWorkspaceModalPersist() {
+        if (workspaceModalPersistTimer !== null) environment.clearTimeout(workspaceModalPersistTimer);
+        workspaceModalPersistTimer = environment.setTimeout(() => {
+            workspaceModalPersistTimer = null;
+            Promise.resolve(persist('workspace-modal-visibility')).catch(() => {});
+        }, 250);
+    }
+
+    function setupWorkspaceModalWatcher() {
+        if (typeof environment.MutationObserver !== 'function') return;
+        const isModalTarget = target => {
+            if (!target || target.nodeType !== 1) return false;
+            if (target.classList?.contains('modal-bg') || target.classList?.contains('modal-overlay')) return true;
+            return target.getAttribute?.('role') === 'dialog';
+        };
+        const observer = new environment.MutationObserver(mutations => {
+            if (workspaceRestoring) return;
+            if (mutations.some(record => isModalTarget(record.target))) scheduleWorkspaceModalPersist();
+        });
+        const options = { attributes: true, attributeFilter: ['class', 'hidden', 'aria-hidden'], subtree: true };
+        observer.observe(document.body, options);
+        if (document.documentElement && document.documentElement !== document.body) {
+            observer.observe(document.documentElement, options);
+        }
     }
 
     async function initialize(initialSnapshot = {}) {
@@ -437,6 +488,10 @@ const footer = String.raw`
                 showRoute('library');
             }
             (Array.isArray(candidate.subViews) ? candidate.subViews : []).forEach(id => {
+                if (typeof restoreExperimentalWorldSubView === 'function') {
+                    restoreExperimentalWorldSubView(id);
+                    return;
+                }
                 const element = document.getElementById(id);
                 if (!element) return;
                 element.classList.remove('hidden');
@@ -445,6 +500,7 @@ const footer = String.raw`
         } finally {
             workspaceRestoring = false;
         }
+        workspaceCaptureReady = true;
         return captureWorkspace();
     }
 

@@ -348,25 +348,25 @@ function openRouterRoutingPanelDefinition(scope) {
             stored: () => state.editingRoom?.openRouterRouting
         },
         world: {
-            hostId: 'world-openrouter-routing',
-            modelId: 'w-studio-model',
+            hostId: document.getElementById('ew-world-openrouter-routing') ? 'ew-world-openrouter-routing' : 'world-openrouter-routing',
+            modelId: document.getElementById('ew-w-studio-model') ? 'ew-w-studio-model' : 'w-studio-model',
             inheritLabel: 'Inherit global routing',
-            owner: () => state.editingWorld,
-            stored: () => state.editingWorld?.openRouterRouting
+            owner: () => window.ExperimentalWorldsState?.editingWorld || state.editingWorld,
+            stored: () => (window.ExperimentalWorldsState?.editingWorld || state.editingWorld)?.openRouterRouting
         },
         worldAgent: {
-            hostId: 'world-agent-openrouter-routing',
-            modelId: 'w-agent-model',
+            hostId: document.getElementById('ew-world-agent-openrouter-routing') ? 'ew-world-agent-openrouter-routing' : 'world-agent-openrouter-routing',
+            modelId: document.getElementById('ew-w-agent-model') ? 'ew-w-agent-model' : 'w-agent-model',
             inheritLabel: 'Inherit World routing',
-            owner: () => state.editingWorld,
-            stored: () => state.editingWorld?.worldAgent?.openRouterRouting
+            owner: () => window.ExperimentalWorldsState?.editingWorld || state.editingWorld,
+            stored: () => (window.ExperimentalWorldsState?.editingWorld || state.editingWorld)?.worldAgent?.openRouterRouting
         },
         sidecar: {
-            hostId: 'world-sidecar-openrouter-routing',
-            modelId: 'w-sidecar-model',
+            hostId: document.getElementById('ew-world-sidecar-openrouter-routing') ? 'ew-world-sidecar-openrouter-routing' : 'world-sidecar-openrouter-routing',
+            modelId: document.getElementById('ew-w-sidecar-model') ? 'ew-w-sidecar-model' : 'w-sidecar-model',
             inheritLabel: 'Inherit World routing',
-            owner: () => state.editingWorld,
-            stored: () => state.editingWorld?.sidecarConfig?.tracker?.openRouterRouting
+            owner: () => window.ExperimentalWorldsState?.editingWorld || state.editingWorld,
+            stored: () => (window.ExperimentalWorldsState?.editingWorld || state.editingWorld)?.sidecarConfig?.tracker?.openRouterRouting
         }
     };
     return definitions[scope] || null;
@@ -391,7 +391,8 @@ function openRouterRoutingParent(scope) {
             ? globalRouting
             : normalizeOpenRouterRouting(worldDraft.routing);
     }
-    return normalizeOpenRouterRouting(state.editingWorld?.openRouterRouting, { allowNull: true }) || globalRouting;
+    const editingWorld = window.ExperimentalWorldsState?.editingWorld || state.editingWorld;
+    return normalizeOpenRouterRouting(editingWorld?.openRouterRouting, { allowNull: true }) || globalRouting;
 }
 
 function openRouterRoutingModel(scope) {
@@ -411,13 +412,15 @@ function openRouterRoutingModel(scope) {
         return String(companion?.lifeBuilderModel || companion?.model || state.globalSettings.defaultModel || '').trim();
     }
     if (scope === 'worldAgent') {
-        return String(document.getElementById('w-studio-model')?.value
-            || state.editingWorld?.model || state.globalSettings.defaultModel || '').trim();
+        const editingWorld = window.ExperimentalWorldsState?.editingWorld || state.editingWorld;
+        return String(document.getElementById('ew-w-studio-model')?.value || document.getElementById('w-studio-model')?.value
+            || editingWorld?.model || state.globalSettings.defaultModel || '').trim();
     }
     if (scope === 'sidecar') {
-        const inherit = document.getElementById('w-sidecar-inherit-narrator')?.checked !== false;
-        return String(inherit ? (document.getElementById('w-studio-model')?.value || state.editingWorld?.model)
-            : (document.getElementById('w-sidecar-model')?.value || state.editingWorld?.model)
+        const editingWorld = window.ExperimentalWorldsState?.editingWorld || state.editingWorld;
+        const inherit = (document.getElementById('ew-w-sidecar-inherit-narrator') || document.getElementById('w-sidecar-inherit-narrator'))?.checked !== false;
+        return String(inherit ? (document.getElementById('ew-w-studio-model')?.value || document.getElementById('w-studio-model')?.value || editingWorld?.model)
+            : (document.getElementById('ew-w-sidecar-model')?.value || document.getElementById('w-sidecar-model')?.value || editingWorld?.model)
             || state.globalSettings.defaultModel || '').trim();
     }
     return String(state.globalSettings.defaultModel || '').trim();
@@ -426,7 +429,8 @@ function openRouterRoutingModel(scope) {
 function openRouterRoutingVisible(scope) {
     // Sidecar inherits the entire Narrator request contract, including routing.
     // Do not render a second routing schema while that inheritance is selected.
-    if (scope === 'sidecar' && document.getElementById('w-sidecar-inherit-narrator')?.checked !== false) {
+    const sidecarInherit = (document.getElementById('ew-w-sidecar-inherit-narrator') || document.getElementById('w-sidecar-inherit-narrator'))?.checked !== false;
+    if (scope === 'sidecar' && sidecarInherit) {
         return false;
     }
     const selected = scope === 'global'
@@ -434,7 +438,7 @@ function openRouterRoutingVisible(scope) {
         : ['companion', 'companionObserver', 'companionLifeBuilder'].includes(scope)
             ? companionTextProviderId(openRouterRoutingPanelDefinition(scope)?.owner?.())
         : scope === 'sidecar'
-            ? (document.getElementById('w-sidecar-provider')?.value || state.globalSettings.apiProvider)
+            ? (document.getElementById('ew-w-sidecar-provider')?.value || document.getElementById('w-sidecar-provider')?.value || state.globalSettings.apiProvider)
             : state.globalSettings.apiProvider;
     return normalizedProviderId(selected) === 'openrouter';
 }
@@ -491,12 +495,26 @@ function persistOpenRouterRoutingDraft(scope) {
     const fieldByScope = {
         companion: 'openRouterRouting',
         companionObserver: 'observerOpenRouterRouting',
-        companionLifeBuilder: 'lifeBuilderOpenRouterRouting'
+        companionLifeBuilder: 'lifeBuilderOpenRouterRouting',
+        world: 'openRouterRouting',
+        worldAgent: 'openRouterRouting',
+        sidecar: 'openRouterRouting'
     };
     const field = fieldByScope[scope];
     if (!field) return;
     const owner = openRouterRoutingPanelDefinition(scope)?.owner?.();
-    if (owner) owner[field] = readOpenRouterRoutingPanel(scope);
+    if (owner) {
+        if (scope === 'sidecar') {
+            if (!owner.sidecarConfig) owner.sidecarConfig = {};
+            if (!owner.sidecarConfig.tracker) owner.sidecarConfig.tracker = {};
+            owner.sidecarConfig.tracker.openRouterRouting = readOpenRouterRoutingPanel(scope);
+        } else if (scope === 'worldAgent') {
+            if (!owner.worldAgent) owner.worldAgent = {};
+            owner.worldAgent.openRouterRouting = readOpenRouterRoutingPanel(scope);
+        } else {
+            owner[field] = readOpenRouterRoutingPanel(scope);
+        }
+    }
 }
 
 function markOpenRouterRoutingModelChanged(scope) {

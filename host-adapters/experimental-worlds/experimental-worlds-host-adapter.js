@@ -22,6 +22,14 @@
             if (!persistence?.persist) throw new Error('Experimental Worlds persistence is unavailable.');
             return persistence.persist(...args);
         },
+        worldExportUrl(worldId) {
+            if (host?.worldExportUrl) return host.worldExportUrl(worldId);
+            const persistence = global.ExperimentalWorldsPersistenceBootstrap;
+            if (!persistence?.runtimeRepository?.worldExportUrl) {
+                throw new Error('Experimental Worlds root-file export service is unavailable.');
+            }
+            return persistence.runtimeRepository.worldExportUrl(worldId);
+        },
         persistenceStatus: () => global.ExperimentalWorldsPersistenceBootstrap?.discover?.()
             || Promise.reject(new Error('Experimental Worlds persistence is unavailable.')),
         captureRestoreGeneration: () => global.ExperimentalWorldsPersistenceBootstrap?.captureRestoreGeneration?.()

@@ -25,11 +25,13 @@ test('saved settings are timestamped and restored from the newest store', () => 
     assert.match(app, /Recovered Settings from the local fallback snapshot/);
 });
 
-test('recovery storage is written before the database transaction', () => {
+test('recovery storage is only published after the revision-checked database transaction', () => {
     const fn = app.match(/async function persistGlobalSettingsOnly\(\) \{([\s\S]*?)\n\}/);
     assert.ok(fn, 'dedicated Settings persistence function should exist');
-    assert.ok(fn[1].indexOf('writeGlobalSettingsMirror(persistedSettings)') < fn[1].indexOf('await HordeDB.setMultiple'),
-        'recovery snapshot must precede IndexedDB so it survives a failed transaction');
+    assert.ok(fn[1].indexOf('await HordeDB.setMultiple') < fn[1].lastIndexOf('writeGlobalSettingsMirror(persistedSettings)'),
+        'a stale tab must not publish a recovery snapshot before its revision-checked write succeeds');
+    assert.match(fn[1], /if \(error\?\.code !== 'STATE_CONFLICT'\) writeGlobalSettingsMirror\(persistedSettings\)/,
+        'ordinary storage failures should still leave a credential-free recovery snapshot');
 });
 
 test('recovery storage excludes credentials and heavyweight workflows', () => {

@@ -929,6 +929,42 @@
     border-right: 1px solid var(--border);
 }
 
+/* The runtime has always tracked whether the narrative is no longer at its
+   latest message.  Give that state a real, unobtrusive control immediately
+   above the composer rather than leaving the shell's bare button invisible. */
+#ew-world-scroll-bottom-btn {
+    align-self: flex-end;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    margin: -48px 22px 12px 0;
+    padding: 0;
+    position: relative;
+    z-index: 3;
+    border: 1px solid color-mix(in srgb, var(--accent) 56%, var(--border));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--surface) 88%, var(--bg));
+    box-shadow: 0 7px 18px rgba(0, 0, 0, .30);
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 1.25rem;
+    line-height: 1;
+    transition: transform .16s ease, background .16s ease, border-color .16s ease;
+}
+
+#ew-world-scroll-bottom-btn:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+
+#ew-world-scroll-bottom-btn:active { transform: translateY(0); }
+
+/* This matches the rest of the Experimental shell's class-gated controls. */
+#ew-world-scroll-bottom-btn.hidden { display: none; }
+
 .world-status-col {
     width: 320px;
     min-width: 0;
@@ -3141,6 +3177,51 @@
     font-size: .76rem;
     text-align: center;
 }
+/* Capability badges and filter chips (copied from the host Virtual Human
+   model browser so the World pickers render the same layout). */
+.vh-model-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 10px;
+}
+.vh-model-filter,
+.vh-model-feature {
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-3);
+    font-size: .62rem;
+    font-weight: 700;
+    line-height: 1;
+}
+.vh-model-filter {
+    padding: 7px 11px;
+    border-width: 2px;
+    cursor: pointer;
+    letter-spacing: .02em;
+    transition: background .15s, border-color .15s, color .15s, box-shadow .15s, transform .15s;
+}
+.vh-model-filter:hover { filter: brightness(1.24); transform: translateY(-1px); }
+.vh-model-filter:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.vh-model-filter[aria-pressed="true"] {
+    color: #fff;
+    font-weight: 800;
+    box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 28%, transparent), 0 5px 14px rgba(0,0,0,.22);
+}
+.vh-model-feature { padding: 3px 6px; }
+.vh-model-filter.tools, .vh-model-feature.tools { color: #3ee485; }
+.vh-model-filter.json, .vh-model-feature.json { color: #bb9dff; }
+.vh-model-filter.vision, .vh-model-feature.vision { color: #52caff; }
+.vh-model-filter.audio, .vh-model-feature.audio { color: #ffad5c; }
+.vh-model-filter.tools { background: rgba(62,228,133,.08); }
+.vh-model-filter.json { background: rgba(187,157,255,.08); }
+.vh-model-filter.vision { background: rgba(82,202,255,.08); }
+.vh-model-filter.audio { background: rgba(255,173,92,.08); }
+.vh-model-filter.tools[aria-pressed="true"] { background: #197b48; border-color: #66f2a0; box-shadow: 0 0 0 2px rgba(102,242,160,.28), 0 5px 14px rgba(25,123,72,.42); }
+.vh-model-filter.json[aria-pressed="true"] { background: #6540a5; border-color: #d0bcff; box-shadow: 0 0 0 2px rgba(208,188,255,.28), 0 5px 14px rgba(101,64,165,.42); }
+.vh-model-filter.vision[aria-pressed="true"] { background: #176f9a; border-color: #8cdbff; box-shadow: 0 0 0 2px rgba(140,219,255,.28), 0 5px 14px rgba(23,111,154,.42); }
+.vh-model-filter.audio[aria-pressed="true"] { background: #9b581d; border-color: #ffd0a0; box-shadow: 0 0 0 2px rgba(255,208,160,.28), 0 5px 14px rgba(155,88,29,.42); }
 .vh-custom-model { align-items: center; }
 .vh-custom-model > div { flex: 1; }
 .vh-custom-model .form-input { flex: 0 1 390px; }
@@ -5088,30 +5169,6 @@ label[data-help] > span:first-child::after,
 .creator-overview-card > strong { font: 700 1.08rem/1.2 'Outfit', sans-serif; }
 .creator-overview-card > small { color: var(--text-2); font-size: .84rem; line-height: 1.55; }
 .creator-overview-card.primary { border-color: color-mix(in srgb, var(--accent) 46%, var(--border)); box-shadow: 0 14px 34px color-mix(in srgb, var(--accent) 8%, transparent); }
-.world-overview-sidecar-migration {
-    max-width: 1120px;
-    margin-top: 18px;
-    padding: 22px;
-    border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
-    border-radius: 18px;
-    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 11%, var(--surface)), var(--surface2));
-    box-shadow: 0 14px 34px color-mix(in srgb, var(--accent) 7%, transparent);
-}
-.world-overview-sidecar-migration-head { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; }
-.world-overview-sidecar-migration h3 { margin:4px 0 7px; font-size:1.12rem; }
-.world-overview-sidecar-migration p { max-width:780px; margin:0; color:var(--text-2); line-height:1.55; }
-.world-overview-sidecar-migration .btn { flex:0 0 auto; white-space:nowrap; }
-.sidecar-feature-disabled {
-    opacity: .42;
-    filter: grayscale(.72);
-    cursor: not-allowed !important;
-}
-.sidecar-feature-disabled :is(button, input, select, textarea, a) { cursor: not-allowed !important; }
-.world-studio-tab.sidecar-feature-disabled { color:var(--text-3); }
-@media (max-width: 760px) {
-    .world-overview-sidecar-migration-head { flex-direction:column; }
-    .world-overview-sidecar-migration .btn { width:100%; }
-}
 .creator-advanced-card {
     grid-column: 1 / -1;
     border: 1px solid var(--border);
@@ -5807,3 +5864,101 @@ label[data-help] > span:first-child::after,
 }
 }
 /* End private Experimental Worlds stylesheet. */
+
+/* --- World Architect Agent (ported from stock 17.4 worlds) --- */
+.world-architect-agent-layout {
+    display: grid;
+    grid-template-columns: minmax(320px, .9fr) minmax(420px, 1.2fr);
+    gap: 18px;
+    align-items: start;
+}
+.world-architect-request-card,
+.world-architect-job {
+    min-width: 0;
+    padding: 18px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface1);
+}
+.world-architect-job { min-height: 320px; }
+.world-architect-quick-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 16px; }
+.world-architect-quick-actions button {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface2);
+    color: var(--text-2);
+    padding: 7px 10px;
+    cursor: pointer;
+    font: inherit;
+    font-size: .74rem;
+}
+.world-architect-quick-actions button:hover { color: var(--text-1); border-color: var(--accent); }
+.world-architect-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 13px 0; }
+.world-architect-controls label,
+.world-architect-model-row label { display: grid; gap: 6px; color: var(--text-2); font-size: .72rem; }
+.world-architect-model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; align-items: end; }
+.world-architect-empty { display: grid; place-items: center; align-content: center; min-height: 270px; text-align: center; color: var(--text-2); }
+.world-architect-empty p { max-width: 460px; color: var(--text-3); }
+.world-architect-job-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.world-architect-job-head h3 { margin: 3px 0 4px; }
+.world-architect-kicker { color: var(--accent); font-size: .66rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.world-architect-status { flex: 0 0 auto; border: 1px solid var(--border); border-radius: 999px; padding: 5px 9px; color: var(--text-2); font-size: .68rem; text-transform: capitalize; }
+.world-architect-plan-summary,
+.world-architect-validation { padding: 12px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface2); }
+.world-architect-batches,
+.world-architect-operations { display: grid; gap: 8px; margin: 12px 0; max-height: 430px; overflow: auto; overscroll-behavior: contain; }
+.world-architect-batch,
+.world-architect-operation { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; padding: 11px; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.018); }
+.world-architect-batch strong,
+.world-architect-operation strong { display: block; font-size: .8rem; }
+.world-architect-batch small,
+.world-architect-operation small { display: block; margin-top: 3px; color: var(--text-3); line-height: 1.35; }
+.world-architect-operation.is-dismissed { opacity: .48; }
+.world-architect-operation input { margin-top: 3px; accent-color: var(--accent); }
+.world-architect-counts { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0; }
+.world-architect-counts span { padding: 5px 8px; border-radius: 999px; background: var(--surface2); color: var(--text-2); font-size: .68rem; }
+.world-architect-warning { margin: 7px 0; color: #efb25d; font-size: .74rem; }
+.world-architect-error { margin: 7px 0; color: #ff7182; font-size: .74rem; }
+.world-architect-validation { margin: 10px 0; }
+.world-architect-validation.is-blocking { border-color: rgba(255, 80, 105, .45); background: rgba(255, 80, 105, .06); }
+.world-architect-validation.is-existing { color: var(--text-2); }
+.world-architect-validation.is-existing summary { cursor: pointer; font-size: .74rem; font-weight: 700; }
+.world-architect-progress { height: 7px; overflow: hidden; border-radius: 999px; background: var(--surface2); margin: 11px 0; }
+.world-architect-progress span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }
+.world-architect-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
+
+/* Architect Agent: single-column model results so cards use the full tab width. */
+#ew-tab-w-architect-agent .vh-model-results { grid-template-columns: minmax(0, 1fr); }
+
+/* Architect Agent live activity console: streams Director output as it arrives. */
+#ew-tab-w-architect-agent .world-architect-stream-card { grid-column: 1 / -1; border: 1px solid var(--border); border-radius: 14px; background: rgba(0, 0, 0, .18); padding: 12px 14px; }
+.world-architect-stream-header { display: flex; justify-content: space-between; align-items: center; font-size: .7rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); margin-bottom: 8px; }
+.world-architect-stream-header .btn { font-size: .68rem; text-transform: none; letter-spacing: 0; padding: 2px 8px; }
+.world-architect-stream { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem; line-height: 1.5; }
+.world-architect-stream-entry { white-space: pre-wrap; word-break: break-word; color: var(--text-1); }
+.world-architect-stream-entry.is-note { color: var(--text-3); }
+.world-architect-stream-entry.is-error { color: #ff7182; }
+.world-architect-stream-entry.is-success { color: var(--accent); }
+
+/* Architect Agent review surface: roomier proposal tiles with a direct-edit
+   glyph and a per-proposal revision request row. */
+.world-architect-operation { align-items: start; padding: 14px; gap: 12px; }
+.world-architect-operation.is-editing { border-color: var(--accent); }
+.world-architect-operation-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.world-architect-operation-head strong { font-size: .84rem; }
+.world-architect-edit-btn { flex-shrink: 0; border: 1px solid transparent; background: none; color: var(--text-3); cursor: pointer; font-size: .82rem; line-height: 1.4; padding: 1px 7px; border-radius: 7px; }
+.world-architect-edit-btn:hover { color: var(--accent); border-color: var(--border); background: var(--surface2); }
+.world-architect-revision { display: flex; gap: 8px; margin-top: 10px; }
+.world-architect-revision input { flex: 1; min-width: 0; }
+.world-architect-revision .btn { flex-shrink: 0; }
+.world-architect-edit-json { width: 100%; min-height: 150px; margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .7rem; line-height: 1.5; }
+.world-architect-edit-actions { display: flex; gap: 8px; margin-top: 8px; }
+.world-architect-plan-revision { display: flex; gap: 8px; margin: 12px 0; }
+.world-architect-plan-revision input { flex: 1; min-width: 0; }
+.world-architect-operations { max-height: 560px; }
+
+/* Architect operation edit field form */
+.world-architect-edit-fields { display: grid; gap: 10px; margin-top: 10px; }
+.world-architect-edit-fields label { display: grid; gap: 4px; font-size: 11px; font-weight: 600; color: var(--text-muted, #8a8f98); }
+.world-architect-edit-fields .form-input,
+.world-architect-edit-fields .form-textarea { width: 100%; font-size: 13px; font-weight: 400; color: var(--text, #e6e8eb); }

@@ -508,6 +508,7 @@
                         <button class="world-studio-tab" data-tab="w-ai">AI Config</button>
                         <button class="world-studio-tab" data-tab="w-hud">HUD & Stats</button>
                         <button class="world-studio-tab" data-tab="w-visual-map">World Architect</button>
+                        <button class="world-studio-tab" data-tab="w-architect-agent" style="color:var(--accent); font-weight:700;">✦ Architect Agent</button>
                         <button class="world-studio-tab" data-tab="w-builder" style="color:var(--accent); font-weight:700;">✨ AI Builder</button>
                     </div>
                     <div class="studio-nav-actions">
@@ -536,7 +537,6 @@
                                 <div><button type="button" data-world-studio-target="w-items">Items &amp; objects</button><button type="button" data-world-studio-target="w-factions">Factions</button><button type="button" data-world-studio-target="w-lore">Lore</button><button type="button" data-world-studio-target="w-note">Author's Note</button><button type="button" data-world-studio-target="w-hud">HUD &amp; Stats</button><button type="button" data-world-studio-target="w-visual-map">World Architect</button><button type="button" data-world-studio-target="w-builder">AI Builder</button></div>
                             </details>
                         </div>
-                        <section id="ew-w-overview-sidecar-migration" class="world-overview-sidecar-migration hidden" aria-live="polite"></section>
                     </div>
                     <!-- World Basics -->
                     <div id="ew-tab-w-basics" class="studio-panel hidden">
@@ -980,22 +980,26 @@
                         <div class="form-body">
                             <div class="form-section world-state-pipeline-card">
                                 <span class="vh-eyebrow">STATE PIPELINE</span>
-                                <label class="form-label">Canonical state authority <span class="help-glyph" title="Sidecar is the sole Experimental Worlds state pipeline. It reads the Narrator’s authored turn and commits the only canonical receipt.">?</span></label>
-                                <select id="ew-w-sidecar-mode" class="form-select">
-                                    <option value="sidecar">Sidecar · canonical authority</option>
-                                </select>
                                 <p id="ew-w-state-pipeline-hint" class="form-hint"></p>
                             </div>
                             <!-- Model Selection -->
                             <div class="form-section">
                                 <label class="form-label">Model ID <span class="form-hint">(selected provider)</span></label>
-                                <div style="display:flex; gap:10px; position:relative;">
-                                    <div class="searchable-dropdown-container" style="flex-grow:1; position:relative;">
-                                        <input type="text" id="ew-w-studio-model" class="form-input search-dropdown-input" placeholder="Use the default model from Settings" autocomplete="off">
-                                        <div id="ew-w-studio-model-results" class="searchable-dropdown-results hidden"></div>
+                                <div class="vh-model-search-row" style="display:flex; gap:10px; align-items:center;">
+                                    <button id="ew-w-fetch-model-btn" class="btn btn-ghost" title="Refresh the available model list from the text provider selected in Settings" style="white-space: nowrap; flex-shrink: 0;">↻ Fetch models</button>
+                                    <div class="vh-model-search-wrap" style="flex:1; margin-top:0;">
+                                        <span aria-hidden="true">⌕</span>
+                                        <input type="text" id="ew-w-studio-model" class="form-input" placeholder="Search by model name or ID…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="ew-w-studio-model-results" aria-expanded="true">
                                     </div>
-                                    <button id="ew-w-fetch-model-btn" class="btn btn-ghost" title="Refresh the available model list from the text provider selected in Settings" style="white-space: nowrap; flex-shrink: 0;">Fetch models</button>
                                 </div>
+                                <div id="ew-w-studio-model-filters" class="vh-model-filters" role="group" aria-label="Filter world models by capability">
+                                    <button class="vh-model-filter tools" type="button" data-ew-model-filter="tools" aria-pressed="false">Tools</button>
+                                    <button class="vh-model-filter json" type="button" data-ew-model-filter="json" aria-pressed="false">JSON</button>
+                                    <button class="vh-model-filter vision" type="button" data-ew-model-filter="vision" aria-pressed="false">Vision</button>
+                                    <button class="vh-model-filter audio" type="button" data-ew-model-filter="audio" aria-pressed="false">Audio input</button>
+                                </div>
+                                <div id="ew-w-studio-model-results" class="vh-model-results" role="listbox" aria-label="World models"></div>
+                                <div id="ew-w-studio-model-status" class="form-hint vh-model-status" aria-live="polite"></div>
                                 <p class="form-hint">Leave blank to follow the default text provider and model from Settings. Choosing a model here deliberately pins only this World.</p>
                             </div>
                             <div id="ew-world-openrouter-routing" class="openrouter-routing-host hidden"></div>
@@ -1033,7 +1037,6 @@
                                     </div>
                                     <label class="vh-test-check world-kernel-compact-toggle"><input type="checkbox" id="ew-w-kernel-compact-tools"> Compact tool contract</label>
                                 </div>
-                                    <div style="margin-top:12px;"><button id="ew-w-inline-legacy-migrate-btn" type="button" class="btn btn-primary">Review Sidecar migration</button></div>
                             </div>
 
                             <div id="ew-w-sidecar-authority-settings" class="form-section" data-pipeline-settings="sidecar" style="margin-top:20px; padding:16px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius);">
@@ -1051,7 +1054,7 @@
                                     </div>
                                     <div id="ew-world-sidecar-openrouter-routing" class="openrouter-routing-host hidden" data-sidecar-feature="sidecar-configuration"></div>
                                     <div id="ew-w-sidecar-config-grid" class="world-kernel-config-grid" style="margin-top:10px;">
-                                        <div style="grid-column:1 / -1;"><label class="vh-test-check" title="Runs the ScenePulse-inspired semantic evidence pass before canonical Sidecar reconciliation. Disable it to fall back to direct handoff reconciliation without changing the rest of Sidecar."><input type="checkbox" id="ew-w-sidecar-reader-enabled" checked> Enable semantic reader</label><p class="form-hint">When disabled, Sidecar reconciles the Narrator handoff directly. Inline Legacy is unaffected.</p></div>
+                                        <div style="grid-column:1 / -1;"><label class="vh-test-check" title="Runs the ScenePulse-inspired semantic evidence pass before canonical Sidecar reconciliation. Disable it to fall back to direct handoff reconciliation without changing the rest of Sidecar."><input type="checkbox" id="ew-w-sidecar-reader-enabled" checked> Enable semantic reader</label><p class="form-hint">When disabled, Sidecar reconciles the Narrator handoff directly.</p></div>
                                         <div style="grid-column:1 / -1;"><label class="vh-test-check" title="Inherit the global Reader Profile. Turn this off to tune this world’s timeout, refresh cadence and lookup limits without changing other worlds."><input type="checkbox" id="ew-w-sidecar-reader-profile-inherit" checked> Use global Reader Profile</label></div>
                                         <div><label class="form-label">Reader timeout <span class="help-glyph" title="Maximum time allowed for one semantic reader request before fallback reconciliation is used.">?</span></label><input id="ew-w-sidecar-reader-timeout" type="number" class="form-input" min="10" max="900" step="10" value="120"></div>
                                         <div><label class="form-label">Full refresh cadence <span class="help-glyph" title="Every N reader turns, request a complete envelope instead of only changed fields.">?</span></label><input id="ew-w-sidecar-reader-refresh" type="number" class="form-input" min="1" max="50" step="1" value="5"></div>
@@ -1087,8 +1090,6 @@
                                     <div id="ew-w-sidecar-memory-status" class="form-hint" style="margin-top:10px;"></div>
                                 </details>
                                 <p id="ew-w-sidecar-mode-hint" class="form-hint" style="margin:12px 0 0;"></p>
-                                <div id="ew-w-sidecar-migration-report" class="form-hint" style="margin-top:8px;"></div>
-                                <div id="ew-w-sidecar-migration-controls" style="display:flex; gap:8px; margin-top:10px;"><button id="ew-w-sidecar-migrate-btn" type="button" class="btn btn-primary">Review &amp; migrate this world</button><button id="ew-w-sidecar-restore-backup" type="button" class="btn btn-ghost hidden">Restore latest Inline backup</button></div>
                             </div>
 
                             <div id="ew-w-roleplay-os-section" class="form-section" data-pipeline-settings="sidecar" style="margin-top:20px; padding:16px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius);">
@@ -1478,6 +1479,61 @@
                     </div>
 
                     <!-- World AI Builder -->
+                    <!-- World Architect Agent (ported from stock worlds) -->
+                    <div id="ew-tab-w-architect-agent" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <h2>✦ World Architect Agent</h2>
+                            <p>Expand or refine this world conversationally. The agent stages typed changes for review; it never rewrites the live world behind your back.</p>
+                        </div>
+                        <div class="form-body world-architect-agent-layout">
+                            <section class="world-architect-request-card">
+                                <div class="world-architect-quick-actions" aria-label="Common World Architect requests">
+                                    <button type="button" data-ew-architect-quick="Add playable locations with sensible containment and connections.">Add places</button>
+                                    <button type="button" data-ew-architect-quick="Add new characters with homes, personalities, schedules and private goals.">Add characters</button>
+                                    <button type="button" data-ew-architect-quick="Find thin records and add missing useful detail without replacing authored writing.">Flesh things out</button>
+                                    <button type="button" data-ew-architect-quick="Connect inaccessible locations and repair the travel graph without changing intentional one-way routes.">Connect the map</button>
+                                    <button type="button" data-ew-architect-quick="Add factions, memberships and meaningful relationships supported by the setting.">Build society</button>
+                                </div>
+                                <label class="form-label" for="ew-w-architect-request">What should change?</label>
+                                <textarea id="ew-w-architect-request" class="form-textarea" rows="7" placeholder="For example: Add 100 rooms across the existing city. Distribute them sensibly inside current buildings, make every room reachable, and add recurring staff where the fiction needs them."></textarea>
+                                <div class="world-architect-controls">
+                                    <label><span>Scope</span><select id="ew-w-architect-scope" class="form-select"><option value="whole">Whole world</option><option value="locations">Places &amp; map</option><option value="people">People &amp; society</option><option value="lore">Lore &amp; setting</option></select></label>
+                                    <label><span>Change policy</span><select id="ew-w-architect-policy" class="form-select"><option value="add_only">Add only</option><option value="fill_gaps" selected>Fill gaps</option><option value="allow_edits">Allow safe edits</option></select></label>
+                                    <label><span>Detail</span><select id="ew-w-architect-detail" class="form-select"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="deep">Deep</option></select></label>
+                                    <label><span>Batch size</span><select id="ew-w-architect-batch-size" class="form-select"><option value="8">8 records</option><option value="12" selected>12 records</option><option value="20">20 records</option></select></label>
+                                    <label><span>Thinking</span><select id="ew-w-architect-thinking" class="form-select" title="Reasoning effort for the Director"><option value="default" selected>Default</option><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+                                    <label><span>Max reply</span><input id="ew-w-architect-max-reply" class="form-input" type="number" min="1000" step="1000" placeholder="auto" title="Maximum reply tokens (blank = derived from batch size). Raise it for models that spend heavily on reasoning."></label>
+                                </div>
+                                <div class="vh-model-search-row" style="display:flex; gap:10px; align-items:center; margin-top:13px;">
+                                    <button id="ew-w-architect-refresh-models" class="btn btn-ghost" type="button" title="Refresh the shared provider model catalog">↻ Models</button>
+                                    <div class="vh-model-search-wrap" style="flex:1; margin-top:0;">
+                                        <span aria-hidden="true">⌕</span>
+                                        <input id="ew-w-architect-model" class="form-input" type="search" placeholder="Blank uses the calibration model" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="ew-w-architect-model-results" aria-expanded="true">
+                                    </div>
+                                </div>
+                                <div id="ew-w-architect-model-filters" class="vh-model-filters" role="group" aria-label="Filter structured models by capability">
+                                    <button class="vh-model-filter tools" type="button" data-ew-architect-model-filter="tools" aria-pressed="false">Tools</button>
+                                    <button class="vh-model-filter json" type="button" data-ew-architect-model-filter="json" aria-pressed="false">JSON</button>
+                                    <button class="vh-model-filter vision" type="button" data-ew-architect-model-filter="vision" aria-pressed="false">Vision</button>
+                                    <button class="vh-model-filter audio" type="button" data-ew-architect-model-filter="audio" aria-pressed="false">Audio input</button>
+                                </div>
+                                <div id="ew-w-architect-model-results" class="vh-model-results" role="listbox" aria-label="Structured models"></div>
+                                <p id="ew-w-architect-model-status" class="form-hint vh-model-status" aria-live="polite"></p>
+                                <button id="ew-w-architect-plan-btn" class="btn btn-primary btn-full" type="button">Plan changes</button>
+                            </section>
+                            <section id="ew-w-architect-job" class="world-architect-job" aria-live="polite">
+                                <div class="world-architect-empty"><strong>No staged job</strong><p>Describe an expansion or repair. Horde will show assumptions, batches and expected calls before generating anything.</p></div>
+                            </section>
+                            <section id="ew-w-architect-stream-card" class="world-architect-stream-card hidden">
+                                <div class="world-architect-stream-header">
+                                    <span>Agent activity — live</span>
+                                    <button id="ew-w-architect-stream-clear" class="btn btn-ghost" type="button" title="Clear the activity log">Clear</button>
+                                </div>
+                                <div id="ew-w-architect-stream" class="world-architect-stream" aria-live="polite"></div>
+                            </section>
+                        </div>
+                    </div>
+
                     <div id="ew-tab-w-builder" class="studio-panel hidden">
                         <div class="panel-header">
                             <h2>✨ World AI Builder</h2>
@@ -1603,18 +1659,6 @@
             <div id="ew-world-timeline-browser-list" style="display:flex; flex-direction:column; gap:10px;"></div>
         </div>
         <div class="modal-ft"><button id="ew-close-world-timeline-browser-ft-btn" class="btn btn-ghost">Close</button></div>
-    </div>
-</div>
-
-<div id="ew-sidecar-migration-wizard-overlay" class="modal-bg hidden">
-    <div class="modal modal-lg">
-        <div class="modal-hd"><h2>⇄ Migrate timelines to Sidecar</h2><button id="ew-close-sidecar-migration-wizard-btn" class="modal-close" type="button" aria-label="Close migration wizard">✕</button></div>
-        <div class="modal-body" style="max-height:70vh; overflow-y:auto;">
-            <p class="form-hint">Choose which Inline Legacy timelines to migrate. Raw roleplay and canonical receipts are preserved; only derived vector/episodic caches are rebuilt. Each selected timeline receives a rollback backup.</p>
-            <div id="ew-sidecar-migration-wizard-list" style="display:flex; flex-direction:column; gap:8px;"></div>
-            <div id="ew-sidecar-migration-wizard-status" class="form-hint" style="margin-top:12px;" aria-live="polite"></div>
-        </div>
-        <div class="modal-ft" style="display:flex; justify-content:space-between; gap:8px;"><button id="ew-sidecar-migration-select-all-btn" class="btn btn-ghost" type="button">Select all</button><div style="display:flex; gap:8px;"><button id="ew-cancel-sidecar-migration-btn" class="btn btn-ghost" type="button">Cancel</button><button id="ew-run-sidecar-migration-btn" class="btn btn-primary" type="button">Back up &amp; migrate selected</button></div></div>
     </div>
 </div>
 

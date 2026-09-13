@@ -14,6 +14,17 @@ import { updatePanel } from './update-panel.js';
 import { syncThoughts } from './panel.js';
 import { getPortraitHtml, buildPortraitIndex } from './portraits.js';
 
+// A World can restore a complete ScenePulse reading while Thoughts is hidden.
+// Keep that accepted reading so turning the panel back on does not require a
+// new model call (or leave an empty dock until the next authored turn).
+let cachedThoughtData=null;
+
+export function renderCachedThoughts(){
+    if(!cachedThoughtData)return false;
+    updateThoughts(cachedThoughtData);
+    return true;
+}
+
 export function createThoughtPanel(){
     if(document.getElementById('sp-thought-panel'))return;
     const tp=document.createElement('div');tp.id='sp-thought-panel';
@@ -31,7 +42,19 @@ export function createThoughtPanel(){
         <button class="sp-tp-close" title="${t('Hide thoughts')}"><svg viewBox="0 0 12 12" width="13" height="13" fill="none"><line x1="2" y1="2" x2="10" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="10" y1="2" x2="2" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
     </div><div id="sp-tp-body"></div>
     <div class="sp-tp-resize" title="${t('Resize')}"><svg viewBox="0 0 16 16" fill="none"><line x1="14" y1="2" x2="2" y2="14" stroke="currentColor" stroke-width="1" opacity="0.4"/><line x1="14" y1="6" x2="6" y2="14" stroke="currentColor" stroke-width="1" opacity="0.4"/><line x1="14" y1="10" x2="10" y2="14" stroke="currentColor" stroke-width="1" opacity="0.4"/></svg></div>`;
-    window.ExperimentalWorldsDom.portalRoot().appendChild(tp);
+    // Horde's World view has one narrow ScenePulse column, not
+    // SillyTavern's spare left-hand chat gutter.  Keep the genuine source
+    // thought component, but make it a second, inline region of that column
+    // so it scrolls and hides with the rest of ScenePulse rather than
+    // becoming a detached floating window.
+    const sourcePanel=document.getElementById('sp-panel');
+    const sourceBody=sourcePanel?.querySelector('#sp-panel-body');
+    if(sourcePanel&&sourceBody){
+        tp.dataset.hordeInline='true';
+        sourcePanel.appendChild(tp);
+    }else{
+        window.ExperimentalWorldsDom.portalRoot().appendChild(tp);
+    }
 
     // Snap-left toggle button
     tp.querySelector('.sp-tp-snapleft').addEventListener('click',(e)=>{
@@ -225,6 +248,7 @@ function _updateThoughtsInner(d){
     // touching the call sites. filterForView is idempotent and sets a
     // _spViewFiltered flag, so re-filtering already-filtered data is a no-op.
     if(d&&!d._spViewFiltered)d=filterForView(d);
+    if(d?.characters?.length)cachedThoughtData=d;
     log('updateThoughts: chars=',d?.characters?.length||0,'showThoughts=',s.showThoughts,'loadingActive=',panel.classList.contains('sp-tp-loading-active'));
     if(!d?.characters?.length||s.showThoughts===false){
         if(s.showThoughts===false)log('updateThoughts: hidden (showThoughts=false)');
@@ -310,6 +334,10 @@ const _TP_BOTTOM_MARGIN=8;
 export function autoFitThoughtPanel(){
     const tp=document.getElementById('sp-thought-panel');
     if(!tp||!tp.classList.contains('sp-tp-visible'))return;
+    // The Horde adapter docks thoughts below the scrollable ScenePulse body.
+    // Its host CSS owns that bounded inline height; viewport fitting and
+    // snap-left positioning would turn it back into a floating overlay.
+    if(tp.dataset.hordeInline==='true')return;
     // Step 1: reset the fit-scale to 1 BEFORE measuring natural height
     // so we're always measuring the unscaled content. Without this,
     // repeated autoFit calls would compound the scale factor and the
@@ -355,6 +383,7 @@ export function snapThoughtToLeft(){
     if(s.thoughtSnapLeft===false)return;
     const tp=document.getElementById('sp-thought-panel');
     if(!tp||!tp.classList.contains('sp-tp-visible'))return;
+    if(tp.dataset.hordeInline==='true')return;
     // Find ST chat container
     const chat=document.getElementById('chat');
     const chatParent=chat?.parentElement;

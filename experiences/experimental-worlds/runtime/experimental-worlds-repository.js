@@ -1,89 +1,115 @@
-/* Permanent persistence authority for Experimental Worlds. This database is
- * deliberately separate from the upstream HordeStudioDB host database. The
- * repository is data-only: loading it never loads or starts the World runtime. */
+/* Permanent root-file persistence authority for Experimental Worlds.
+ *
+ * The runtime and backup coordinator keep using this data-only facade, but
+ * durable records live behind the local 17.4 bridge in
+ * data/experimental-worlds/. Loading this file never starts World gameplay,
+ * ScenePulse, or the Experimental UI. */
 (function installExperimentalWorldsRepository(global) {
     'use strict';
 
-    const DB_NAME = 'HordeStudioExperimentalWorldsDB';
-    const STORE_NAME = 'records';
+    const AUTHORITY = 'root-files';
+    const ENDPOINT = '/experimental-worlds/persistence';
+    const ROOT_RELATIVE_PATH = 'data/experimental-worlds/state.json';
     const VERSION = 1;
     const RESTORE_STAGE_KEY = 'restoreStage';
     const RESTORE_JOURNAL_KEY = 'restoreJournal';
     const RESTORE_GENERATION_KEY = 'restoreGeneration';
     const SNAPSHOT_KEYS = Object.freeze([
         'worlds', 'worldInstances', 'activeWorldId', 'worldRecoverySnapshots',
-        'worldMediaAssets', 'workspace', 'theme'
+        'worldMediaAssets', 'workspace', 'theme', 'savedModelCatalogs',
+        'roleplayOSSources'
     ]);
-    let db = null;
+    let records = null;
+    let storeRevision = 0;
+    let storageMetadata = null;
+    let initPromise = null;
 
     const clone = value => value == null ? value : structuredClone(value);
     const isPlainObject = value => Object.prototype.toString.call(value) === '[object Object]';
 
-    function requestResult(request) {
-        return new Promise((resolve, reject) => {
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error || new Error('Experimental Worlds database error'));
+    async function request(method = 'GET', body = null) {
+        const response = await global.fetch(ENDPOINT, {
+            method,
+            cache: 'no-store',
+            credentials: 'same-origin',
+            headers: body ? { 'Content-Type': 'application/json' } : undefined,
+            body: body ? JSON.stringify(body) : undefined
         });
+        let payload = null;
+        try { payload = await response.json(); }
+        catch (_) { /* The status below remains the useful failure. */ }
+        if (!response.ok) {
+            if (response.status === 409 && payload?.records) adopt(payload);
+            throw new Error(payload?.error
+                || `Experimental Worlds root-file service failed (HTTP ${response.status || 'unknown'}).`);
+        }
+        if (!payload || typeof payload !== 'object') {
+            throw new Error('Experimental Worlds root-file service returned no data.');
+        }
+        return payload;
+    }
+
+    function adopt(payload) {
+        if (payload?.authority !== AUTHORITY || !isPlainObject(payload.records)) {
+            throw new Error('Experimental Worlds refused an unexpected persistence authority.');
+        }
+        records = clone(payload.records);
+        storeRevision = Number(payload.revision) || 0;
+        storageMetadata = Object.freeze({
+            authority: payload.authority,
+            format: String(payload.format || ''),
+            version: Number(payload.version) || 0,
+            revision: storeRevision,
+            checksum: String(payload.checksum || ''),
+            writtenAt: Number(payload.writtenAt) || 0,
+            relativePath: String(payload.relativePath || ROOT_RELATIVE_PATH),
+            recovery: clone(payload.recovery || null)
+        });
+        return records;
+    }
+
+    async function reload() {
+        return adopt(await request('GET'));
     }
 
     async function init() {
-        if (db) return db;
-        db = await new Promise((resolve, reject) => {
-            const request = indexedDB.open(DB_NAME, VERSION);
-            request.onupgradeneeded = event => {
-                const database = event.target.result;
-                if (!database.objectStoreNames.contains(STORE_NAME)) database.createObjectStore(STORE_NAME);
-            };
-            request.onsuccess = event => resolve(event.target.result);
-            request.onerror = () => reject(request.error || new Error('Experimental Worlds database could not open'));
-        });
-        return db;
+        if (records) return records;
+        if (!initPromise) {
+            initPromise = reload().catch(error => {
+                initPromise = null;
+                throw error;
+            });
+        }
+        return initPromise;
+    }
+
+    async function mutate(operation, extra = {}) {
+        await init();
+        return adopt(await request('POST', {
+            operation,
+            expectedRevision: storeRevision,
+            ...extra
+        }));
     }
 
     async function get(key) {
         await init();
-        const transaction = db.transaction([STORE_NAME], 'readonly');
-        return requestResult(transaction.objectStore(STORE_NAME).get(key));
+        return clone(records[key]);
     }
 
     async function getMany(keys) {
         await init();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([STORE_NAME], 'readonly');
-            const store = transaction.objectStore(STORE_NAME);
-            const values = {};
-            keys.forEach(key => {
-                const request = store.get(key);
-                request.onsuccess = () => { values[key] = request.result; };
-            });
-            transaction.oncomplete = () => resolve(values);
-            transaction.onerror = () => reject(transaction.error || new Error('Experimental Worlds read failed'));
-            transaction.onabort = () => reject(transaction.error || new Error('Experimental Worlds read was aborted'));
-        });
+        return Object.fromEntries(keys.map(key => [key, clone(records[key])]));
     }
 
-    async function setMany(records) {
-        await init();
-        await new Promise((resolve, reject) => {
-            const transaction = db.transaction([STORE_NAME], 'readwrite');
-            const store = transaction.objectStore(STORE_NAME);
-            Object.entries(records).forEach(([key, value]) => store.put(clone(value), key));
-            transaction.oncomplete = resolve;
-            transaction.onerror = () => reject(transaction.error || new Error('Experimental Worlds write failed'));
-            transaction.onabort = () => reject(transaction.error || new Error('Experimental Worlds write was aborted'));
-        });
+    async function setMany(nextRecords) {
+        if (!isPlainObject(nextRecords)) throw new Error('Experimental Worlds root records must be an object.');
+        await mutate('setMany', { records: clone(nextRecords) });
     }
 
     async function removeMany(keys) {
-        await init();
-        await new Promise((resolve, reject) => {
-            const transaction = db.transaction([STORE_NAME], 'readwrite');
-            const store = transaction.objectStore(STORE_NAME);
-            keys.forEach(key => store.delete(key));
-            transaction.oncomplete = resolve;
-            transaction.onerror = () => reject(transaction.error || new Error('Experimental Worlds delete failed'));
-            transaction.onabort = () => reject(transaction.error || new Error('Experimental Worlds delete was aborted'));
-        });
+        if (!Array.isArray(keys)) throw new Error('Experimental Worlds root record keys must be an array.');
+        await mutate('removeMany', { keys: keys.map(String) });
     }
 
     function assertPortable(value, path = 'snapshot', seen = new Set(), depth = 0) {
@@ -115,7 +141,10 @@
     function validateSnapshot(value, label = 'backup payload') {
         if (!isPlainObject(value)) throw new Error(`Experimental Worlds ${label} must be an object.`);
         if (!Array.isArray(value.worlds)) throw new Error(`Experimental Worlds ${label} needs a worlds array.`);
-        for (const key of ['worldInstances', 'worldRecoverySnapshots', 'worldMediaAssets', 'workspace']) {
+        if (value.roleplayOSSources !== undefined && !Array.isArray(value.roleplayOSSources)) {
+            throw new Error(`Experimental Worlds ${label} roleplayOSSources must be an array.`);
+        }
+        for (const key of ['worldInstances', 'worldRecoverySnapshots', 'worldMediaAssets', 'workspace', 'savedModelCatalogs']) {
             if (value[key] !== undefined && !isPlainObject(value[key])) {
                 throw new Error(`Experimental Worlds ${label} ${key} must be an object.`);
             }
@@ -134,6 +163,8 @@
             worldRecoverySnapshots: clone(value.worldRecoverySnapshots || {}),
             worldMediaAssets: clone(value.worldMediaAssets || {}),
             workspace: clone(value.workspace || {}),
+            savedModelCatalogs: clone(value.savedModelCatalogs || {}),
+            roleplayOSSources: clone(value.roleplayOSSources || []),
             theme: value.theme || 'default'
         };
         assertPortable(normalized);
@@ -141,8 +172,8 @@
     }
 
     async function snapshot() {
-        // One readonly transaction gives backup export a consistent cut even
-        // if another tab begins a save while this snapshot is being captured.
+        // The bridge publishes a complete checksummed document atomically.
+        // This in-memory copy changes only after that publication succeeds.
         const values = await getMany([...SNAPSHOT_KEYS, 'generation', RESTORE_GENERATION_KEY]);
         return {
             worlds: values.worlds || [],
@@ -151,6 +182,8 @@
             worldRecoverySnapshots: values.worldRecoverySnapshots || {},
             worldMediaAssets: values.worldMediaAssets || {},
             workspace: values.workspace || {},
+            savedModelCatalogs: values.savedModelCatalogs || {},
+            roleplayOSSources: values.roleplayOSSources || [],
             theme: typeof values.theme === 'string' ? values.theme : 'default',
             generation: Number(values.generation) || 0,
             restoreGeneration: Number(values[RESTORE_GENERATION_KEY]) || 0
@@ -167,35 +200,12 @@
 
     async function publishSnapshot(value, reason, { invalidateRestore = false } = {}) {
         const data = snapshotData(value);
-        await init();
-        // Read the counters and publish the complete logical snapshot in one
-        // readwrite transaction. IndexedDB serializes this transaction against
-        // writers in other tabs, so generations cannot be lost by read/write
-        // races across browsing contexts.
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([STORE_NAME], 'readwrite');
-            const store = transaction.objectStore(STORE_NAME);
-            const generationRequest = store.get('generation');
-            const restoreRequest = store.get(RESTORE_GENERATION_KEY);
-            let generationReady = false;
-            let restoreReady = false;
-            let next = null;
-            const publish = () => {
-                if (!generationReady || !restoreReady || next) return;
-                next = {
-                    ...data,
-                    generation: (Number(generationRequest.result) || 0) + 1,
-                    restoreGeneration: (Number(restoreRequest.result) || 0) + (invalidateRestore ? 1 : 0),
-                    lastWrite: { reason, at: new Date().toISOString() }
-                };
-                Object.entries(next).forEach(([key, item]) => store.put(clone(item), key));
-            };
-            generationRequest.onsuccess = () => { generationReady = true; publish(); };
-            restoreRequest.onsuccess = () => { restoreReady = true; publish(); };
-            transaction.oncomplete = () => resolve(next);
-            transaction.onerror = () => reject(transaction.error || new Error('Experimental Worlds snapshot write failed'));
-            transaction.onabort = () => reject(transaction.error || new Error('Experimental Worlds snapshot write was aborted'));
+        await mutate('publishSnapshot', {
+            snapshot: data,
+            reason: String(reason || 'save'),
+            invalidateRestore: invalidateRestore === true
         });
+        return snapshot();
     }
 
     async function writeSnapshot(value, reason = 'save') {
@@ -485,23 +495,25 @@
     async function destroyForExplicitGlobalPurge() {
         // Only the host's explicit confirmed global purge calls this. Normal
         // startup and normal World deletion can never clear this authority.
-        if (db) { db.close(); db = null; }
-        await new Promise((resolve, reject) => {
-            const request = indexedDB.deleteDatabase(DB_NAME);
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error || new Error('Experimental Worlds database deletion failed'));
-            request.onblocked = () => reject(new Error('Close other Horde Studio tabs and try again'));
+        await init();
+        const payload = await request('POST', {
+            operation: 'purge',
+            confirmation: 'DELETE EXPERIMENTAL WORLDS'
         });
+        adopt(payload);
+        initPromise = Promise.resolve(records);
     }
 
     global.ExperimentalWorldsRepository = Object.freeze({
-        DB_NAME, STORE_NAME, VERSION, SNAPSHOT_KEYS,
-        init, get, getMany, setMany, removeMany, snapshot, snapshotData, validateSnapshot,
+        AUTHORITY, ENDPOINT, ROOT_RELATIVE_PATH, VERSION, SNAPSHOT_KEYS,
+        init, reload, get, getMany, setMany, removeMany, snapshot, snapshotData, validateSnapshot,
         exportSnapshot, writeSnapshot, verifiedSnapshot, restoreGeneration,
         stageLegacyImport, stageRestore, beginStagedRestore, applyStagedRestore,
         rollbackRestore, noteRestorePhase, discardStagedRestore,
         restoreStatus, discardOrphanRestoreStage, recoverInterruptedRestore,
         recoverRestoreDecision, migrationJournal, digest,
+        storageStatus: () => clone(storageMetadata),
+        worldExportUrl: worldId => `/experimental-worlds/worlds/${encodeURIComponent(String(worldId || ''))}/export`,
         destroyForExplicitGlobalPurge
     });
 })(window);

@@ -26,7 +26,7 @@ import { updateTimeTint, clearTimeTint } from './time-tint.js';
 import { showLoadingOverlay, clearLoadingOverlay, showStopButton, hideStopButton, startElapsedTimer, stopElapsedTimer, showThoughtLoading, clearThoughtLoading } from './loading.js';
 import { updatePanel } from './update-panel.js';
 import { closeDiffViewer } from './diff-viewer.js';
-import { updateThoughts } from './thoughts.js';
+import { updateThoughts, renderCachedThoughts } from './thoughts.js';
 import { renderCustomPanelsMgr } from '../settings-ui/custom-panels.js';
 import { mkSection } from './section.js';
 import { injectStoryIdea } from '../story-ideas.js';
@@ -251,7 +251,7 @@ export function createPanel(){
     // Thoughts toggle
     document.getElementById('sp-tb-thoughts').addEventListener('change',(e)=>{
         const s=getSettings();s.showThoughts=e.target.checked;saveSettings();
-        syncThoughts();_updateFeatBadge();
+        if(s.showThoughts)renderCachedThoughts();else syncThoughts();_updateFeatBadge();
         const cb=document.getElementById('sp-show-thoughts');if(cb)cb.checked=s.showThoughts;
     });
     // Edit mode toggle

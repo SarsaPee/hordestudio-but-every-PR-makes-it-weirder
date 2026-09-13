@@ -11,7 +11,9 @@
     const stamp = () => new Date().toISOString();
     const key = value => clean(value, 160).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
     const identifier = kind => `${kind}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-    const mode = value => value === 'sidecar' || value === 'inline_legacy' ? value : 'inline_legacy';
+    // Sidecar is the only execution path. Legacy stored values are accepted
+    // as input but always resolve to Sidecar; nothing re-enters Inline mode.
+    const mode = () => 'sidecar';
     const numeric = (value, fallback, max) => { const parsed = Math.trunc(Number(value)); return Number.isFinite(parsed) && parsed >= 0 ? Math.min(parsed, max) : fallback; };
     // v2 adds evidence-scoped character intelligence and explicitly separates
     // accepted historical projections from abandoned Reader attempts.
@@ -62,9 +64,7 @@
         const roleplayOS = normalizeRoleplayOSConfig(current.roleplayOS);
         // Experimental Worlds has one execution path. Imported records retain
         // their older receipts for audit, but active play always uses Sidecar.
-        const promotedFromInline = current.mode === 'inline_legacy';
         world.sidecarConfig = { schemaVersion: 1, mode: 'sidecar', roleplayOS, tracker: { inheritNarrator: tracker.inheritNarrator !== false, provider: clean(tracker.provider, 40), model: clean(tracker.model, 160), openRouterRouting: object(tracker.openRouterRouting) ? tracker.openRouterRouting : null, supportedParams: Array.isArray(tracker.supportedParams) ? tracker.supportedParams.map(value => clean(value, 60)).filter(Boolean).slice(0, 80) : [], reasoningMode, reasoning: reasoningMode === 'enabled', reasoningEffort: ['auto', 'low', 'medium', 'high'].includes(clean(tracker.reasoningEffort, 20)) ? clean(tracker.reasoningEffort, 20) : 'auto', readerEnabled: tracker.readerEnabled !== false, readerProfileInherit: tracker.readerProfileInherit !== false, readerProfile: normalizeReaderProfile(tracker.readerProfile), readerMaxTokens: numeric(tracker.readerMaxTokens, 0, 100000), maxTokens: numeric(tracker.maxTokens, 0, 100000) }, debug: { enabled: debug.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, 20, 200) }, memory: { inheritGlobal: memory.inheritGlobal !== false, episodeChunkTurns: numeric(memory.episodeChunkTurns, 5, 20), episodeCadenceTurns: numeric(memory.episodeCadenceTurns, 5, 50), verbatimTurnWindow: numeric(memory.verbatimTurnWindow, 5, 30), consolidationConcurrency: numeric(memory.consolidationConcurrency, 6, 12), backgroundProviderConcurrency: numeric(memory.backgroundProviderConcurrency, 2, 12), retrievalLimit: numeric(memory.retrievalLimit, 8, 24), cognitionRecentLimit: numeric(memory.cognitionRecentLimit, 8, 30), cognitionSemanticTopK: numeric(memory.cognitionSemanticTopK, 6, 20) } };
-        if (promotedFromInline) world.sidecarConfig.migration = { ...(object(current.migration) ? current.migration : {}), inlineLegacyPromotedAt: current.migration?.inlineLegacyPromotedAt || stamp() };
         return world.sidecarConfig;
     }
     function emptyProtocol(activeMode) { return { schemaVersion: 2, mode: activeMode, activeSequenceId: '', sequences: [], activeSceneId: '', scenes: [], turns: [], takes: [], takeIndex: {}, questions: [], requests: [], proposals: [], backgroundProposals: [], refinements: [], conversations: [], inputMode: 'narrator', coreAnswers: {}, temporalState: {}, provisionalLocations: [], provisionalEntities: [], readerCandidates: [], sceneProjection: null, sceneProjections: [], traversalState: {}, packet: null, readerSnapshots: [], readerRefreshes: [], readerProfile: normalizeReaderProfile({}), memoryGraph: {}, jobs: [], diagnostics: { reconciliationAttempts: [] }, debug: { enabled: false, retainTraceCount: 20, traces: [] }, migration: {} }; }
@@ -72,11 +72,9 @@
         if (!object(timeline)) return null;
         const config = worldConfig(world, options) || { mode: 'sidecar', debug: {} }, current = object(timeline.sidecar) ? timeline.sidecar : {};
         const protocol = { ...emptyProtocol('sidecar'), ...current };
-        const promotedFromInline = current.mode === 'inline_legacy';
         protocol.schemaVersion = Math.max(2, Number(current.schemaVersion) || 0); protocol.mode = 'sidecar';
         ['sequences','scenes','turns','takes','questions','requests','proposals','backgroundProposals','refinements','conversations','provisionalLocations','provisionalEntities','readerCandidates','readerSnapshots','readerRefreshes','sceneProjections','jobs'].forEach(field => { if (!Array.isArray(protocol[field])) protocol[field] = []; });
         ['takeIndex','temporalState','traversalState','memoryGraph','diagnostics','migration','coreAnswers'].forEach(field => { if (!object(protocol[field])) protocol[field] = {}; });
-        if (promotedFromInline) protocol.migration.inlineLegacyPromotedAt = protocol.migration.inlineLegacyPromotedAt || stamp();
         protocol.inputMode = protocol.inputMode === 'sidecar' ? 'sidecar' : 'narrator'; protocol.activeSequenceId = clean(protocol.activeSequenceId, 120); protocol.activeSceneId = clean(protocol.activeSceneId, 120); protocol.packet = object(protocol.packet) ? protocol.packet : null; protocol.readerProfile = normalizeReaderProfile(protocol.readerProfile);
         const debug = object(protocol.debug) ? protocol.debug : {}; protocol.debug = { enabled: debug.enabled === true || config.debug?.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, config.debug?.retainTraceCount || 20, 200), traces: Array.isArray(debug.traces) ? debug.traces.slice(-200) : [] };
         // v2 migration is deliberately conservative: old active snapshots are

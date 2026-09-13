@@ -1,0 +1,25 @@
+{
+  "generatedAt": "2026-09-07T08:03:47.490Z",
+  "baseline": {
+    "systemCharacters": 2024,
+    "historyCharacters": 187,
+    "packetContainsBelief": true,
+    "forwardedMarkers": {
+      "GOAL_MARKER": false,
+      "BELIEF_MARKER": false,
+      "PRIVATE_LIFE_MARKER": false,
+      "KNOWLEDGE_MARKER": false,
+      "OPENING_MARKER": false
+    },
+    "invalidatedReplyForwarded": true,
+    "lastModelRole": "assistant"
+  },
+  "crowded": {
+    "inputHistoryMessages": 23,
+    "forwardedHistoryMessages": 8,
+    "systemCharacters": 7916,
+    "approximateContextCharacters": 7168,
+    "approximateOutputReserveCharacters": 3500,
+    "initiatingQuestionRetained": false
+  }
+}

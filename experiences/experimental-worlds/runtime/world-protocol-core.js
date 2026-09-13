@@ -37,6 +37,13 @@ function normalizeWorldTurnReceipt(world, sess, rawReceipt) {
         },
         events: (Array.isArray(source.events) ? source.events : []).slice(0, 100),
         entity_updates: (Array.isArray(source.entity_updates) ? source.entity_updates : []).slice(0, 100),
+        proposal_review: (Array.isArray(source.proposal_review || source.proposalReview)
+            ? (source.proposal_review || source.proposalReview) : []).slice(0, 120).map(item => ({
+            proposal_id: String(item?.proposal_id || item?.proposalId || '').slice(0, 180),
+            verdict: ['agree', 'disagree', 'defer'].includes(String(item?.verdict || '').toLowerCase())
+                ? String(item.verdict).toLowerCase() : 'defer',
+            reason: String(item?.reason || '').slice(0, 600)
+        })).filter(item => item.proposal_id),
         state_updates: stateUpdates
     };
 }
@@ -69,7 +76,8 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
         rejectedEvents.push({
             index, reason, detail: String(detail || '').slice(0, 240),
             type: String(event?.type || 'unknown').slice(0, 60),
-            actor_id: String(event?.actor_id || '').slice(0, 120)
+            actor_id: String(event?.actor_id || '').slice(0, 120),
+            source_proposal_id: String(event?.source_proposal_id || event?.sourceProposalId || '').slice(0, 180)
         });
     };
     if (sidecarTemporalAuthority) {
@@ -124,6 +132,7 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
                 .map(ref => resolveWorldActorId(world, sess, ref)).filter(Boolean).slice(0, 40),
             evidence: String(event.evidence || '').slice(0, 400),
             cause: String(event.cause || event.reason || '').slice(0, 300),
+            source_proposal_id: String(event.source_proposal_id || event.sourceProposalId || '').slice(0, 180),
             // Annex A execution evidence: intent, explicit compensation and
             // the declared mechanic-conditioned execution survive into the
             // committed event so the engine can validate them at commit.
@@ -614,6 +623,10 @@ function recordWorldTurnCommit(world, sess, validation, actionResult, source = '
         accepted: committedEvents.length,
         informational: informationalEvents.length,
         rejected: validation.rejectedEvents,
+        proposal_review: experimentalSafeJsonClone(validation.receipt.proposal_review || []),
+        accepted_proposal_ids: [...new Set(committedEvents.map(event => event.source_proposal_id).filter(Boolean))],
+        informational_proposal_ids: [...new Set(informationalEvents.map(event => event.source_proposal_id).filter(Boolean))],
+        rejected_proposal_ids: [...new Set(validation.rejectedEvents.map(event => event.source_proposal_id).filter(Boolean))],
         applied_fields: Object.keys(validation.legacyArgs),
         entity_patches: validation.entityPatches.map(patch => patch.entity_id),
         presence_recoveries: validation.recoveredPresence || [],
@@ -643,6 +656,25 @@ function stableSidecarValue(value) {
         return result;
     }, {});
     return value;
+}
+
+/**
+ * Decode the native Sidecar commit tool call into a receipt object. Strict
+ * providers may receive the compact native transport:
+ * commit_world_turn({ receipt_json: "{...}" }). Unpack it before every
+ * Sidecar adapter and the canonical reducer inspect the receipt, so this
+ * stays one native tool call rather than a parallel text-receipt path.
+ */
+function unwrapSidecarCommitReceipt(raw) {
+    const parsed = parseWorldToolArguments(raw);
+    const packed = parsed?.receipt_json ?? parsed?.receiptJson ?? parsed?.receipt;
+    if (typeof packed === 'string') {
+        const unpacked = experimentalSafeParseJSONRepair(packed);
+        if (experimentalIsPlainObject(unpacked)) return unpacked;
+        throw new Error('The Sidecar commit tool returned an invalid receipt_json payload.');
+    }
+    if (experimentalIsPlainObject(packed)) return packed;
+    return parsed;
 }
 
 function sidecarReceiptFingerprint(receipt) {
@@ -1011,6 +1043,19 @@ function sidecarCommitToolFor(world = null, sess = null) {
                     },
                     events: { type: 'array', items: { type: 'object', additionalProperties: true } },
                     entity_updates: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                    proposal_review: {
+                        type: 'array',
+                        description: 'One explicit Sidecar verdict for every ScenePulse authority proposal.',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                proposal_id: { type: 'string' },
+                                verdict: { type: 'string', enum: ['agree', 'disagree', 'defer'] },
+                                reason: { type: 'string' }
+                            },
+                            required: ['proposal_id', 'verdict', 'reason']
+                        }
+                    },
                     state_updates: { type: 'object', additionalProperties: true },
                     ledger_update: { type: 'string' },
                     npc_disposition_changes: { type: 'array', items: { type: 'object', additionalProperties: true } }
@@ -1324,6 +1369,17 @@ function applySidecarTemporalAuthority(receipt, handoff, clockEvidence, temporal
     }
     if (totalMinutes > 0 && totalMinutes <= SIDECAR_MAX_EXPLICIT_TIME_SKIP_MINUTES) {
         receipt.state_updates.time_skip_minutes = totalMinutes;
+        // recordSidecarTemporalEvidence persists the explicit endpoint pair
+        // onto temporalState. Keep those fields defined here (the Reader's
+        // resolved endpoints when available, otherwise the breakdown's
+        // start/end anchors) so a later snapshot never writes `undefined`,
+        // which the Experimental Worlds repository rejects as non-portable.
+        const sourceMinuteOfDay = readerResolution
+            ? readerResolution.sourceMinuteOfDay
+            : (Number.isFinite(Number(breakdown.currentTurnStart?.minuteOfDay)) ? Number(breakdown.currentTurnStart.minuteOfDay) : null);
+        const targetMinuteOfDay = readerResolution
+            ? readerResolution.targetMinuteOfDay
+            : (Number.isFinite(Number(breakdown.currentTurnEnd?.minuteOfDay)) ? Number(breakdown.currentTurnEnd.minuteOfDay) : null);
         return {
             minutes: totalMinutes,
             interTurnMinutes: phaseSupported(breakdown.interTurnJump) ? Number(breakdown.interTurnJump.minutes) || 0 : 0,
@@ -1331,6 +1387,10 @@ function applySidecarTemporalAuthority(receipt, handoff, clockEvidence, temporal
             basis: readerResolution?.basis || 'two_phase_header_and_endpoints',
             header: breakdown.narratorHeader,
             statement: sidecarTemporalStatement(handoff),
+            source: readerResolution?.source ?? breakdown.currentTurnStart?.display ?? null,
+            target: readerResolution?.target ?? breakdown.currentTurnEnd?.display ?? null,
+            sourceMinuteOfDay,
+            targetMinuteOfDay,
             readerResolution: readerResolution ? experimentalSafeJsonClone(readerResolution) : null
         };
     }
@@ -1663,7 +1723,40 @@ function normalizeRoleplayOSSourceRegistry(raw) {
         .filter(Boolean);
 }
 
+// First use of the source registry seeds the bundled FF 5.4 Agent Gating
+// export (see ff54-bundled-source.js) into the module-owned registry. This
+// makes a fresh install fully integrated with no import step; importing a
+// newer version through World Studio adds a newer entry alongside it. Worlds
+// without an explicit pin auto-detect the installed FF source, and existing
+// pins that match the bundled content hash resolve immediately.
+let bundledSourceSeeded = false;
+let bundledSourceEntry = null;
+
+function bundledRoleplayOSSourceEntry() {
+    if (!bundledSourceEntry) bundledSourceEntry = normalizeFF54SourcePreset(FF54_BUNDLED_SOURCE_PRESET);
+    return bundledSourceEntry;
+}
+
 function getInstalledRoleplayOSSources() {
+    if (!bundledSourceSeeded) {
+        bundledSourceSeeded = true;
+        try {
+            const bundled = bundledRoleplayOSSourceEntry();
+            if (bundled) {
+                const registry = normalizeRoleplayOSSourceRegistry(ExperimentalWorldsState.roleplayOSSources);
+                if (!registry.some(item => item.id === bundled.id)) {
+                    installRoleplayOSSource(FF54_BUNDLED_SOURCE_PRESET);
+                    const persisted = ExperimentalWorldsHost?.persist?.();
+                    if (persisted && typeof persisted.catch === 'function') {
+                        persisted.catch(error =>
+                            console.warn('Bundled Roleplay OS source installed but could not be persisted:', error));
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Could not seed the bundled Roleplay OS source:', error);
+        }
+    }
     return normalizeRoleplayOSSourceRegistry(ExperimentalWorldsState.roleplayOSSources);
 }
 
@@ -2839,6 +2932,11 @@ function failSidecarTurnAttempt(world, sess, attempt, error, detail = {}) {
         turnRecord.status = 'reconciliation_failed';
         turnRecord.reconciliationStatus = 'failed';
         turnRecord.failure = failure;
+        // The provisional ScenePulse reading belongs to this failed attempt;
+        // the panel falls back to the last accepted scene while Backstage
+        // carries the failure and its recovery action.
+        clearProvisionalScenePulseReading(world, sess, turnRecord.id);
+        renderScenePulseWorldsWorkspace(world, sess);
         turnRecord.postFrame = buildWorldSceneFrame(world, sess);
         const currentAttempt = (turnRecord.attempts || []).find(item => item.id === turnRecord.currentAttemptId);
         if (currentAttempt) Object.assign(currentAttempt, { status: 'failed', failedAt: failure.failedAt, failure: experimentalSafeJsonClone(failure) });
@@ -3091,6 +3189,7 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
             })),
             candidateStructures: (readerSnapshot.envelope?.candidateStructures || []).slice(0, 40),
             eventClaims: (readerSnapshot.envelope?.eventClaims || []).slice(0, 20),
+            authorityProposals: (readerSnapshot.envelope?.authorityProposals || []).slice(0, 40),
             durableProposals: (readerSnapshot.envelope?.durableProposals || []).slice(0, 12),
             relationshipProposals: (readerSnapshot.envelope?.relationshipProposals || []).slice(0, 12),
             unresolvedEvidence: (readerSnapshot.envelope?.unresolvedEvidence || []).slice(0, 12),
@@ -3112,7 +3211,7 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
                 provisional: true
             })),
             changes: (protocol.sceneProjection.changes || []).slice(0, 20),
-            candidates: activeReaderCandidates(protocol, { sceneId: protocol.sceneProjection.sceneId || hierarchy?.scene?.id || '' }).slice(-80),
+            candidates: (window.ExperimentalWorldsSidecarHooks?.activeReaderCandidates?.(protocol, { sceneId: protocol.sceneProjection.sceneId || hierarchy?.scene?.id || '' }) || []).slice(-80),
             updatedAt: protocol.sceneProjection.updatedAt || '',
             nonCanonical: true
         } : null,
@@ -3214,10 +3313,12 @@ function sidecarSupportsStructuredJson(provider, model, tracker = {}, profile = 
     ].map(value => String(value || '').toLowerCase());
     if (advertised.includes('response_format') || advertised.includes('structured_outputs')) return true;
     // Unknown/custom providers stay on the validated prompt+parser fallback
-    // path. Use native JSON mode only when the loaded model catalogue has
-    // explicitly advertised support for it.
+    // path. Use native JSON mode only when the loaded model catalogue (or the
+    // module's saved catalog) has explicitly advertised support for it.
     const catalogue = ExperimentalWorldsHost.modelCatalog();
-    const match = catalogue.find(entry => String(entry?.id || '').toLowerCase() === String(model || '').toLowerCase());
+    const saved = savedExperimentalModelCatalog(ExperimentalWorldsState.globalSettings?.apiProvider);
+    const match = catalogue.find(entry => String(entry?.id || '').toLowerCase() === String(model || '').toLowerCase())
+        || saved.find(entry => String(entry?.id || '').toLowerCase() === String(model || '').toLowerCase());
     return !!(match && Array.isArray(match.supported_parameters)
         && match.supported_parameters.some(value => ['response_format', 'structured_outputs'].includes(String(value || '').toLowerCase())));
 }
@@ -3837,7 +3938,7 @@ function buildSidecarSceneProjection(world, sess, protocol, options = {}) {
         const rank = value => ({ active: 0, nearby: 1, audible: 2, remote: 3 })[value.mode] ?? 4;
         return rank(left) - rank(right) || String(left.name).localeCompare(String(right.name));
     });
-    const candidates = activeReaderCandidates(protocol, { sceneId: turn?.sceneId || snapshot?.sceneId || hierarchy?.scene?.id || '' })
+    const candidates = (window.ExperimentalWorldsSidecarHooks?.activeReaderCandidates?.(protocol, { sceneId: turn?.sceneId || snapshot?.sceneId || hierarchy?.scene?.id || '' }) || [])
         .filter(candidate => !snapshot || !candidate.readerSnapshotId || candidate.readerSnapshotId === snapshot.id || candidate.sourceTurnIds?.includes(snapshot.turnId))
         .map(candidate => experimentalSafeJsonClone(candidate));
     const candidateById = new Map(candidates.map(candidate => [String(candidate.candidateId || ''), candidate]));
@@ -3860,6 +3961,7 @@ function buildSidecarSceneProjection(world, sess, protocol, options = {}) {
         canonicalRelationships: experimentalSafeJsonClone(sess?.npcRelationships || {}), salientObjects: experimentalSafeJsonClone(envelope?.salientObjects || []),
         salientLocations: experimentalSafeJsonClone(envelope?.salientLocations || []), pressures: experimentalSafeJsonClone([...(envelope?.pressures || []), ...(envelope?.currentThreads || [])]),
         questions: openQuestions, changes: experimentalSafeJsonClone(envelope?.changes || []), unresolved: experimentalSafeJsonClone(envelope?.unresolvedEvidence || []),
+        authorityAdjudication: experimentalSafeJsonClone(turn?.authorityAdjudication || []),
         summary: String(envelope?.summary || '').trim(), coverage: experimentalSafeJsonClone(envelope?.coverage || {}),
         provenance: { readerSnapshotId: snapshot?.id || '', sourceTurnId: turn?.id || snapshot?.turnId || '', sourceTakeId: snapshot?.takeId || turn?.takeId || '', sourceRevisionId: snapshot?.envelope?.sourceRevisionId || turn?.revisionId || '' }
     };
@@ -4005,6 +4107,7 @@ function publishSidecarSettlement(world, sess, protocol, options = {}) {
         if (!draftTurn) throw new Error('The authored Sidecar turn disappeared before derived settlement.');
         const now = new Date().toISOString();
         const stagedPacket = draftTurn.reader || options.readerPacket || {};
+        draftTurn.authorityAdjudication = buildScenePulseAuthorityAdjudication(stagedPacket, options.receipt, options.committed?.audit);
         draftTurn.settlementId = settlementId;
         const stagedIntroductions = window.ExperimentalWorldsSidecarPromotion?.stageReceiptIntroductions(draft, experimentalSafeJsonClone(options.introductionDraft || {}), {
             source: 'narrator_handoff', narration: options.narration || '', handoff: options.handoff || '', turnId: draftTurn.id
@@ -4055,6 +4158,10 @@ function publishSidecarSettlement(world, sess, protocol, options = {}) {
         window.ExperimentalWorldsSidecarMemoryGraph?.queueEpisode(draft, { batchSize: memoryConfig.episodeChunkTurns, cadenceTurns: memoryConfig.episodeCadenceTurns });
         draft.packet = buildSidecarScenePacket(world, sess, options.handoff || '');
         sess.sidecarDerivedSettlementIncomplete = null;
+        // The provisional ScenePulse reading is now settled evidence; swap
+        // the panel from "adjudication in progress" to the accepted handoff.
+        clearProvisionalScenePulseReading(world, sess, draftTurn.id);
+        renderScenePulseWorldsWorkspace(world, sess);
         return { status: 'settled', settlement, projection, packet: draft.packet, protocol: draft };
     } catch (error) {
         // Discard the unpublished derived draft. Canonical mutation is never
@@ -4617,7 +4724,7 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
     const requiredSubjects = sidecarReaderRequiredSubjects(references, {
         playerInput: options.playerInput, narration: options.narration, handoff: options.handoff, controlledEntityId
     });
-    const prompt = `[SIDECAR READER]\nYou are the read-only semantic reading layer between an authored roleplay turn and the canonical world Reconciler. Establish what the visible narration and Narrator handoff mean; do not write roleplay, alter canon, or prepare a commit receipt. You may use the supplied read-only tools when a name, place, current scene fact, canonical identity, relationship, ledger, thread, quest, or obligation is genuinely uncertain. A named record returned by a tool already exists: never treat it as a new entity. If evidence is still insufficient, say UNKNOWN and propose a narrowly worded reconciliation question rather than guessing.\n\nReturn one JSON object with: mode, changed_fields, summary, canonical_references, semantic_interpretation, reconciliation_focus, unresolved, proposed_questions, time_evidence, and controlled_character_evidence. semantic_interpretation is a Scene Intelligence envelope, not generic summary prose. Preserve distinct dimensions for scene {topic,mood,tension,interactionStyle,sound,environment,description}, time/date/day, location/local_space, weather/environment, active objects/places, authored events, changed_this_turn, relationship shifts, current threads, and unresolved evidence. semantic_interpretation.candidateStructures is a list of stable pre-canonical scene candidates for unnamed or partially described characters, local spaces, outfits, props, vehicles, relationship posture, or threads. A candidate is derived evidence, never canon; do not invent missing fields merely to complete a schema.\n\nFor EVERY character who is active, nearby, audible, remote-but-interacting, or specifically relevant off-scene, return semantic_interpretation.characterIntelligence[] item. This is a provisional, character-scoped, epistemically labelled scene reading — never an objective world fact or durable memory. Each item has subjectRef/canonical ID when resolvable, name, relevance, presence {mode,location,channel}, activity, and only evidence-supported entries for emotionalPosture, attentionFocus, apparentUnderstanding, noticed, likelyUnnoticed, suspicionOrUncertainty, interpersonalPostures, immediateObjectiveOrConcern, goals {immediateNeed,shortTerm,longTerm}, and sceneLocalImpression/innerThought. Each claim must carry text, epistemicKind (authored_disclosure|observable_behaviour|perception_evidence|reader_inference|established_memory|unknown), confidence, uncertainty, and short source evidence. Use UNKNOWN or omit a field where the beat does not support it. Do not manufacture a private thought simply because a field exists. For the controlled player, never assert unexpressed inner thought: only player-authored action/dialogue, explicit narration, or clearly labelled inference may be reported.\n\nCONTROLLED ENTITY / PERSONA: ${JSON.stringify({ id: controlledEntityId, name: controlledEntity?.name || sess?.playerIdentity?.name || 'Player', persona: String(controlledPersona || '').slice(0, 2400) })}\n\ncontrolled_character_evidence: behavioural evidence for the controlled player character, each item {evidence, provenance} with provenance strictly one of user_explicit_action, user_explicit_dialogue, narrator_paraphrase, sidecar_interpretation, behavioural_pattern_inference. The player's own input is primary evidence; Narrator wording (especially FF Embellish presentation) is secondary presentation only. Never attribute a Narrator flourish to the player, and never jump from one beat to a persistent personality trait.\n\nRead the beat across the FF semantic domains: temporal (including the scene header, if present), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture, inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, and recovery obligations. A leading scene header line such as [ \u{1F550} time | \u{1F5D3} day | \u{1F4CD} place | weather ] is the Narrator's declared start state for this beat — structured temporal evidence, not a contradiction with the committed clock. Presence must classify every relevant named character as active, nearby, audible, remote, mentioned, or absent; only active belongs in the direct cast. Mentioned-only and unrelated absent registry characters do not receive a characterIntelligence item.\n\nCANONICAL REFERENCE MANIFEST (bounded):\n${boundedReferences}\n\nPRE-TURN SCENE FRAME:\n${JSON.stringify(options.preFrame || buildWorldSceneFrame(world, sess))}\n\nCLOCK EVIDENCE:\n${JSON.stringify(options.clockEvidence || buildSidecarClockEvidence(world, sess))}\n\nWORLD MECHANICS FRAME (tracked altered states; read-only evidence context):\n${readerMechanicsFrame || '(none)'}\n\nA9 EVIDENCE SEPARATION: when the mechanics frame shows a character under a tracked altered state, keep four kinds of evidence distinct in controlled_character_evidence and semantic_interpretation: user_intention (what the player's own words declare they are trying), user_compensation (explicit accounting for the tracked state — steadying, bracing, simplifying, asking for help), mechanic_conditioned_execution (how the tracked state actually shaped the execution as narrated — staggered steps, slurred words, misjudged distance), and objective_result (what observably completed in the world). Tag each item's provenance accordingly and never merge intention with result.\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(String(options.narration || '').slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${String(options.handoff || '').slice(0, 12000) || '(missing — inspect visible narration conservatively)'}`;
+    const prompt = `[SCENEPULSE AUTHORITY PASS]\nYou are the read-only ScenePulse decision layer between an authored roleplay turn and Sidecar review. You lead semantic interpretation and propose the authority-backed decisions for this beat. Establish what the visible narration and Narrator handoff mean; do not write roleplay or alter canon. Search the supplied read-only World tools whenever a name, place, current scene fact, canonical identity, relationship, ledger, thread, quest, obligation, or prior ScenePulse state is genuinely uncertain. A named record returned by a tool already exists: never treat it as a new entity. If evidence is still insufficient, say UNKNOWN and propose a narrowly worded deferred decision rather than guessing.\n\nReturn one JSON object with: mode, changed_fields, summary, canonical_references, semantic_interpretation, authority_proposals, reconciliation_focus, unresolved, proposed_questions, time_evidence, and controlled_character_evidence. authority_proposals is the decision handoff to Sidecar. Include one compact record for every proposed canonical operation, explicit no-change decision that matters to the ending scene checksum, and unresolved decision: {proposalId,kind,decision,evidence,lookupRefs,proposedOperation}. proposalId must be stable and unique within this response. kind is event|durable|relationship|unresolved|scene|presence|temporal|location. proposedOperation contains the exact receipt event, entity patch, state update, or scene assertion you recommend; use null for an unresolved/deferred decision. lookupRefs identifies the relevant read-only tool calls by their returned lookup order. These proposals remain pre-canonical: Sidecar must agree, disagree, or defer, and the native reducer makes the final acceptance decision.\n\nsemantic_interpretation is a Scene Intelligence envelope, not generic summary prose. Preserve distinct dimensions for scene {topic,mood,tension,interactionStyle,sound,environment,description}, time/date/day, location/local_space, weather/environment, active objects/places, authored events, changed_this_turn, relationship shifts, current threads, and unresolved evidence. semantic_interpretation.candidateStructures is a list of stable pre-canonical scene candidates for unnamed or partially described characters, local spaces, outfits, props, vehicles, relationship posture, or threads. A candidate is derived evidence, never canon; do not invent missing fields merely to complete a schema.\n\nFor EVERY character who is active, nearby, audible, remote-but-interacting, or specifically relevant off-scene, return semantic_interpretation.characterIntelligence[] item. This is a provisional, character-scoped, epistemically labelled scene reading — never an objective world fact or durable memory. Each item has subjectRef/canonical ID when resolvable, name, relevance, presence {mode,location,channel}, activity, and only evidence-supported entries for emotionalPosture, attentionFocus, apparentUnderstanding, noticed, likelyUnnoticed, suspicionOrUncertainty, interpersonalPostures, immediateObjectiveOrConcern, goals {immediateNeed,shortTerm,longTerm}, and sceneLocalImpression/innerThought. Each claim must carry text, epistemicKind (authored_disclosure|observable_behaviour|perception_evidence|reader_inference|established_memory|unknown), confidence, uncertainty, and short source evidence. Use UNKNOWN or omit a field where the beat does not support it. Do not manufacture a private thought simply because a field exists. For the controlled player, never assert unexpressed inner thought: only player-authored action/dialogue, explicit narration, or clearly labelled inference may be reported.\n\nCONTROLLED ENTITY / PERSONA: ${JSON.stringify({ id: controlledEntityId, name: controlledEntity?.name || sess?.playerIdentity?.name || 'Player', persona: String(controlledPersona || '').slice(0, 2400) })}\n\ncontrolled_character_evidence: behavioural evidence for the controlled player character, each item {evidence, provenance} with provenance strictly one of user_explicit_action, user_explicit_dialogue, narrator_paraphrase, sidecar_interpretation, behavioural_pattern_inference. The player's own input is primary evidence; Narrator wording (especially FF Embellish presentation) is secondary presentation only. Never attribute a Narrator flourish to the player, and never jump from one beat to a persistent personality trait.\n\nRead the beat across the FF semantic domains: temporal (including the scene header, if present), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture, inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, and recovery obligations. A leading scene header line such as [ \u{1F550} time | \u{1F5D3} day | \u{1F4CD} place | weather ] is the Narrator's declared start state for this beat — structured temporal evidence, not a contradiction with the committed clock. Presence must classify every relevant named character as active, nearby, audible, remote, mentioned, or absent; only active belongs in the direct cast. Mentioned-only and unrelated absent registry characters do not receive a characterIntelligence item.\n\nCANONICAL REFERENCE MANIFEST (bounded):\n${boundedReferences}\n\nPRE-TURN SCENE FRAME:\n${JSON.stringify(options.preFrame || buildWorldSceneFrame(world, sess))}\n\nCLOCK EVIDENCE:\n${JSON.stringify(options.clockEvidence || buildSidecarClockEvidence(world, sess))}\n\nWORLD MECHANICS FRAME (tracked altered states; read-only evidence context):\n${readerMechanicsFrame || '(none)'}\n\nA9 EVIDENCE SEPARATION: when the mechanics frame shows a character under a tracked altered state, keep four kinds of evidence distinct in controlled_character_evidence and semantic_interpretation: user_intention (what the player's own words declare they are trying), user_compensation (explicit accounting for the tracked state — steadying, bracing, simplifying, asking for help), mechanic_conditioned_execution (how the tracked state actually shaped the execution as narrated — staggered steps, slurred words, misjudged distance), and objective_result (what observably completed in the world). Tag each item's provenance accordingly and never merge intention with result.\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(String(options.narration || '').slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${String(options.handoff || '').slice(0, 12000) || '(missing — inspect visible narration conservatively)'}`;
     // ScenePulse's useful inner-thought behaviour is retained here, but its
     // tendency to fabricate autobiography is explicitly disallowed.  Keep
     // this as a separate prompt block so the stored core contract remains
@@ -4705,7 +4812,7 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
     const priorEnvelope = options.priorReaderEnvelope || null;
     const contextBudget = Math.max(4000, Number(profile.contextBudget) || 24000);
     const boundedPriorEnvelope = JSON.stringify(priorEnvelope || {}).slice(0, contextBudget);
-    const profileInstruction = `\n\nREADER SNAPSHOT MODE: ${forceFull ? 'full refresh' : 'delta'}. ${customPanelSchemaChanged ? 'The user-visible custom-panel schema changed since the prior accepted Reader packet, so this one response must be a full compatible projection.' : ''} ${forceFull ? 'Return every scene dimension and required subject coverage.' : 'Return only changed fields, but always return a coverage/status record for every REQUIRED SUBJECT COVERAGE entry; omitted other fields remain unchanged.'}\nPREVIOUS ENVELOPE (bounded to the configured reader context budget):\n${boundedPriorEnvelope}\n\nReturn semantic_interpretation with scene {topic,mood,tension,interactionStyle,sound,environment,description}, location {activeLocationId,localSpace,movement,evidence}, temporal {time,date,day,weather,precision,evidence}, presence {active,nearby,audible,remote,mentioned}, events, changedThisTurn, relationshipShifts, salientObjects, salientLocations, currentThreads, characterIntelligence, candidateStructures, durableProposals, relationshipProposals, provisionalCognition, scenePulse, npcRelationshipGraph. characterIntelligence is REQUIRED for every supplied required subject and keyed by stable canonical ID or stable candidate ID. candidateStructures are pre-canonical derived candidates only: {candidateId,candidateType:character|location|outfit|prop|vehicle|relationship|thread,label,role,description,presence,details,clothingDescription,individualGarments,visibleCondition,canonicalMatchId,confidence,evidence,sourceTurnIds}. Use stable candidate IDs across deltas when the same unnamed person/place/object recurs. Match existing canonical IDs only when lookup evidence supports it; otherwise leave canonicalMatchId empty. A sparse candidate is valid; do not fill omitted clothing, identity, or object details by guessing. Presence is an evidence classification, not a movement command: a mentioned name is not active; an audible or nearby character must remain off the direct cast until narration establishes arrival. Set mode to ${forceFull ? 'full' : 'delta'} and list changed_fields.\n\nReturn one complete, parseable JSON object. This is an evidence packet, not an explanation: do not repeat the same fact in summary, semantic_interpretation, and scenePulse. For each character, send role/presence/activity plus only the evidence-supported claim arrays that add a distinct fact; use at most one compact item per relevant claim category. scenePulse character cards carry visible source fields; characterIntelligence carries provenance-rich interpretation, so do not duplicate descriptions between them. Omit unsupported optional arrays and empty objects. In bootstrap delta mode with no previous envelope, send supported current scene fields and source records, but keep optional candidates, graph edges, proposals, and duplicate evidence sparse. Before responding, close every array and object.`;
+    const profileInstruction = `\n\nREADER SNAPSHOT MODE: ${forceFull ? 'full refresh' : 'delta'}. ${customPanelSchemaChanged ? 'The user-visible custom-panel schema changed since the prior accepted Reader packet, so this one response must be a full compatible projection.' : ''} ${forceFull ? 'Return every scene dimension and required subject coverage.' : 'Return only changed fields, but always return a coverage/status record for every REQUIRED SUBJECT COVERAGE entry; omitted other fields remain unchanged.'}\nPREVIOUS ENVELOPE (bounded to the configured reader context budget):\n${boundedPriorEnvelope}\n\nReturn semantic_interpretation with scene {topic,mood,tension,interactionStyle,sound,environment,description}, location {activeLocationId,localSpace,movement,evidence}, temporal {time,date,day,weather,precision,evidence}, presence {active,nearby,audible,remote,mentioned}, events, changedThisTurn, relationshipShifts, salientObjects, salientLocations, currentThreads, characterIntelligence, candidateStructures, durableProposals, relationshipProposals, provisionalCognition, scenePulse, npcRelationshipGraph, plus top-level authority_proposals. characterIntelligence is REQUIRED for every supplied required subject and keyed by stable canonical ID or stable candidate ID. candidateStructures are pre-canonical derived candidates only: {candidateId,candidateType:character|location|outfit|prop|vehicle|relationship|thread,label,role,description,presence,details,clothingDescription,individualGarments,visibleCondition,canonicalMatchId,confidence,evidence,sourceTurnIds}. Use stable candidate IDs across deltas when the same unnamed person/place/object recurs. Match existing canonical IDs only when lookup evidence supports it; otherwise leave canonicalMatchId empty. A sparse candidate is valid; do not fill omitted clothing, identity, or object details by guessing. Presence is an evidence classification, not a movement command: a mentioned name is not active; an audible or nearby character must remain off the direct cast until narration establishes arrival. Set mode to ${forceFull ? 'full' : 'delta'} and list changed_fields.\n\nReturn one complete, parseable JSON object. This is an evidence packet, not an explanation: do not repeat the same fact in summary, semantic_interpretation, and scenePulse. For each character, send role/presence/activity plus only the evidence-supported claim arrays that add a distinct fact; use at most one compact item per relevant claim category. scenePulse character cards carry visible source fields; characterIntelligence carries provenance-rich interpretation, so do not duplicate descriptions between them. Omit unsupported optional arrays and empty objects. In bootstrap delta mode with no previous envelope, send supported current scene fields and source records, but keep optional candidates, graph edges, and duplicate evidence sparse. authority_proposals is never optional for an authored turn: an explicit no-change scene proposal is valid. Before responding, close every array and object.`;
     const sourcePresetRole = sourceProfileContext.role || (['system', 'user', 'assistant'].includes(sourcePreset?.systemPromptRole) ? sourcePreset.systemPromptRole : 'system');
     const messages = [{ role: sourcePresetRole, content: readerPrompt + profileInstruction }, { role: 'user', content: `Read this authored beat and return the semantic evidence packet. Include mode (delta or full) and changed_fields.\n\nFor time_evidence, return one object with resolution (established|none|unknown), authored_meaning (the exact narrator wording), source_clock and end_clock as h:mm AM/PM only when both endpoints are established, precision (exact|approximate|semantic), and a brief rationale. Resolve semantic meaning from the authored beat; never use a phrase-to-duration lookup. If either endpoint would be a guess, mark it unknown and leave both blank.` }];
     const tools = sidecarReadOnlyTools();
@@ -5102,6 +5209,22 @@ function normalizeSidecarNpcRelationshipGraph(raw) {
 // projection, source renderer, history and comparison use the same shape.
 function normalizeSidecarScenePulseShape(raw = {}) {
     const scenePulse = experimentalIsPlainObject(raw) ? experimentalSafeJsonClone(raw) : {};
+    // ScenePulse renders tension as a CSS severity token. Reader prose can
+    // occasionally land in this enum field (for example "mild social fork
+    // in the road"), which would become an invalid space-containing class
+    // name and abort the entire panel render. Canonicalize only the derived
+    // display clone; the raw Reader envelope remains available as evidence.
+    if (Object.prototype.hasOwnProperty.call(scenePulse, 'sceneTension')) {
+        const rawTension = String(scenePulse.sceneTension || '').trim().toLowerCase();
+        const exact = ['calm', 'low', 'moderate', 'high', 'critical'].find(level => rawTension === level);
+        const inferred = exact
+            || (/\b(?:critical|catastrophic|emergency|lethal)\b/.test(rawTension) ? 'critical' : '')
+            || (/\b(?:high|intense|dangerous|urgent|severe)\b/.test(rawTension) ? 'high' : '')
+            || (/\b(?:calm|peaceful|tranquil|relaxed)\b/.test(rawTension) ? 'calm' : '')
+            || (/\b(?:low|mild|gentle|quiet|subtle)\b/.test(rawTension) ? 'low' : '')
+            || (rawTension ? 'moderate' : '');
+        scenePulse.sceneTension = inferred;
+    }
     if (!Object.prototype.hasOwnProperty.call(scenePulse, 'witnesses')) return scenePulse;
     const rawWitnesses = scenePulse.witnesses;
     const witnessText = value => experimentalIsPlainObject(value)
@@ -5181,6 +5304,7 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
         relationshipPostures: cleanList(value('relationshipPostures', 'relationship_postures', 'relationshipProposals', 'relationship_proposals'), 60),
         relationshipShifts: cleanList(value('relationshipShifts', 'relationship_shifts'), 60),
         eventClaims: cleanList(value('eventClaims', 'event_claims', 'events'), 80),
+        authorityProposals: cleanList(value('authorityProposals', 'authority_proposals'), 120),
         candidateStructures: cleanList(value('candidateStructures', 'candidate_structures', 'candidates'), 100),
         durableProposals: cleanList(value('durableProposals', 'durable_proposals'), 60),
         relationshipProposals: cleanList(value('relationshipProposals', 'relationship_proposals'), 60),
@@ -5215,7 +5339,7 @@ function parseSidecarReaderOutput(content, fallback = {}, defaults = {}) {
     const declaredDelta = envelope.snapshotMode === 'delta'
         && (Object.prototype.hasOwnProperty.call(parsed, 'changed_fields') || Object.prototype.hasOwnProperty.call(parsed, 'changedFields')
             || Object.prototype.hasOwnProperty.call(parsed, 'coverage') || Object.prototype.hasOwnProperty.call(parsed, 'clear_fields') || Object.prototype.hasOwnProperty.call(parsed, 'clearFields'));
-    const hasMeaning = !!envelope.summary || hasScene || hasScenePulse || envelope.eventClaims.length || envelope.characterIntelligence.length || !!envelope.npcRelationshipGraph || envelope.changes.length || Object.keys(envelope.coverage || {}).length > 0 || declaredDelta;
+    const hasMeaning = !!envelope.summary || hasScene || hasScenePulse || envelope.eventClaims.length || envelope.authorityProposals.length || envelope.characterIntelligence.length || !!envelope.npcRelationshipGraph || envelope.changes.length || Object.keys(envelope.coverage || {}).length > 0 || declaredDelta;
     const valid = hasMeaning && (envelope.snapshotMode !== 'full' || hasScene || hasScenePulse || !!envelope.summary || envelope.characterIntelligence.length > 0);
     return {
         ...envelope, valid, error: valid ? '' : 'reader_empty_envelope',
@@ -5223,8 +5347,75 @@ function parseSidecarReaderOutput(content, fallback = {}, defaults = {}) {
         proposedQuestions: Array.isArray(parsed.proposedQuestions || parsed.proposed_questions) ? (parsed.proposedQuestions || parsed.proposed_questions).slice(0, 20) : [],
         unresolved: envelope.unresolvedEvidence,
         timeEvidence: envelope.temporal,
-        semanticInterpretation: { scene: envelope.scene, location: envelope.location, presence: envelope.presence, environment: envelope.environment, scenePulse: envelope.scenePulse, npcRelationshipGraph: envelope.npcRelationshipGraph, characterIntelligence: envelope.characterIntelligence, events: envelope.eventClaims, candidateStructures: envelope.candidateStructures, durableProposals: envelope.durableProposals, relationshipProposals: envelope.relationshipProposals, provisionalCognition: envelope.provisionalCognition }
+        semanticInterpretation: { scene: envelope.scene, location: envelope.location, presence: envelope.presence, environment: envelope.environment, scenePulse: envelope.scenePulse, npcRelationshipGraph: envelope.npcRelationshipGraph, characterIntelligence: envelope.characterIntelligence, events: envelope.eventClaims, authorityProposals: envelope.authorityProposals, candidateStructures: envelope.candidateStructures, durableProposals: envelope.durableProposals, relationshipProposals: envelope.relationshipProposals, provisionalCognition: envelope.provisionalCognition }
     };
+}
+
+// ScenePulse leads the semantic decision pass. Every decision receives a
+// stable attempt-local identity before Sidecar sees it, so the Reconciler can
+// explicitly agree, disagree or defer without gaining a second hidden source
+// of interpretation. The native reducer remains the sole canonical writer.
+function buildScenePulseAuthorityProposals(readerPacket, turnRecord) {
+    if (!readerPacket || !turnRecord) return [];
+    const supplied = Array.isArray(readerPacket.authorityProposals) ? readerPacket.authorityProposals : [];
+    const groups = supplied.length ? [['authority', supplied]] : [
+        ['event', readerPacket.eventClaims || []],
+        ['durable', readerPacket.durableProposals || []],
+        ['relationship', readerPacket.relationshipProposals || []],
+        ['unresolved', readerPacket.unresolvedEvidence || readerPacket.unresolved || []]
+    ];
+    const lookupCount = Math.min(20, Array.isArray(readerPacket.lookupProvenance) ? readerPacket.lookupProvenance.length : 0);
+    const defaultLookupRefs = Array.from({ length: lookupCount }, (_, index) => `lookup:${index + 1}`);
+    const seen = new Set();
+    const proposals = [];
+    groups.forEach(([fallbackKind, values]) => {
+        (Array.isArray(values) ? values : []).slice(0, 120).forEach((value, index) => {
+            const source = experimentalIsPlainObject(value) ? experimentalSafeJsonClone(value) : { claim: String(value || '') };
+            const declaredKind = String(source.kind || source.type || fallbackKind).toLowerCase();
+            const kind = ['event', 'durable', 'relationship', 'unresolved', 'scene', 'presence', 'temporal', 'location']
+                .includes(declaredKind) ? declaredKind : fallbackKind;
+            const suppliedId = String(source.proposalId || source.proposal_id || source.id || '').trim();
+            let id = (suppliedId || `scenepulse.${turnRecord.id}.${kind}.${index + 1}`)
+                .replace(/[^a-zA-Z0-9_.:-]/g, '_').slice(0, 180);
+            if (!id || seen.has(id)) id = `scenepulse.${turnRecord.id}.${kind}.${proposals.length + 1}`.slice(0, 180);
+            seen.add(id);
+            proposals.push({
+                id,
+                kind,
+                decision: String(source.decision || source.summary || source.claim || source.fact || source.reason || '').slice(0, 1200),
+                evidence: String(source.evidence || source.rationale || source.reason || '').slice(0, 1200),
+                proposedOperation: experimentalSafeJsonClone(source.proposedOperation || source.proposed_operation || source.operation || source),
+                lookupRefs: (Array.isArray(source.lookupRefs || source.lookup_refs)
+                    ? (source.lookupRefs || source.lookup_refs).map(item => String(item || '').slice(0, 120)).filter(Boolean).slice(0, 20)
+                    : defaultLookupRefs),
+                source: 'scenepulse'
+            });
+        });
+    });
+    return proposals.slice(0, 120);
+}
+
+function buildScenePulseAuthorityAdjudication(readerPacket, receipt, audit = {}) {
+    const proposals = Array.isArray(readerPacket?.authorityProposals) ? readerPacket.authorityProposals : [];
+    const reviews = new Map((receipt?.proposal_review || []).map(review => [String(review.proposal_id || ''), review]));
+    const accepted = new Set(audit.accepted_proposal_ids || []);
+    const informational = new Set(audit.informational_proposal_ids || []);
+    const rejected = new Set(audit.rejected_proposal_ids || []);
+    return proposals.map(proposal => {
+        const review = reviews.get(String(proposal.id || ''));
+        const verdict = review?.verdict || 'unreviewed';
+        const nativeOutcome = accepted.has(proposal.id) ? 'accepted'
+            : informational.has(proposal.id) ? 'informational'
+                : rejected.has(proposal.id) ? 'rejected'
+                    : verdict === 'agree' ? 'no_canonical_operation' : 'not_submitted';
+        return {
+            proposalId: proposal.id,
+            kind: proposal.kind,
+            sidecarVerdict: verdict,
+            reason: String(review?.reason || (review ? '' : 'Sidecar returned no explicit verdict for this proposal.')).slice(0, 600),
+            nativeOutcome
+        };
+    });
 }
 
 function sidecarMergeReaderObject(previous = {}, incoming = {}, clear = []) {
@@ -5411,7 +5602,7 @@ function mergeSidecarReaderEnvelope(previous, delta, options = {}) {
     // partial edge patch would be less compact in practice and can leave a
     // stale tie visible after a name/roster change.
     if (providedField('npcRelationshipGraph')) merged.npcRelationshipGraph = experimentalSafeJsonClone(incoming.npcRelationshipGraph);
-    const arrayFields = ['characterIntelligence', 'requiredCharacterSubjects', 'relationshipPostures', 'relationshipShifts', 'eventClaims', 'candidateStructures', 'durableProposals', 'relationshipProposals', 'pressures', 'currentThreads', 'salientObjects', 'salientLocations', 'changes', 'unresolvedEvidence', 'validationWarnings', 'provisionalCognition', 'lookupProvenance', 'controlledCharacterEvidence', 'reconciliationFocus'];
+    const arrayFields = ['characterIntelligence', 'requiredCharacterSubjects', 'relationshipPostures', 'relationshipShifts', 'eventClaims', 'authorityProposals', 'candidateStructures', 'durableProposals', 'relationshipProposals', 'pressures', 'currentThreads', 'salientObjects', 'salientLocations', 'changes', 'unresolvedEvidence', 'validationWarnings', 'provisionalCognition', 'lookupProvenance', 'controlledCharacterEvidence', 'reconciliationFocus'];
     arrayFields.forEach(field => { if (providedField(field)) merged[field] = sidecarMergeReaderRecords(prior[field], incoming[field], { limit: field === 'characterIntelligence' ? 48 : 100 }); });
     const perSnapshotFields = new Set(['changedFields', 'clearFields', 'refreshIndex', 'baseSnapshotId', 'snapshotMode', 'sourceTurnId', 'sourceTakeId', 'sourceRevisionId', 'sourceAttemptId', 'visibleNarrationHash', 'handoffHash', 'profileRevision', 'promptRevision']);
     ['summary', ...perSnapshotFields].forEach(field => {
@@ -5835,6 +6026,15 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         failure.sidecarAttempt = failSidecarTurnAttempt(world, sess, attempt, failure, failure.sidecarDetail);
         throw failure;
     }
+    if (!readerPacket?.disabled && attempt.turnRecord) {
+        // Provider output may use the new explicit proposal contract or an
+        // older event/proposal envelope. Normalize both into the one
+        // ScenePulse-led handoff that Sidecar must adjudicate.
+        readerPacket.authorityProposals = buildScenePulseAuthorityProposals(readerPacket, attempt.turnRecord);
+        if (experimentalIsPlainObject(readerPacket.semanticInterpretation)) {
+            readerPacket.semanticInterpretation.authorityProposals = experimentalSafeJsonClone(readerPacket.authorityProposals);
+        }
+    }
     // Do this before Reader evidence is attached to the protocol. A Reader
     // packet is inspectable state, so it must not be published into a World
     // that the author has left while the transport was in flight.
@@ -5864,6 +6064,11 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         const currentAttempt = attempt.turnRecord.attempts?.find(item => item.id === attempt.attemptId);
         if (currentAttempt) currentAttempt.readerStatus = 'succeeded';
     }
+    // ScenePulse renders first: publish the normalized reading to the source
+    // panel now, while Sidecar adjudication is still in flight.
+    if (!readerPacket?.disabled && attempt.turnRecord) {
+        await publishProvisionalScenePulseReading(world, sess, attempt.turnRecord, readerPacket);
+    }
     // A direct map label in the player input remains the ordinary movement
     // authority. This narrower reconciliation fallback only covers a real
     // authored arrival where the player named a known destination indirectly.
@@ -5885,7 +6090,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         ? 'Call commit_world_turn exactly once. Put the COMPLETE receipt object inside the receipt_json argument as valid JSON text; this is still the only canonical state call for the turn.'
         : 'Call commit_world_turn exactly once with the native structured receipt; this is the only canonical state call for the turn.';
     const scenePresenceAuthority = `[SCENE PRESENCE AUTHORITY]\nThere are three distinct states: (1) present_character_ids means physical co-presence with the player; (2) nearby_character_ids means an existing NPC is physically absent but explicitly audible, nearby, or materially off-screen involved; (3) a bare name mention is not scene state. When narration or handoff establishes state (2), include the exact canonical ID in the COMPLETE nearby_character_ids ending checksum and nearby_character_context[id] = {mode, reason}. This stores a non-moving scene-presence tag for the next packet and HUD. Never put a nearby NPC in present_character_ids, never move their location for this tag, and never invent this tag from a mere name reference.`;
-    const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against canonical state and mechanical constraints. Mechanics constrain outcomes; they never author them. If something is uncertain, leave canonical state unchanged and let the question lifecycle carry that uncertainty.\n\nThe SIDECAR READER REPORT is a read-only pre-canonical interpretation. It may identify records, derive ephemeral candidates and surface uncertainty, but it cannot itself establish a fact. Prefer its exact resolved IDs over guessing; verify all durable changes against visible narration, handoff and canonical frame. Candidate structures are useful derived scene projection, not canon: keep them scene-local or create a proposal/question unless an existing reducer operation is explicitly supported by authored evidence. Never copy an entire candidate into a Character, Location, Outfit, Item or Vehicle merely to complete a schema.\n\nReturn exactly one native commit_world_turn tool call. This is the only canonical state call for this turn. Preserve the exact actor and location IDs in the supplied reference manifest. A canonical entity that was previously off-scene must be moved/presented under its existing ID, never introduced again. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, knowledge, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range. Do not emit time events or state_updates.time_skip_minutes. The runtime derives the only permitted clock delta from the two reconcilable phases in NARRATOR SCENE HEADER — TEMPORAL EVIDENCE: (1) the inter-turn transition from the previous committed end state to the Narrator's header start-anchor, and (2) the in-turn elapsed time from the header to the response end, taken from an exact handoff source-to-target endpoint pair. The header is the declared start state of this beat, not a contradiction: a header that advances past the canonical pre-turn clock is authored temporal progression when the player input, narration, or handoff establishes the transition. A header that cannot resolve to a plausible forward jump stays uncommitted and belongs in the question lifecycle. "immediate", "brief", and "a few seconds" never move the clock. A no-change beat still requires a valid ending checksum and empty changes.\n\nIf CURRENT SIDECAR PACKET contains reconciliationBacklog, inspect its pinned authored evidence together with the current beat. Only when this receipt actually and safely incorporates a prior failed beat, include state_updates.reconciled_prior_turn_ids with those exact Sidecar turn IDs. Otherwise leave the backlog unresolved.\n\nReconcile across the FF semantic domains: temporal (two-phase, header-anchored), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture (explicit commitments only), inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, cognition consistency (per-character epistemics), recovery obligations, and promotion candidates for genuinely new entities and places.\nWhere the SIDECAR READER REPORT carries controlled_character_evidence, treat user_explicit_action and user_explicit_dialogue as primary player-authored evidence and narrator_paraphrase as presentation only. Never canonize a persistent character trait from a single Narrator flourish; higher-order interpretations need repeated evidence or explicit authorial confirmation.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK EVIDENCE (12-hour display; no automatic turn tick):\n${JSON.stringify(clockEvidence)}\n\nNARRATOR SCENE HEADER — TEMPORAL EVIDENCE (two-phase: previous committed end -> header start-anchor -> response end):\n${JSON.stringify(temporalBreakdown)}\n\nWORLD MECHANICS FRAME (engine-owned state; the engine owns phases and dose arithmetic — you supply evidence only):\n${mechanicsFrame || '(no tracked mechanics state this turn)'}\n\nCANONICAL ENTITY AND LOCATION REFERENCES:\n${JSON.stringify(references)}\n\nSIDECAR READER REPORT:\n${JSON.stringify(readerPacket)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
+    const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the review layer for a roleplay world. The Narrator authored visible prose and ScenePulse already performed the semantic decision pass, including read-only World searches. Do not rewrite the prose, independently replace ScenePulse's interpretation, or invent missing facts. Review ScenePulse's authority_proposals against the narration, handoff, canonical state, and mechanical constraints. Mechanics constrain outcomes; they never author them. If something is uncertain, defer it and leave canonical state unchanged.\n\nFor every exact authority_proposals[].id, include one proposal_review item in the receipt: {proposal_id,verdict,reason}, where verdict is agree, disagree, or defer. When you agree with a proposal that becomes an events[] operation, copy its exact ID into event.source_proposal_id. If you modify a proposed operation, explain the bounded correction in the review reason. An agreement is still only a proposal to the native reducer; it can reject the operation. Candidate structures remain derived scene evidence, not canon: never copy an entire candidate into a Character, Location, Outfit, Item or Vehicle merely to complete a schema.\n\nReturn exactly one native commit_world_turn tool call. This is the only canonical state call for this turn. Preserve the exact actor and location IDs in the supplied reference manifest. A canonical entity that was previously off-scene must be moved/presented under its existing ID, never introduced again. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, knowledge, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range. Do not emit time events or state_updates.time_skip_minutes. The runtime derives the only permitted clock delta from the two reconcilable phases in NARRATOR SCENE HEADER — TEMPORAL EVIDENCE: (1) the inter-turn transition from the previous committed end state to the Narrator's header start-anchor, and (2) the in-turn elapsed time from the header to the response end, taken from an exact handoff source-to-target endpoint pair. The header is the declared start state of this beat, not a contradiction: a header that advances past the canonical pre-turn clock is authored temporal progression when the player input, narration, or handoff establishes the transition. A header that cannot resolve to a plausible forward jump stays uncommitted and belongs in the question lifecycle. "immediate", "brief", and "a few seconds" never move the clock. A no-change beat still requires a valid ending checksum, an explicit ScenePulse proposal review, and empty changes.\n\nIf CURRENT SIDECAR PACKET contains reconciliationBacklog, inspect its pinned authored evidence together with the current beat. Only when this receipt actually and safely incorporates a prior failed beat, include state_updates.reconciled_prior_turn_ids with those exact Sidecar turn IDs. Otherwise leave the backlog unresolved.\n\nReview the ScenePulse decisions across the FF semantic domains: temporal (two-phase, header-anchored), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture (explicit commitments only), inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, cognition consistency (per-character epistemics), recovery obligations, and promotion candidates for genuinely new entities and places.\nWhere the SCENEPULSE AUTHORITY REPORT carries controlled_character_evidence, treat user_explicit_action and user_explicit_dialogue as primary player-authored evidence and narrator_paraphrase as presentation only. Never canonize a persistent character trait from a single Narrator flourish; higher-order interpretations need repeated evidence or explicit authorial confirmation.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK EVIDENCE (12-hour display; no automatic turn tick):\n${JSON.stringify(clockEvidence)}\n\nNARRATOR SCENE HEADER — TEMPORAL EVIDENCE (two-phase: previous committed end -> header start-anchor -> response end):\n${JSON.stringify(temporalBreakdown)}\n\nWORLD MECHANICS FRAME (engine-owned state; the engine owns phases and dose arithmetic — you supply evidence only):\n${mechanicsFrame || '(no tracked mechanics state this turn)'}\n\nCANONICAL ENTITY AND LOCATION REFERENCES:\n${JSON.stringify(references)}\n\nSCENEPULSE AUTHORITY REPORT:\n${JSON.stringify(readerPacket)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
     const outfitAuthority = `${scenePresenceAuthority}\n\n[COMMIT TRANSPORT]\n${commitTransportInstruction}\n\n[NPC OUTFIT AUTHORITY] When visible narration establishes an NPC clothing change, place the exact current description in that NPC entity_updates.outfit and optionally provide outfit_name. The canonical reducer matches an existing wardrobe entry or creates a scene outfit. Never change the player outfit from Sidecar, and never infer clothing changes from portraits or off-screen assumptions.`;
     const body = {
         model, stream: false,
@@ -5908,7 +6113,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const compactCommitRecoveryBody = {
         model, stream: false, temperature: 0,
         messages: [{
-            role: 'system', content: `[COMPACT SIDECAR COMMIT RECOVERY]\nReturn exactly one commit_world_turn function call now. The visible Narration is immutable and has already been accepted; do not write prose, call a Reader, invent evidence, or mutate through any route other than this receipt. Reconcile only durable facts established by the supplied evidence. If a detail is uncertain, leave it unchanged. Preserve the exact canonical IDs. The receipt_json argument must contain one complete valid JSON receipt and an ending checksum.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCLOCK EVIDENCE:\n${JSON.stringify(clockEvidence)}\n\nTEMPORAL EVIDENCE:\n${JSON.stringify(temporalBreakdown)}\n\nCANONICAL REFERENCES:\n${JSON.stringify(references)}\n\nACCEPTED READER EVIDENCE:\n${JSON.stringify({ summary: readerPacket?.summary || '', temporal: readerPacket?.temporal || readerPacket?.timeEvidence || {}, location: readerPacket?.location || {}, presence: readerPacket?.presence || {}, scene: readerPacket?.scene || {}, eventClaims: (readerPacket?.eventClaims || []).slice(0, 24), relationshipPostures: (readerPacket?.relationshipPostures || []).slice(0, 24), characterIntelligence: (readerPacket?.characterIntelligence || []).slice(0, 16), controlledCharacterEvidence: (readerPacket?.controlledCharacterEvidence || []).slice(0, 12), scenePulse: readerPacket?.scenePulse || readerPacket?.semanticInterpretation?.scenePulse || {} })}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 16000))}\n\nNARRATOR HANDOFF:\n${String(handoff || '').slice(0, 6000) || '(missing — commit only independently established facts)'}`
+            role: 'system', content: `[COMPACT SIDECAR COMMIT RECOVERY]\nReturn exactly one commit_world_turn function call now. The visible Narration is immutable and has already been accepted; do not write prose, call ScenePulse again, invent evidence, or mutate through any route other than this receipt. Review only the supplied ScenePulse decisions. If a detail is uncertain, leave it unchanged. Preserve the exact canonical IDs. Include one proposal_review {proposal_id,verdict,reason} for every authority proposal. Agreed event operations must copy the proposal ID into source_proposal_id. The receipt_json argument must contain one complete valid JSON receipt and an ending checksum.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCLOCK EVIDENCE:\n${JSON.stringify(clockEvidence)}\n\nTEMPORAL EVIDENCE:\n${JSON.stringify(temporalBreakdown)}\n\nCANONICAL REFERENCES:\n${JSON.stringify(references)}\n\nSCENEPULSE AUTHORITY EVIDENCE:\n${JSON.stringify({ summary: readerPacket?.summary || '', authorityProposals: (readerPacket?.authorityProposals || []).slice(0, 60), temporal: readerPacket?.temporal || readerPacket?.timeEvidence || {}, location: readerPacket?.location || {}, presence: readerPacket?.presence || {}, scene: readerPacket?.scene || {}, eventClaims: (readerPacket?.eventClaims || []).slice(0, 24), relationshipPostures: (readerPacket?.relationshipPostures || []).slice(0, 24), characterIntelligence: (readerPacket?.characterIntelligence || []).slice(0, 16), controlledCharacterEvidence: (readerPacket?.controlledCharacterEvidence || []).slice(0, 12), scenePulse: readerPacket?.scenePulse || readerPacket?.semanticInterpretation?.scenePulse || {} })}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 16000))}\n\nNARRATOR HANDOFF:\n${String(handoff || '').slice(0, 6000) || '(missing — commit only independently established facts)'}`
         }, {
             role: 'user', content: 'Emit the compact commit_world_turn receipt now. Do not explain your reasoning or call any tool other than commit_world_turn.'
         }],
@@ -6088,6 +6293,8 @@ async function runSidecarReconciliation(world, sess, options = {}) {
                     turnId: turnRecord.id, attemptId: attempt.attemptId || '', receiptTurnId: String(receipt.turn_id || ''),
                     receiptFingerprint: committed.audit?.receiptFingerprint || '', createdAt: new Date().toISOString(), error: experimentalSafeJsonClone(settlementWarning)
                 };
+                clearProvisionalScenePulseReading(world, sess, turnRecord.id);
+                renderScenePulseWorldsWorkspace(world, sess);
                 return { committed, receipt, packet: protocol.packet || null, turnId: turnRecord.id, settlement: { status: 'incomplete', error: settlementWarning } };
             }
         }
@@ -6876,7 +7083,12 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
         assistant: experimentalSafeJsonClone(data?.choices?.[0]?.message || {})
     });
     const result = parseSidecarConversationResponse(data?.choices?.[0]?.message?.content || '');
-    const authorEntry = { id: `sidecar_author_${Date.now().toString(36)}`, role: 'user', text: String(userText || '').trim(), createdAt: new Date().toISOString() };
+    // The caller may have already painted and queued this author message so
+    // the sender sees it immediately; reuse that entry instead of doubling it.
+    const authorEntry = experimentalIsPlainObject(options.authorEntry) && options.authorEntry.id
+        ? options.authorEntry
+        : { id: `sidecar_author_${Date.now().toString(36)}`, role: 'user', text: String(userText || '').trim(), createdAt: new Date().toISOString() };
+    delete authorEntry.pending;
     const sidecarEntry = { id: `sidecar_reply_${Date.now().toString(36)}`, role: 'sidecar', text: result.reply, createdAt: new Date().toISOString(), provenance: { source: 'direct_user_refinement' } };
     let commit = null;
     if (result.proposedReceipt) {
@@ -6944,7 +7156,8 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
         window.ExperimentalWorldsSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'context_refresh', priority: 'context_refresh' });
         sidecarEntry.workspaceAction = { type: 'context_refresh', source: 'explicit_author_approval' };
     }
-    protocol.conversations.push(authorEntry, sidecarEntry);
+    if (!protocol.conversations.some(item => item.id === authorEntry.id)) protocol.conversations.push(authorEntry);
+    protocol.conversations.push(sidecarEntry);
     protocol.conversations = protocol.conversations.slice(-200);
     protocol.refinements.push({ id: `refinement_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), userText: authorEntry.text,
         source: 'direct_user_refinement', committed: !!commit, audit: commit ? experimentalSafeJsonClone(commit.audit) : null });
@@ -7060,7 +7273,6 @@ function openWorldSidecarLine(workspace = {}) {
     const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
     if (!world || !sess) return;
-    if (window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) !== true) return openWorldSidecarInspector('migration');
     const protocol = window.ExperimentalWorldsSidecarHooks.normalizeWorldTimeline(world, sess);
     protocol.workspace = {
         kind: ['sequence_planning', 'context_refresh', 'sequence_closure'].includes(workspace.kind) ? workspace.kind : 'world_gm',
@@ -7104,10 +7316,10 @@ function sidecarSceneProjectionMarkup(world, sess) {
     const packet = protocol?.packet || buildSidecarScenePacket(world, sess);
     const reader = packet?.reader || packet?.pendingReaderEvidence || {};
     const latestTurn = (protocol?.turns || []).filter(turn => turn.status !== 'superseded').at(-1);
-    const failedTurn = latestTurn && ['reconciliation_failed', 'reconciliation_pending'].includes(latestTurn.status) ? latestTurn : null;
+    const failedTurn = latestTurn && ['reconciliation_failed', 'reconciliation_pending', 'settlement_incomplete'].includes(latestTurn.status) ? latestTurn : null;
     const incompleteCommit = sess?.sidecarIncompleteCommit || null;
     const recoveryMarkup = failedTurn || incompleteCommit ? `<section class="sidecar-scene-recovery"><div><strong>${incompleteCommit ? 'Canonical commit incomplete' : 'Scene update incomplete'}</strong><span>${incompleteCommit ? 'Progression is blocked until the journaled commit is reviewed through World GM/native recovery.' : 'Narration is preserved while downstream interpretation is pending.'}</span></div><div class="sidecar-recovery-actions">${failedTurn && !incompleteCommit ? `<button type="button" class="btn btn-primary sidecar-retry-scene-update" data-sidecar-turn-id="${experimentalEscapeHTML(failedTurn.id)}">Retry Scene Update</button>` : ''}<button type="button" class="btn btn-ghost sidecar-open-world-gm">Open World GM</button></div></section>` : '';
-    const candidates = activeReaderCandidates(protocol, { sceneId: packet?.activeScene?.id || protocol?.activeSceneId || '' }).slice(-120);
+    const candidates = (window.ExperimentalWorldsSidecarHooks?.activeReaderCandidates?.(protocol, { sceneId: packet?.activeScene?.id || protocol?.activeSceneId || '' }) || []).slice(-120);
     const presence = reader.presence || {};
     const relationships = Array.isArray(reader.relationshipProposals) ? reader.relationshipProposals.slice(-20) : [];
     const list = (values, empty = 'None recorded.') => Array.isArray(values) && values.length ? values.map(value => {
@@ -7580,7 +7792,7 @@ function scenePulseCandidateReviewProjection(world, sess, protocol, options = {}
     const snapshotId = String(options?.snapshotId || '').trim();
     if (!protocol || (!turnId && !snapshotId)) return [];
     const provisional = [...(protocol.provisionalLocations || []), ...(protocol.provisionalEntities || [])];
-    return activeReaderCandidates(protocol).filter(candidate => {
+    return (window.ExperimentalWorldsSidecarHooks?.activeReaderCandidates?.(protocol) || []).filter(candidate => {
         if (!scenePulseCandidatePromotionKind(candidate)) return false;
         const matchesSnapshot = !!snapshotId && String(candidate.readerSnapshotId || '') === snapshotId;
         const matchesTurn = !!turnId && scenePulseCandidateSourceTurnIds(candidate).includes(turnId);
@@ -7943,6 +8155,74 @@ function sidecarReaderSnapshotRawEnvelope(snapshot, sourceTurn = null) {
 // result with World entities, quests, locations, canonical relationships, or
 // a stale Sidecar workspace model: a missing source field must remain visibly
 // fixture-backed until the Reader's own sync path supplies it.
+// ScenePulse renders first: the moment the Reader packet is normalized, its
+// projection is published to the source panel as provisional evidence while
+// Sidecar adjudication is still in flight. This store is deliberately
+// in-memory only; durable state continues to contain settled snapshots.
+const sidecarPendingScenePulseReadings = new Map();
+function sidecarPendingScenePulseKey(world, sess) {
+    return String(sess?.id || world?.id || 'default');
+}
+async function publishProvisionalScenePulseReading(world, sess, turnRecord, readerPacket) {
+    if (!sess || !turnRecord || !readerPacket) return;
+    sidecarPendingScenePulseReadings.set(sidecarPendingScenePulseKey(world, sess), {
+        turnId: String(turnRecord.id || ''),
+        readerPacket: experimentalSafeJsonClone(readerPacket),
+        at: new Date().toISOString()
+    });
+    // This is the visible evaluation boundary: ScenePulse receives and mounts
+    // the Reader packet before Sidecar begins its separate reconciliation
+    // request. Awaiting the mount prevents a long Sidecar call from hiding the
+    // provisional update behind the next whole-workspace render. Two frames
+    // give the browser a paint opportunity after native ScenePulse has updated
+    // its dashboard, timeline and thought surfaces.
+    await renderScenePulseWorldsWorkspace(world, sess);
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+function clearProvisionalScenePulseReading(world, sess, turnId = '') {
+    const key = sidecarPendingScenePulseKey(world, sess);
+    const pending = sidecarPendingScenePulseReadings.get(key);
+    if (pending && (!turnId || pending.turnId === String(turnId))) sidecarPendingScenePulseReadings.delete(key);
+}
+function scenePulseProvisionalHandoff(world, sess) {
+    const pending = sidecarPendingScenePulseReadings.get(sidecarPendingScenePulseKey(world, sess));
+    if (!pending?.readerPacket) return null;
+    const protocol = protocolForSidecarTimeline(world, sess);
+    const turn = (protocol?.turns || []).find(item => item.id === pending.turnId) || null;
+    // Once the turn has settled, the accepted handoff is authoritative; the
+    // pending entry is cleared during publication, this is only a late guard.
+    if (turn && !sidecarTurnNeedsDownstreamRecovery(turn)
+        && ['active', 'committed'].includes(String(turn.status || '').toLowerCase())) return null;
+    const packet = pending.readerPacket;
+    const rawDelta = experimentalIsPlainObject(packet?.semanticInterpretation?.scenePulse)
+        ? packet.semanticInterpretation.scenePulse
+        : (experimentalIsPlainObject(packet?.scenePulse) ? packet.scenePulse : {});
+    if (!Object.keys(rawDelta).length) return null;
+    const base = scenePulseAcceptedHandoff(world, sess);
+    // A pending delta merges onto the last accepted live scene only. The
+    // sealed tour fixture is never a base for live provisional data.
+    const prior = base?.status === 'accepted_live' && experimentalIsPlainObject(base.scenePulse) ? base.scenePulse : {};
+    const scenePulse = normalizeSidecarScenePulseShape(sidecarMergeScenePulse(prior, rawDelta));
+    return Object.freeze({
+        ...base,
+        id: `scenepulse-pending-${pending.turnId}`,
+        status: 'provisional_reader',
+        source: `ScenePulse reading · Sidecar adjudication in progress · ${pending.turnId}`,
+        lastKnown: false,
+        pendingSidecarReview: true,
+        scenePulse,
+        previousScenePulse: experimentalSafeJsonClone(prior),
+        deltaScenePulse: experimentalSafeJsonClone(rawDelta),
+        npcRelationshipGraph: experimentalSafeJsonClone(packet?.npcRelationshipGraph
+            || packet?.semanticInterpretation?.npcRelationshipGraph || base?.npcRelationshipGraph || null),
+        provenance: Object.freeze({
+            ...(base?.provenance || {}),
+            presentation: 'provisional_pending_sidecar_adjudication',
+            pendingTurnId: String(pending.turnId)
+        })
+    });
+}
+
 function scenePulseAcceptedHandoff(world, sess) {
     const fixture = scenePulseTourState().acceptedHandoff;
     const protocol = protocolForSidecarTimeline(world, sess);
@@ -9783,7 +10063,7 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     // beat has an exact settled Reader snapshot, Gate B overlays only that
     // source-shaped delta projection; it never substitutes Melbourne/world
     // registry data for incomplete ScenePulse fields.
-    const handoff = scenePulseAcceptedHandoff(world, sess);
+    const handoff = scenePulseProvisionalHandoff(world, sess) || scenePulseAcceptedHandoff(world, sess);
     if (!window.ExperimentalWorldsScenePulseSourceRuntime?.mount) {
         host.innerHTML = '<div class="sp-empty-state"><div class="sp-empty-title">Native ScenePulse source runtime did not load</div><div class="sp-empty-sub">The compatibility scaffold is unavailable, so the source panel is intentionally not substituted with a host lookalike.</div></div>';
         return;
@@ -9793,10 +10073,11 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     // host-drawn adapter remains vendored as a migration reference only; do
     // not silently fall back to it when the native source bridge fails.
     window.ExperimentalWorldsScenePulse?.unmount?.(host);
-    window.ExperimentalWorldsScenePulseSourceRuntime.mount(host, handoff).catch(error => {
+    const sourceMount = window.ExperimentalWorldsScenePulseSourceRuntime.mount(host, handoff);
+    sourceMount.catch(error => {
         console.error('Native ScenePulse source runtime failed:', error);
     });
-    return;
+    return sourceMount;
 
     // Gate B adapter below is intentionally unreachable until the fixture
     // acceptance checklist is complete.  It is retained as a future host
@@ -10134,11 +10415,11 @@ function openWorldSidecarInspector(view = 'scene') {
     const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
     if (!world || !sess) return;
-    const isSidecar = window.ExperimentalWorldsSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    const isSidecar = true;
     // Scene State and Backstage are part of the transcript.  The user should
     // inspect the handoff beside the turn it explains, not in a second generic
-    // JSON window. Keep the modal only for legacy migration and true actions.
-    if (isSidecar && view === 'backstage') {
+    // JSON window.
+    if (view === 'backstage') {
         const cards = [...document.querySelectorAll('.world-sidecar-backstage')];
         const card = cards.at(-1);
         if (card) {
@@ -10160,18 +10441,12 @@ function openWorldSidecarInspector(view = 'scene') {
     const readerBackfillTurnOptions = readerBackfillTurns.map((turn, index) => `<option value="${experimentalEscapeHTML(String(turn.id || ''))}">Turn ${index + 1} · ${experimentalEscapeHTML(String(turn.id || '').slice(-28))}</option>`).join('');
     const title = view === 'line' ? 'World GM · private Sidecar line'
         : view === 'backstage' ? 'Backstage handoff'
-        : view === 'migration' ? 'Enable Sidecar for this world'
         : 'Scene State';
     const overlay = document.createElement('div');
     overlay.id = 'ew-world-sidecar-inspector-overlay';
     overlay.className = 'modal-overlay';
     overlay.style.zIndex = '1100';
-    const legacy = `<section style="display:grid; gap:12px; padding:4px 0;">
-        <div class="fallback-banner" style="display:block; margin:0;"><span class="banner-icon">◌</span><span class="banner-text"><strong>This timeline is using Inline Legacy.</strong> Sidecar packets, private Sidecar conversation, scene reconciliation and Sidecar-only controls are intentionally unavailable until this timeline is migrated.</span></div>
-        <div class="form-hint">The existing narration history and canonical receipts will be retained. Derived vectors are rebuilt after migration; this does not create a new world.</div>
-        <div><button class="btn btn-primary" id="ew-world-sidecar-inspector-migrate">Open Sidecar migration wizard</button></div>
-    </section>`;
-    let body = legacy;
+    let body = '';
     if (isSidecar) {
         const tabs = `<div style="display:flex; gap:7px; flex-wrap:wrap; margin-bottom:12px;">
             <button class="tool-btn sidecar-inspector-tab" data-view="scene">Scene state</button>
@@ -10204,7 +10479,6 @@ function openWorldSidecarInspector(view = 'scene') {
     globalThis.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
     overlay.addEventListener('click', event => { if (event.target === overlay) closeWorldSidecarInspector(); });
     document.getElementById('ew-close-world-sidecar-inspector')?.addEventListener('click', closeWorldSidecarInspector);
-    document.getElementById('ew-world-sidecar-inspector-migrate')?.addEventListener('click', () => { closeWorldSidecarInspector(); openSidecarMigrationWizard(world.id); });
     document.querySelectorAll('.sidecar-inspector-tab').forEach(button => button.addEventListener('click', () => openWorldSidecarInspector(button.dataset.view)));
     const openCandidateReview = button => {
         const candidate = protocol?.readerCandidates?.find(item => item.candidateId === button.dataset.candidateId);

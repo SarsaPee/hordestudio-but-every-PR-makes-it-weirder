@@ -1,0 +1,17 @@
+const assert=require('node:assert/strict'),fs=require('node:fs');
+const app=fs.readFileSync('app.js','utf8'),html=fs.readFileSync('index.html','utf8');
+assert.doesNotMatch(app,/function (?:buildBundledAslynJonasCompanion|ensureBundledCompanionSeed)\(/);
+assert.match(app,/await installBundledHumans\(/);
+assert.match(html,/bundled-humans\.js/);assert.match(html,/<h1>Virtual Humans 2\.0<\/h1>/);
+assert.doesNotMatch(html,/ashlyn-reynolds-human\.js|jane-harlow-human\.js/);
+const catalog=JSON.parse(fs.readFileSync('assets/bundled/humans.json'));
+assert.equal(catalog.humans.length,1);
+const c=JSON.parse(fs.readFileSync(catalog.humans[0].path)).companion;
+assert.equal(c.name,'Aslyn Jonas');assert.equal(c.startingReferences.length,62);assert(c.startingReferences.every(r=>r.status==='approved'));
+assert.equal(c.startingReferences.filter(r=>r.role==='zone').length,6);assert(c.socialWorld.includes('private bedroom'));assert.equal(c.lifeSetupPolicies.expression.socialWorld,c.socialWorld);assert.equal(c.lifeSetupPolicies.expression.videoModel,'');assert.equal(c.lifeSetupPolicies.relationshipPolicy.positiveStep,.1);
+const authoredPlaces=c.lifeProfile.places.filter(p=>!p.id.startsWith('osm:'));
+assert.equal(authoredPlaces.length,22);
+for(const p of authoredPlaces) assert(c.startingReferences.some(r=>r.role==='place'&&r.entityId===p.id&&r.status==='approved'),'Missing place reference: '+p.id);
+assert.equal(c.startingVideoClips.length,5);assert.equal(c.startingGallery.length,2);assert.equal(c.startingSocialPosts.length,28);
+assert.equal(c.imageSource,'provider');assert.equal(c.referenceImageSource,'');assert.equal(c.videoProvider,'');assert.equal(c.mcpImageTool,'');assert.deepEqual(c.mcpImageArguments,{});
+console.log('PASS canonical included Aslyn, approved media inventory, retired placeholder path and Virtual Humans 2.0 label.');

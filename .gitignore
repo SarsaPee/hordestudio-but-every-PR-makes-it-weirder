@@ -16,3 +16,8 @@ scratch/verify_*.py
 # Optional platform-specific local Node runtime for VH background simulation
 # (root-anchored: must not ignore experiences/*/runtime/ implementation units)
 /runtime/
+
+# Canonical local Experimental Worlds saves and rolling snapshots. Portable
+# packages create this directory beside the app on first save; user data is
+# never committed or bundled into a release archive.
+/data/experimental-worlds/
